@@ -634,10 +634,10 @@ curl "http://localhost:6542/history/deals?from=$(date -d '1 day ago' +%s)&to=$(d
 
 ## Technical Analysis
 
-The API gives you raw market data — it doesn't do TA. If you need indicators, grab the candles from here and crunch them yourself. There's a full working example in `examples/ta/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
+The API gives you raw market data — it doesn't do TA. If you need indicators, grab the candles from here and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 
 ```bash
-cd examples/ta
+cd examples/python
 pip install -r requirements.txt
 
 # Default: EURUSD H4 200 candles
@@ -649,6 +649,11 @@ python ta.py ADAUSD D1 200
 
 # Custom API URL
 MT5_API_URL=http://10.0.0.5:6542 python ta.py EURUSD D1
+
+# Candlestick chart with TA overlays (1920x1080 PNG)
+python chart.py ADAUSD
+python chart.py BTCUSD H1 100
+python chart.py EURUSD D1 200 -o eurusd.png
 ```
 
 Check out `indicators.py` for the individual indicator functions and `signals.py` for signal detection. Use them as building blocks for your own shit.
@@ -694,7 +699,7 @@ mt5api/                 Python HTTP API server
   server.py             Flask routes
 
 examples/               Usage examples
-  ta/                   Technical analysis with pandas-ta
+  python/               TA, charting, and API client modules
 
 mt5installers/          Broker MT5 setup executables (gitignored)
 data/                   Generated/volatile data (gitignored)

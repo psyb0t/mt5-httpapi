@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Technical analysis example for mt5-httpapi.
-
-Pulls candle data from the API, calculates indicators, detects signals.
+Technical analysis — pulls candles, calculates indicators, detects signals.
 
 Usage:
     python ta.py
@@ -13,30 +11,17 @@ Requirements:
     pip install -r requirements.txt
 """
 
-import os
 import sys
 
 import pandas as pd
-import requests
 
+from api import get_candles
 from indicators import add_all
 from signals import detect_signals
-
-API_URL = os.environ.get("MT5_API_URL", "http://localhost:6542")
 
 symbol = sys.argv[1] if len(sys.argv) > 1 else "EURUSD"
 timeframe = sys.argv[2] if len(sys.argv) > 2 else "H4"
 count = int(sys.argv[3]) if len(sys.argv) > 3 else 200
-
-
-def get_candles(symbol, timeframe, count):
-    url = f"{API_URL}/symbols/{symbol}/rates?timeframe={timeframe}&count={count}"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    data = resp.json()
-    if not data:
-        return None
-    return pd.DataFrame(data)
 
 
 def print_report(df, symbol, timeframe):
@@ -95,7 +80,6 @@ def print_report(df, symbol, timeframe):
 
     print(f"{'='*50}")
 
-    # signals
     sigs = detect_signals(df)
     if sigs:
         print(f"\n Signals:")

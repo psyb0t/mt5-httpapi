@@ -62,7 +62,7 @@ def add_adx(df, length=14):
 def add_vwap(df):
     """Volume Weighted Average Price. Uses tick_volume as volume proxy."""
     df_idx = df.set_index(pd.to_datetime(df["time"], unit="s"))
-    df["vwap"] = ta.vwap(df_idx["high"], df_idx["low"], df_idx["close"], df_idx["tick_volume"])
+    df["vwap"] = ta.vwap(df_idx["high"], df_idx["low"], df_idx["close"], df_idx["tick_volume"]).values
     return df
 
 

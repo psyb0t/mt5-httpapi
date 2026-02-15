@@ -814,7 +814,7 @@ Say you want to risk 1% of your account on a trade with a stop loss at 3x ATR on
 
 This API gives you raw market data — it does NOT do TA for you. If you need indicators (ATR, RSI, MACD, Bollinger Bands, moving averages, etc.), grab the candle data from here and crunch it yourself.
 
-There's a full working example in the repo at `examples/ta/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) — check `indicators.py` for individual indicator functions, `signals.py` for signal detection, and `ta.py` to run it all.
+There's a full working example in the repo at `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) — check `indicators.py` for individual indicator functions, `signals.py` for signal detection, `ta.py` to run it all, and `chart.py` for candlestick charts with TA overlays.
 
 ### Quick example
 
