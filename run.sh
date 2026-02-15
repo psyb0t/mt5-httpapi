@@ -65,7 +65,8 @@ if [ "${REINSTALL}" = "1" ]; then
 fi
 
 # Stop existing container if running
-if docker ps -a --format '{{.Names}}' | grep -q "^mt5-httpapi$"; then
+# Stop existing container if running
+if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
     echo "Stopping existing container..."
     docker compose -f "${DIR}/docker-compose.yml" down
 fi
@@ -85,10 +86,10 @@ echo "Logs: docker compose -f ${DIR}/docker-compose.yml logs -f"
 echo ""
 echo "Waiting for VM to get an IP (for API port forwarding)..."
 for i in $(seq 1 60); do
-    VM_IP=$(docker exec mt5-httpapi bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
+    VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
     if [ -n "${VM_IP}" ]; then
         echo "VM IP: ${VM_IP}"
-        docker exec mt5-httpapi bash -c "
+        docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c "
             iptables -t nat -C PREROUTING -p tcp --dport 6542 -j DNAT --to-destination ${VM_IP}:6542 2>/dev/null || \
             iptables -t nat -A PREROUTING -p tcp --dport 6542 -j DNAT --to-destination ${VM_IP}:6542
             iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport 6542 -j MASQUERADE 2>/dev/null || \
