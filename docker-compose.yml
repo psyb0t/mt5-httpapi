@@ -22,4 +22,11 @@ services:
         limits:
           memory: 5G
     memswap_limit: 15G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6542/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
     stop_grace_period: 2m
