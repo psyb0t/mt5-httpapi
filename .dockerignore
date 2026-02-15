@@ -9,3 +9,4 @@ config/terminal.json
 run.log
 *.wav
 *.mp3
+examples/

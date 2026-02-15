@@ -7,3 +7,4 @@ mt5installers/*
 config/account.json
 config/terminal.json
 run.log
+__pycache__
