@@ -1,0 +1,21 @@
+{
+    "roboforex": {
+        "main": {
+            "login": 12345678,
+            "password": "your_password",
+            "server": "RoboForex-Pro"
+        },
+        "demo": {
+            "login": 87654321,
+            "password": "demo_password",
+            "server": "RoboForex-Demo"
+        }
+    },
+    "default": {
+        "demo": {
+            "login": 12345678,
+            "password": "your_password",
+            "server": "MetaQuotes-Demo"
+        }
+    }
+}

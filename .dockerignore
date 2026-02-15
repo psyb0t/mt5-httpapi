@@ -1,0 +1,11 @@
+.git
+.github
+.research_files
+CLAUDE.md
+data/
+mt5installers/
+config/account.json
+config/terminal.json
+run.log
+*.wav
+*.mp3

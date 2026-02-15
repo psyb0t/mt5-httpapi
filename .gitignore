@@ -1,0 +1,9 @@
+CLAUDE.md
+.research_files
+data/*
+!data/.gitkeep
+mt5installers/*
+!mt5installers/.gitkeep
+config/account.json
+config/terminal.json
+run.log

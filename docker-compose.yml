@@ -1,0 +1,24 @@
+services:
+  metatrader5:
+    image: dockurr/windows
+    environment:
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "32G"
+    devices:
+      - /dev/kvm
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "${NOVNC_PORT:-8006}:8006"
+      - "${API_PORT:-6542}:6542"
+    volumes:
+      - ./data/storage:/storage
+      - ./data/oem:/oem
+      - ./data/metatrader5:/shared
+      - ./data/win.iso:/boot.iso
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+    stop_grace_period: 2m
