@@ -21,4 +21,5 @@ services:
       resources:
         limits:
           memory: 5G
+    memswap_limit: 15G
     stop_grace_period: 2m
