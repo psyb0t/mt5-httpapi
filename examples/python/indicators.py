@@ -5,6 +5,7 @@ and returns it with the indicator columns added.
 
 import pandas as pd
 import pandas_ta as ta
+from smartmoneyconcepts import smc
 
 
 def add_moving_averages(df, lengths=None):
@@ -66,6 +67,41 @@ def add_vwap(df):
     return df
 
 
+def add_smc(df, swing_length=10):
+    """Smart Money Concepts: order blocks, FVGs, BOS/CHoCH, liquidity."""
+    df["volume"] = df["tick_volume"]
+    swing_hl = smc.swing_highs_lows(df, swing_length=swing_length)
+    df["swing_hl"] = swing_hl["HighLow"]
+    df["swing_level"] = swing_hl["Level"]
+
+    ob = smc.ob(df, swing_hl)
+    df["ob"] = ob["OB"]
+    df["ob_top"] = ob["Top"]
+    df["ob_bottom"] = ob["Bottom"]
+    df["ob_volume"] = ob["OBVolume"]
+    df["ob_mitigated"] = ob["MitigatedIndex"]
+
+    fvg = smc.fvg(df)
+    df["fvg"] = fvg["FVG"]
+    df["fvg_top"] = fvg["Top"]
+    df["fvg_bottom"] = fvg["Bottom"]
+    df["fvg_mitigated"] = fvg["MitigatedIndex"]
+
+    bos_choch = smc.bos_choch(df, swing_hl)
+    df["bos"] = bos_choch["BOS"]
+    df["choch"] = bos_choch["CHOCH"]
+    df["bos_choch_level"] = bos_choch["Level"]
+    df["bos_choch_broken_idx"] = bos_choch["BrokenIndex"]
+
+    liq = smc.liquidity(df, swing_hl)
+    df["liquidity"] = liq["Liquidity"]
+    df["liquidity_level"] = liq["Level"]
+    df["liquidity_end"] = liq["End"]
+    df["liquidity_swept"] = liq["Swept"]
+
+    return df
+
+
 def add_all(df):
     """Slap every indicator on the DataFrame."""
     df = add_moving_averages(df)
@@ -77,4 +113,5 @@ def add_all(df):
     df = add_stochastic(df)
     df = add_adx(df)
     df = add_vwap(df)
+    df = add_smc(df)
     return df

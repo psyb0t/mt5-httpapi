@@ -48,7 +48,85 @@ COLORS = {
     "rsi_os": "#00e676",
     "vol_up": "#00e67640",
     "vol_down": "#ff174440",
+    "ob_bull": "#00bfa5",
+    "ob_bear": "#d500f9",
+    "fvg_bull": "#ffab40",
+    "fvg_bear": "#40c4ff",
+    "bos": "#ffffff",
+    "choch": "#ffd700",
+    "liquidity": "#ff69b4",
 }
+
+
+def _draw_smc(ax, df, df_plot):
+    """Draw SMC overlays: order blocks, FVGs, BOS/CHoCH, liquidity."""
+    from matplotlib.patches import Rectangle
+
+    n_total = len(df_plot)
+
+    # order blocks — rectangles from OB candle extending right
+    ob_rows = df[df["ob"].notna()]
+    for idx, row in ob_rows.iterrows():
+        bull = row["ob"] == 1
+        color = COLORS["ob_bull"] if bull else COLORS["ob_bear"]
+        top, bottom = row["ob_top"], row["ob_bottom"]
+        mitigated = row["ob_mitigated"]
+        x_end = int(mitigated) if mitigated > 0 else n_total - 1
+        width = x_end - idx
+        if width < 1:
+            width = n_total - 1 - idx
+        rect = Rectangle((idx, bottom), width, top - bottom,
+                          facecolor=color, alpha=0.15, edgecolor=color,
+                          linewidth=0.8, linestyle="-")
+        ax.add_patch(rect)
+
+    # fair value gaps — thin rectangles
+    fvg_rows = df[df["fvg"].notna()]
+    for idx, row in fvg_rows.iterrows():
+        bull = row["fvg"] == 1
+        color = COLORS["fvg_bull"] if bull else COLORS["fvg_bear"]
+        top, bottom = row["fvg_top"], row["fvg_bottom"]
+        mitigated = row["fvg_mitigated"]
+        x_end = int(mitigated) if mitigated > 0 else n_total - 1
+        width = x_end - idx
+        if width < 1:
+            width = n_total - 1 - idx
+        rect = Rectangle((idx, bottom), width, top - bottom,
+                          facecolor=color, alpha=0.08, edgecolor=color,
+                          linewidth=0.5, linestyle="--")
+        ax.add_patch(rect)
+
+    # BOS / CHoCH — horizontal lines from break to broken index
+    for idx, row in df.iterrows():
+        level = row.get("bos_choch_level")
+        if pd.isna(level):
+            continue
+        is_bos = pd.notna(row.get("bos"))
+        is_choch = pd.notna(row.get("choch"))
+        if not is_bos and not is_choch:
+            continue
+        broken_idx = row.get("bos_choch_broken_idx")
+        x_end = int(broken_idx) if pd.notna(broken_idx) and broken_idx > 0 else n_total - 1
+        color = COLORS["bos"] if is_bos else COLORS["choch"]
+        style = "-" if is_bos else "--"
+        label = "BOS" if is_bos else "CHoCH"
+        ax.plot([idx, x_end], [level, level], color=color,
+                linewidth=0.8, linestyle=style, alpha=0.7)
+        ax.text(idx, level, f" {label}", color=color, fontsize=6,
+                va="bottom", alpha=0.8)
+
+    # liquidity levels
+    liq_rows = df[df["liquidity"].notna()]
+    for idx, row in liq_rows.iterrows():
+        level = row["liquidity_level"]
+        end = row["liquidity_end"]
+        swept = row["liquidity_swept"]
+        x_end = int(end) if pd.notna(end) and end > 0 else n_total - 1
+        ax.plot([idx, x_end], [level, level], color=COLORS["liquidity"],
+                linewidth=0.8, linestyle=":", alpha=0.6)
+        if pd.notna(swept) and swept > 0:
+            ax.plot(int(swept), level, "x", color=COLORS["liquidity"],
+                    markersize=5, alpha=0.8)
 
 
 def build_chart(df, symbol, timeframe, output):
@@ -186,6 +264,10 @@ def build_chart(df, symbol, timeframe, output):
             (5, 1)
         ),
     )
+
+    # SMC overlays on price panel
+    ax_price = axes[0]
+    _draw_smc(ax_price, df, df_plot)
 
     # title
     latest = df.iloc[-1]

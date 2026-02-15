@@ -3,3 +3,4 @@ pandas
 pandas-ta
 mplfinance
 matplotlib
+smartmoneyconcepts
