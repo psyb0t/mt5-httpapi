@@ -63,16 +63,45 @@ fsutil behavior set disablelastaccess 1 >nul 2>&1
 
 :: ── Disable Windows Defender / Antimalware ─────────────────────
 echo Disabling Windows Defender...
+:: Take ownership of Defender keys and nuke Tamper Protection
+echo Killing Tamper Protection...
+powershell -Command "Start-Process cmd -ArgumentList '/c takeown /f \"%%ProgramData%%\Microsoft\Windows Defender\" /r /d y & icacls \"%%ProgramData%%\Microsoft\Windows Defender\" /grant Administrators:F /t' -Verb RunAs -Wait" >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows Defender\Features" /v TamperProtection /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows Defender\Features" /v TamperProtectionSource /t REG_DWORD /d 2 /f >nul 2>&1
+:: Remove Defender's ability to self-heal
+takeown /f "C:\ProgramData\Microsoft\Windows Defender\Platform" /r /d y >nul 2>&1
+icacls "C:\ProgramData\Microsoft\Windows Defender\Platform" /grant Administrators:F /t >nul 2>&1
+rd /s /q "C:\ProgramData\Microsoft\Windows Defender\Platform" >nul 2>&1
+:: Nuke the Defender service binaries so they can't respawn
+takeown /f "C:\Program Files\Windows Defender" /r /d y >nul 2>&1
+icacls "C:\Program Files\Windows Defender" /grant Administrators:F /t >nul 2>&1
+ren "C:\Program Files\Windows Defender\MsMpEng.exe" "MsMpEng.exe.dead" >nul 2>&1
+ren "C:\Program Files\Windows Defender\NisSrv.exe" "NisSrv.exe.dead" >nul 2>&1
+:: Group policy keys
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiVirus /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableBehaviorMonitoring /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableOnAccessProtection /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableScanOnRealtimeEnable /t REG_DWORD /d 1 /f >nul 2>&1
-for %%S in (WinDefend WdNisSvc SecurityHealthService) do (
+:: Disable via service registry keys directly
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\WinDefend" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\WdNisSvc" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\SecurityHealthService" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\WdFilter" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\WdBoot" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+:: Disable scheduled scans
+schtasks /change /tn "Microsoft\Windows\Windows Defender\Windows Defender Scheduled Scan" /disable >nul 2>&1
+schtasks /change /tn "Microsoft\Windows\Windows Defender\Windows Defender Cache Maintenance" /disable >nul 2>&1
+schtasks /change /tn "Microsoft\Windows\Windows Defender\Windows Defender Cleanup" /disable >nul 2>&1
+schtasks /change /tn "Microsoft\Windows\Windows Defender\Windows Defender Verification" /disable >nul 2>&1
+:: Kill it and disable services
+for %%S in (WinDefend WdNisSvc SecurityHealthService wscsvc) do (
     sc config %%S start= disabled >nul 2>&1
     net stop %%S >nul 2>&1
 )
+:: Nuke MsMpEng if it's still running
+taskkill /f /im MsMpEng.exe >nul 2>&1
 
 :: ── Processor scheduling: foreground priority ──────────────────
 echo Setting processor scheduling to foreground...
