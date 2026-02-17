@@ -2,10 +2,6 @@
 set -eo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REINSTALL=0
-if [ "${1:-}" = "--reinstall" ]; then
-    REINSTALL=1
-fi
 
 LOG_FILE="${DIR}/run.log"
 exec > >(tee "${LOG_FILE}") 2>&1
@@ -50,12 +46,6 @@ done
 # Copy the mt5api package directory
 rm -rf "${DIR}/data/metatrader5/mt5api"
 cp -r "${DIR}/mt5api" "${DIR}/data/metatrader5/mt5api"
-
-# Drop reinstall flag if requested
-if [ "${REINSTALL}" = "1" ]; then
-    echo "Reinstall requested — install.bat will run on next VM boot."
-    touch "${DIR}/data/metatrader5/reinstall.flag"
-fi
 
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then

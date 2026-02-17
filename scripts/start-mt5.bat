@@ -2,28 +2,19 @@
 setlocal enabledelayedexpansion
 set SHARED=C:\Users\Docker\Desktop\Shared
 set LOGDIR=%SHARED%\logs
-set SETUP_LOG=%LOGDIR%\setup.log
+set INSTALL_LOG=%LOGDIR%\install.log
 set PIP_LOG=%LOGDIR%\pip.log
 set API_LOG=%LOGDIR%\api.log
 
 mkdir "%LOGDIR%" 2>nul
 
-:: Re-run install if flag file is present
-if exist "%SHARED%\reinstall.flag" (
-    call :log "%SETUP_LOG%" "reinstall.flag detected, running install.bat..."
-    del "%SHARED%\reinstall.flag"
-    call "%SHARED%\install.bat"
-    if !errorlevel! neq 0 (
-        call :log "%SETUP_LOG%" "ERROR: install.bat failed (exit code !errorlevel!)"
-        pause
-        exit /b 1
-    )
+call :log "%INSTALL_LOG%" "====== Boot ======"
+call "%SHARED%\install.bat"
+if !errorlevel! neq 0 (
+    call :log "%INSTALL_LOG%" "ERROR: install.bat failed (exit code !errorlevel!)"
+    pause
+    exit /b 1
 )
-
-call :log "%SETUP_LOG%" "====== Boot ======"
-call :log "%SETUP_LOG%" "Running setup.bat..."
-call "%SHARED%\setup.bat" >> "%SETUP_LOG%" 2>&1
-call :log "%SETUP_LOG%" "setup.bat done."
 
 call :log "%PIP_LOG%" "Installing pip packages..."
 python -m pip install --quiet -r "%SHARED%\requirements.txt" >> "%PIP_LOG%" 2>&1
