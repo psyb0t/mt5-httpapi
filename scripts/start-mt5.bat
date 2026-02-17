@@ -48,14 +48,18 @@ if not exist "!MT5DIR!\terminal64.exe" (
 
 :: Write MT5 startup config with algo trading enabled + account from account.json
 set MT5CFG=!MT5DIR!\mt5start.ini
-python -c "import json,os;d=json.load(open(os.path.join(r'%SHARED%','account.json')));b=d.get('!BROKER!',{});a='!ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!MT5CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n') if c else f.write('[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n');f.close()" >> "%API_LOG%" 2>&1
+python -c "import json,os;d=json.load(open(os.path.join(r'%SHARED%','account.json')));b=d.get('!BROKER!',{});a='!ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!MT5CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%API_LOG%" 2>&1
 if errorlevel 1 (
     call :log "%API_LOG%" "WARNING: account.json not found or invalid, starting without login"
     (
+    echo [Common]
+    echo NewsEnable=0
     echo [Experts]
     echo AllowLiveTrading=1
     echo AllowDllImport=1
     echo Enabled=1
+    echo [Email]
+    echo Enable=0
     ) > "!MT5CFG!"
 )
 

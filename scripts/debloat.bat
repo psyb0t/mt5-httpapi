@@ -45,12 +45,56 @@ net stop wuauserv >nul 2>&1
 sc config UsoSvc start= disabled >nul 2>&1
 net stop UsoSvc >nul 2>&1
 
-:: ── Disable useless services ───────────────────────────────────
-echo Disabling Audio, Print Spooler, Error Reporting...
-for %%S in (Audiosrv AudioEndpointBuilder Spooler WerSvc) do (
+:: ── Disable all useless services ───────────────────────────────
+:: Based on https://github.com/LeDragoX/Win-Debloat-Tools
+echo Disabling useless services...
+for %%S in (
+    Audiosrv AudioEndpointBuilder
+    Spooler
+    WerSvc
+    WSearch
+    DiagTrack
+    diagnosticshub.standardcollector.service
+    dmwappushservice
+    Fax fhsvc
+    GraphicsPerfSvc
+    lfsvc
+    MapsBroker
+    PcaSvc
+    RemoteAccess RemoteRegistry
+    RetailDemo
+    TrkWks
+    BITS
+    FontCache
+    PhoneSvc
+    WbioSrvc
+    wisvc
+    WMPNetworkSvc
+    WpnService
+    BTAGService BthAvctpSvc bthserv
+    DPS WdiServiceHost WdiSystemHost
+    iphlpsvc lmhosts SharedAccess
+    Wecsvc
+    XblAuthManager XblGameSave XboxGipSvc XboxNetApiSvc
+    TabletInputService
+    SCardSvr stisvc
+    DoSvc
+    DusmSvc
+    SEMgrSvc
+    Ndu
+) do (
     sc config %%S start= disabled >nul 2>&1
     net stop %%S >nul 2>&1
 )
+
+:: ── Disable Security and Maintenance notifications ───────────
+echo Disabling Security and Maintenance...
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance" /v Enabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace" /v SecurityAndMaintenance /t REG_SZ /d "" /f >nul 2>&1
+reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{BB64F8A7-BEE7-4E1A-AB8D-7D8273F7FDB6}" /f >nul 2>&1
+reg add "HKCU\Software\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f >nul 2>&1
+sc config wscsvc start= disabled >nul 2>&1
+net stop wscsvc >nul 2>&1
 
 :: ── Disable Windows Error Reporting ────────────────────────────
 echo Disabling error reporting UI...
@@ -95,6 +139,51 @@ taskkill /f /im SecurityHealthService.exe >nul 2>&1
 :: ── Processor scheduling: foreground priority ──────────────────
 echo Setting processor scheduling to foreground...
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl" /v Win32PrioritySeparation /t REG_DWORD /d 38 /f >nul 2>&1
+
+:: ── Performance tweaks ───────────────────────────────────────
+:: Based on https://github.com/LeDragoX/Win-Debloat-Tools
+echo Applying performance tweaks...
+:: Disable Ndu (Network Data Usage) high RAM usage
+reg add "HKLM\SYSTEM\ControlSet001\Services\Ndu" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
+:: Reduce service kill timeout from 20s to 2s
+reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v WaitToKillServiceTimeout /t REG_DWORD /d 2000 /f >nul 2>&1
+:: Don't clear page file at shutdown (saves time)
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v ClearPageFileAtShutdown /t REG_DWORD /d 0 /f >nul 2>&1
+:: Auto-end tasks on shutdown without prompting
+reg add "HKCU\Control Panel\Desktop" /v AutoEndTasks /t REG_DWORD /d 1 /f >nul 2>&1
+:: Reduce app kill timeout from 20s to 5s
+reg add "HKCU\Control Panel\Desktop" /v WaitToKillAppTimeout /t REG_DWORD /d 5000 /f >nul 2>&1
+:: Speed up menu animations to 1ms
+reg add "HKCU\Control Panel\Desktop" /v MenuShowDelay /t REG_DWORD /d 1 /f >nul 2>&1
+:: Remove network bandwidth throttling
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Psched" /v NonBestEffortLimit /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" /v NetworkThrottlingIndex /t REG_DWORD /d 0xffffffff /f >nul 2>&1
+:: Disable remote assistance
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Remote Assistance" /v fAllowToGetHelp /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable reserved storage
+DISM /Online /Set-ReservedStorageState /State:Disabled >nul 2>&1
+
+:: ── Kill useless scheduled tasks ─────────────────────────────
+echo Disabling scheduled tasks...
+for %%T in (
+    "Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser"
+    "Microsoft\Windows\Application Experience\ProgramDataUpdater"
+    "Microsoft\Windows\Application Experience\StartupAppTask"
+    "Microsoft\Windows\Autochk\Proxy"
+    "Microsoft\Windows\Customer Experience Improvement Program\Consolidator"
+    "Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask"
+    "Microsoft\Windows\Customer Experience Improvement Program\UsbCeip"
+    "Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector"
+    "Microsoft\Windows\Maps\MapsToastTask"
+    "Microsoft\Windows\Maps\MapsUpdateTask"
+    "Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem"
+    "Microsoft\Windows\Shell\FamilySafetyMonitor"
+    "Microsoft\Windows\Shell\FamilySafetyRefreshTask"
+    "Microsoft\Windows\Windows Media Sharing\UpdateLibrary"
+    "Microsoft\Windows\Maintenance\WinSAT"
+) do (
+    schtasks /change /tn %%T /disable >nul 2>&1
+)
 
 echo ============================================
 echo  Debloat complete.
