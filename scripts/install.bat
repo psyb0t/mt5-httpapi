@@ -23,15 +23,33 @@ if !errorlevel! equ 0 (
     )
     call :log "[1/4] Installing Python 3.12..."
     C:\python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_test=0
+    if !errorlevel! neq 0 (
+        call :log "ERROR: Python installer failed (exit code !errorlevel!)"
+        del C:\python-installer.exe 2>nul
+        exit /b 1
+    )
     timeout /t 10 /nobreak >nul
     del C:\python-installer.exe
+    python --version >nul 2>&1
+    if !errorlevel! neq 0 (
+        call :log "ERROR: Python not found after installation"
+        exit /b 1
+    )
     for /f "delims=" %%V in ('python --version 2^>^&1') do call :log "[1/4] Python installed: %%V"
 )
 
 :: ── Install MetaTrader5 Python package ───────────────────────────
 call :log "[2/4] Installing MetaTrader5 Python package..."
 python -m pip install --upgrade pip >> "%INSTALL_LOG%" 2>&1
+if !errorlevel! neq 0 (
+    call :log "ERROR: pip upgrade failed (exit code !errorlevel!)"
+    exit /b 1
+)
 python -m pip install MetaTrader5 >> "%INSTALL_LOG%" 2>&1
+if !errorlevel! neq 0 (
+    call :log "ERROR: Failed to install MetaTrader5 package (exit code !errorlevel!)"
+    exit /b 1
+)
 call :log "[2/4] MetaTrader5 package installed."
 
 :: ── Install MetaTrader 5 terminals ───────────────────────────────
@@ -53,17 +71,22 @@ if !BROKER_COUNT! equ 0 (
     ) else (
         call :log "No custom installers found, downloading standard MetaQuotes MT5..."
         curl -L -o C:\mt5setup.exe https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe
-        if exist C:\mt5setup.exe (
-            call :install_one "default" "C:\mt5setup.exe"
-            del C:\mt5setup.exe
-        ) else (
+        if not exist C:\mt5setup.exe (
             call :log "ERROR: Failed to download MT5 installer"
+            exit /b 1
         )
+        call :install_one "default" "C:\mt5setup.exe"
+        if !errorlevel! neq 0 (
+            del C:\mt5setup.exe 2>nul
+            exit /b 1
+        )
+        del C:\mt5setup.exe
     )
 ) else (
     :: Process each broker sequentially
     for /l %%I in (1,1,!BROKER_COUNT!) do (
         call :install_one "!BNAME_%%I!" "!INSTALLER_%%I!"
+        if !errorlevel! neq 0 exit /b 1
     )
 )
 
@@ -72,6 +95,9 @@ call :log "[3/4] MetaTrader 5 terminal installation complete."
 :: ── Step 4: Firewall + Startup ───────────────────────────────────
 call :log "[4/4] Configuring firewall and startup..."
 netsh advfirewall firewall add rule name="MT5 HTTP API" dir=in action=allow protocol=TCP localport=6542 >> "%INSTALL_LOG%" 2>&1
+if !errorlevel! neq 0 (
+    call :log "WARNING: Failed to add firewall rule (exit code !errorlevel!)"
+)
 
 (
 echo @echo off
@@ -102,9 +128,17 @@ if exist "%BROKER_DIR%\terminal64.exe" (
 call :log "Installing %BROKER% to %BROKER_DIR%..."
 "%~2" /auto /path:"%BROKER_DIR%"
 
+set WAIT_COUNT=0
+set MAX_WAIT=60
 :wait_loop
 if exist "%BROKER_DIR%\terminal64.exe" goto :wait_done
-call :log "Waiting for %BROKER% installer to finish..."
+set /a WAIT_COUNT+=1
+if !WAIT_COUNT! gtr !MAX_WAIT! (
+    call :log "ERROR: Timed out waiting for %BROKER% installer after !MAX_WAIT! attempts (~5 min)"
+    taskkill /f /im mt5setup.exe >nul 2>&1
+    exit /b 1
+)
+call :log "Waiting for %BROKER% installer to finish (!WAIT_COUNT!/!MAX_WAIT!)..."
 timeout /t 5 /nobreak >nul
 goto :wait_loop
 

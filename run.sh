@@ -34,29 +34,22 @@ fi
 echo "Syncing scripts to mount points..."
 cp "${DIR}/scripts/install.bat" "${DIR}/data/oem/install.bat"
 cp "${DIR}/scripts/install.bat" "${DIR}/data/metatrader5/install.bat"
-for f in setup.bat requirements.txt account.json.example; do
-    if [ -f "${DIR}/config/${f}" ]; then
-        cp "${DIR}/config/${f}" "${DIR}/data/metatrader5/${f}"
-    fi
-done
 cp "${DIR}/scripts/start-mt5.bat" "${DIR}/data/metatrader5/start-mt5.bat"
+# Copy all config files to metatrader5 mount point
+for f in "${DIR}"/config/*; do
+    [ -e "$f" ] || continue
+    cp -a "$f" "${DIR}/data/metatrader5/"
+    echo "  copied: $(basename "$f")"
+done
 # Copy broker MT5 installers (mt5setup-*.exe)
 for f in "${DIR}"/mt5installers/mt5setup-*.exe; do
     [ -f "$f" ] || continue
     echo "Found broker installer: $(basename "$f")"
     cp "$f" "${DIR}/data/metatrader5/$(basename "$f")"
 done
-# Copy terminal config (broker + account selection)
-cp "${DIR}/config/terminal.json" "${DIR}/data/metatrader5/terminal.json"
-echo "MT5 terminal config: $(cat "${DIR}/config/terminal.json")"
 # Copy the mt5api package directory
 rm -rf "${DIR}/data/metatrader5/mt5api"
 cp -r "${DIR}/mt5api" "${DIR}/data/metatrader5/mt5api"
-# Copy account.json only if it doesn't already exist in metatrader5
-# (the API server may have updated it at runtime)
-if [ ! -f "${DIR}/data/metatrader5/account.json" ] && [ -f "${DIR}/config/account.json" ]; then
-    cp "${DIR}/config/account.json" "${DIR}/data/metatrader5/account.json"
-fi
 
 # Drop reinstall flag if requested
 if [ "${REINSTALL}" = "1" ]; then
@@ -64,7 +57,6 @@ if [ "${REINSTALL}" = "1" ]; then
     touch "${DIR}/data/metatrader5/reinstall.flag"
 fi
 
-# Stop existing container if running
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
     echo "Stopping existing container..."

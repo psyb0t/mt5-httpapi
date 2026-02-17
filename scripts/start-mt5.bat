@@ -10,19 +10,28 @@ mkdir "%LOGDIR%" 2>nul
 
 :: Re-run install if flag file is present
 if exist "%SHARED%\reinstall.flag" (
-    echo [%date% %time%] reinstall.flag detected, running install.bat... >> "%SETUP_LOG%"
+    call :log "%SETUP_LOG%" "reinstall.flag detected, running install.bat..."
     del "%SHARED%\reinstall.flag"
     call "%SHARED%\install.bat"
+    if !errorlevel! neq 0 (
+        call :log "%SETUP_LOG%" "ERROR: install.bat failed (exit code !errorlevel!)"
+        pause
+        exit /b 1
+    )
 )
 
-echo [%date% %time%] ====== Boot ====== >> "%SETUP_LOG%"
-echo [%date% %time%] Running setup.bat... >> "%SETUP_LOG%"
+call :log "%SETUP_LOG%" "====== Boot ======"
+call :log "%SETUP_LOG%" "Running setup.bat..."
 call "%SHARED%\setup.bat" >> "%SETUP_LOG%" 2>&1
-echo [%date% %time%] setup.bat done. >> "%SETUP_LOG%"
+call :log "%SETUP_LOG%" "setup.bat done."
 
-echo [%date% %time%] Installing pip packages... >> "%PIP_LOG%"
+call :log "%PIP_LOG%" "Installing pip packages..."
 python -m pip install --quiet -r "%SHARED%\requirements.txt" >> "%PIP_LOG%" 2>&1
-echo [%date% %time%] pip done. >> "%PIP_LOG%"
+if !errorlevel! neq 0 (
+    call :log "%PIP_LOG%" "ERROR: pip install failed (exit code !errorlevel!)"
+) else (
+    call :log "%PIP_LOG%" "pip done."
+)
 
 :: Read broker and account from terminal.json
 set BROKER=default
@@ -38,12 +47,11 @@ for /f "usebackq delims=" %%L in (`python -c "import json;t=json.load(open(r'%SH
 set _GOT_BROKER=
 set "MT5DIR=%SHARED%\!BROKER!"
 
-echo [%date% %time%] Using broker: !BROKER!, account: !ACCOUNT! >> "%API_LOG%"
-echo [%date% %time%] Terminal dir: !MT5DIR! >> "%API_LOG%"
+call :log "%API_LOG%" "Using broker: !BROKER!, account: !ACCOUNT!"
+call :log "%API_LOG%" "Terminal dir: !MT5DIR!"
 
 if not exist "!MT5DIR!\terminal64.exe" (
-    echo [%date% %time%] ERROR: terminal64.exe not found in !MT5DIR! >> "%API_LOG%"
-    echo ERROR: terminal64.exe not found in !MT5DIR! >> "%API_LOG%" 2>&1
+    call :log "%API_LOG%" "ERROR: terminal64.exe not found in !MT5DIR!"
     goto :start_api
 )
 
@@ -51,7 +59,7 @@ if not exist "!MT5DIR!\terminal64.exe" (
 set MT5CFG=!MT5DIR!\mt5start.ini
 python -c "import json,os;d=json.load(open(os.path.join(r'%SHARED%','account.json')));b=d.get('!BROKER!',{});a='!ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!MT5CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n') if c else f.write('[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n');f.close()" >> "%API_LOG%" 2>&1
 if errorlevel 1 (
-    echo [%date% %time%] account.json not found or invalid, starting without login >> "%API_LOG%"
+    call :log "%API_LOG%" "WARNING: account.json not found or invalid, starting without login"
     (
     echo [Experts]
     echo AllowLiveTrading=1
@@ -60,13 +68,21 @@ if errorlevel 1 (
     ) > "!MT5CFG!"
 )
 
-echo [%date% %time%] Starting MetaTrader 5... >> "%API_LOG%"
+call :log "%API_LOG%" "Starting MetaTrader 5..."
 start "" "!MT5DIR!\terminal64.exe" /portable /config:"!MT5CFG!"
 
 :: Give MT5 time to start before the API connects
 timeout /t 10 /nobreak >nul
 
 :start_api
-echo [%date% %time%] Starting HTTP API server... >> "%API_LOG%"
+call :log "%API_LOG%" "Starting HTTP API server..."
 cd /d "%SHARED%"
 python -m mt5api >> "%API_LOG%" 2>&1
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:log
+:: %~1 = log file, %~2 = message
+echo [%date% %time%] %~2
+echo [%date% %time%] %~2 >> "%~1"
+exit /b 0
