@@ -94,8 +94,13 @@ if !BROKER_COUNT! equ 0 (
 
 call :log "[3/4] MetaTrader 5 terminal installation complete."
 
-:: ── Step 4: Firewall + Startup ───────────────────────────────────
-call :log "[4/4] Configuring firewall and startup..."
+:: ── Step 4: Debloat Windows GUI ─────────────────────────────────
+call :log "[4/5] Running Windows debloat..."
+call "%SHARED%\debloat.bat" >> "%INSTALL_LOG%" 2>&1
+call :log "[4/5] Debloat done."
+
+:: ── Step 5: Firewall + Startup ─────────────────────────────────
+call :log "[5/5] Configuring firewall and startup..."
 netsh advfirewall firewall add rule name="MT5 HTTP API" dir=in action=allow protocol=TCP localport=6542 >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
     call :log "WARNING: Failed to add firewall rule (exit code !errorlevel!)"
@@ -147,7 +152,6 @@ goto :wait_loop
 :wait_done
 call :log "terminal64.exe ready for %BROKER%."
 taskkill /f /im terminal64.exe >nul 2>&1
-taskkill /f /im metatrader64.exe >nul 2>&1
 taskkill /f /im mt5setup.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 call :log "Broker %BROKER% installed successfully."

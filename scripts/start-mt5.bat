@@ -59,7 +59,14 @@ if errorlevel 1 (
     ) > "!MT5CFG!"
 )
 
-call :log "%API_LOG%" "Starting MetaTrader 5..."
+:: Kill any non-portable MT5 terminals left over from installation
+tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul && (
+    call :log "%API_LOG%" "Killing lingering MT5 terminals..."
+    taskkill /f /im terminal64.exe >nul 2>&1
+    timeout /t 2 /nobreak >nul
+)
+
+call :log "%API_LOG%" "Starting MetaTrader 5 (portable)..."
 start "" "!MT5DIR!\terminal64.exe" /portable /config:"!MT5CFG!"
 
 :: Give MT5 time to start before the API connects

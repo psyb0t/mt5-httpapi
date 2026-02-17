@@ -31,6 +31,7 @@ echo "Syncing scripts to mount points..."
 cp "${DIR}/scripts/install.bat" "${DIR}/data/oem/install.bat"
 cp "${DIR}/scripts/install.bat" "${DIR}/data/metatrader5/install.bat"
 cp "${DIR}/scripts/start-mt5.bat" "${DIR}/data/metatrader5/start-mt5.bat"
+cp "${DIR}/scripts/debloat.bat" "${DIR}/data/metatrader5/debloat.bat"
 # Copy all config files to metatrader5 mount point
 for f in "${DIR}"/config/*; do
     [ -e "$f" ] || continue
