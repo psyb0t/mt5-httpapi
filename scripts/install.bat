@@ -95,9 +95,25 @@ if !BROKER_COUNT! equ 0 (
 call :log "[3/4] MetaTrader 5 terminal installation complete."
 
 :: ── Step 4: Debloat Windows GUI ─────────────────────────────────
-call :log "[4/5] Running Windows debloat..."
-call "%SHARED%\debloat.bat" >> "%INSTALL_LOG%" 2>&1
-call :log "[4/5] Debloat done."
+set "DEBLOAT_DONE=%SHARED%\debloat.done"
+set "DEBLOAT_FLAG=%SHARED%\debloat.flag"
+
+if exist "%DEBLOAT_FLAG%" (
+    call :log "[4/5] debloat.flag detected, forcing re-debloat..."
+    del "%DEBLOAT_FLAG%"
+    del "%DEBLOAT_DONE%" 2>nul
+)
+
+if exist "%DEBLOAT_DONE%" (
+    call :log "[4/5] Already debloated, skipping."
+) else (
+    call :log "[4/5] Running Windows debloat..."
+    call "%SHARED%\debloat.bat"
+    echo done > "%DEBLOAT_DONE%"
+    call :log "[4/5] Debloat done. Restarting to apply changes..."
+    shutdown /r /t 5 /f
+    exit /b 0
+)
 
 :: ── Step 5: Firewall + Startup ─────────────────────────────────
 call :log "[5/5] Configuring firewall and startup..."

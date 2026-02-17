@@ -2,6 +2,12 @@
 set -eo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEBLOAT=0
+for arg in "$@"; do
+    if [ "$arg" = "--debloat" ]; then
+        DEBLOAT=1
+    fi
+done
 
 LOG_FILE="${DIR}/run.log"
 exec > >(tee "${LOG_FILE}") 2>&1
@@ -47,6 +53,12 @@ done
 # Copy the mt5api package directory
 rm -rf "${DIR}/data/metatrader5/mt5api"
 cp -r "${DIR}/mt5api" "${DIR}/data/metatrader5/mt5api"
+
+# Drop debloat flag if requested
+if [ "${DEBLOAT}" = "1" ]; then
+    echo "Debloat requested — will force re-debloat on next VM boot."
+    touch "${DIR}/data/metatrader5/debloat.flag"
+fi
 
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
