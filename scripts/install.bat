@@ -62,7 +62,9 @@ for %%F in ("%SHARED%\mt5setup-*.exe") do (
     set "INSTALLER_!BROKER_COUNT!=%%F"
     set "FNAME=%%~nF"
     set "BNAME_!BROKER_COUNT!=!FNAME:mt5setup-=!"
+    call :log "  found installer: %%~nxF (broker: !FNAME:mt5setup-=!)"
 )
+call :log "Detected !BROKER_COUNT! MT5 installer(s)."
 
 if !BROKER_COUNT! equ 0 (
     :: No custom installers — use default MetaQuotes
