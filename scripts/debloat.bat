@@ -1,7 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 echo ============================================
-echo  Windows GUI Debloat (tiny11)
+echo  Unfucking this shithole of an OS so MT5 doesn't choke on
+echo  Microsoft's steaming pile of dogshit services and bloatware
 echo ============================================
 
 :: ── Visual Effects: "Adjust for best performance" ──────────────
@@ -25,7 +26,7 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplicat
 :: ── Disable SysMain (Superfetch) if still running ──────────────
 echo Disabling SysMain...
 sc config SysMain start= disabled >nul 2>&1
-net stop SysMain >nul 2>&1
+sc stop SysMain >nul 2>&1
 
 :: ── Lower DWM priority ─────────────────────────────────────────
 echo Lowering DWM priority...
@@ -41,13 +42,13 @@ powercfg /change monitor-timeout-ac 0 >nul 2>&1
 :: ── Disable Windows Update ─────────────────────────────────────
 echo Disabling Windows Update...
 sc config wuauserv start= disabled >nul 2>&1
-net stop wuauserv >nul 2>&1
+sc stop wuauserv >nul 2>&1
 sc config UsoSvc start= disabled >nul 2>&1
-net stop UsoSvc >nul 2>&1
+sc stop UsoSvc >nul 2>&1
 
 :: ── Disable all useless services ───────────────────────────────
 :: Based on https://github.com/LeDragoX/Win-Debloat-Tools
-echo Disabling useless services...
+echo Disabling useless services (this may take a minute)...
 for %%S in (
     Audiosrv AudioEndpointBuilder
     Spooler
@@ -82,9 +83,43 @@ for %%S in (
     DusmSvc
     SEMgrSvc
     Ndu
+    CamSvc
+    cbdhsvc
+    CDPSvc
+    DeviceAssociationService DeviceInstall
+    DispBrokerDesktopSvc
+    MessagingService
+    NcbService
+    OneSyncSvc
+    PimIndexMaintenanceSvc
+    SensorDataService SensorService SensrSvc
+    UserDataSvc UnistoreSvc
+    WalletService
+    WpcMonSvc
+    AJRouter
+    FrameServer FrameServerMonitor
+    icssvc
+    InstallService
+    edgeupdate edgeupdatem
+    gupdate gupdatem
+    RtkBtManServ
+    SSDPSRV upnphost
+    TapiSrv
+    NetTcpPortSharing
+    EFS
+    WinRM
+    TermService SessionEnv UmRdpService
+    spectrum perceptionsimulation
+    ClipSVC LicenseManager
+    wlidsvc
+    TokenBroker
+    WFDSConMgrSvc
+    MixedRealityOpenXRSvc
+    wercplsupport
 ) do (
+    echo   %%S
     sc config %%S start= disabled >nul 2>&1
-    net stop %%S >nul 2>&1
+    sc stop %%S >nul 2>&1
 )
 
 :: ── Disable Security and Maintenance notifications ───────────
@@ -94,7 +129,7 @@ reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\Na
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{BB64F8A7-BEE7-4E1A-AB8D-7D8273F7FDB6}" /f >nul 2>&1
 reg add "HKCU\Software\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f >nul 2>&1
 sc config wscsvc start= disabled >nul 2>&1
-net stop wscsvc >nul 2>&1
+sc stop wscsvc >nul 2>&1
 
 :: ── Disable Windows Error Reporting ────────────────────────────
 echo Disabling error reporting UI...
@@ -135,6 +170,72 @@ taskkill /f /im MsMpEng.exe >nul 2>&1
 taskkill /f /im NisSrv.exe >nul 2>&1
 taskkill /f /im SecurityHealthSystray.exe >nul 2>&1
 taskkill /f /im SecurityHealthService.exe >nul 2>&1
+
+:: ── Nuke all privacy/telemetry/spying bullshit ────────────────
+:: Based on https://github.com/LeDragoX/Win-Debloat-Tools Optimize-Privacy.ps1
+echo Nuking privacy and telemetry...
+:: Disable advertising ID
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" /v DisabledByGroupPolicy /t REG_DWORD /d 1 /f >nul 2>&1
+:: Disable activity history
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableActivityFeed /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v PublishUserActivities /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v UploadUserActivities /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable clipboard history and sync
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v AllowClipboardHistory /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v AllowCrossDeviceClipboard /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable inking and typing data collection
+reg add "HKCU\Software\Microsoft\Input\TIPC" /v Enabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\TextInput" /v AllowLinguisticDataCollection /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable diagnostic data viewer
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Diagnostics\DiagTrack\EventTranscriptKey" /v EnableEventTranscript /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable feedback
+reg add "HKCU\Software\Microsoft\Siuf\Rules" /v NumberOfSIUFInPeriod /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable tailored experiences
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Privacy" /v TailoredExperiencesWithDiagnosticDataEnabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\Software\Policies\Microsoft\Windows\CloudContent" /v DisableTailoredExperiencesWithDiagnosticData /t REG_DWORD /d 1 /f >nul 2>&1
+:: Disable third party suggestions and consumer features
+reg add "HKCU\Software\Policies\Microsoft\Windows\CloudContent" /v DisableThirdPartySuggestions /t REG_DWORD /d 1 /f >nul 2>&1
+reg add "HKCU\Software\Policies\Microsoft\Windows\CloudContent" /v DisableWindowsConsumerFeatures /t REG_DWORD /d 1 /f >nul 2>&1
+:: Disable telemetry autologgers
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\WMI\AutoLogger\AutoLogger-Diagtrack-Listener" /v Start /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\WMI\AutoLogger\SQMLogger" /v Start /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable WiFi Sense hotspot sharing
+reg add "HKLM\Software\Microsoft\PolicyManager\default\WiFi\AllowWiFiHotSpotReporting" /v value /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\PolicyManager\default\WiFi\AllowAutoConnectToWiFiSenseHotspots" /v value /t REG_DWORD /d 0 /f >nul 2>&1
+:: Disable CEIP and app compatibility telemetry
+reg add "HKLM\SOFTWARE\Policies\Microsoft\SQMClient\Windows" /v CEIPEnable /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AppCompat" /v AITEnable /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AppCompat" /v DisableUAR /t REG_DWORD /d 1 /f >nul 2>&1
+:: Deny CapabilityAccessManager permissions (camera, mic, location, etc.)
+for %%P in (
+    webcam microphone location userNotificationListener
+    appDiagnostics userAccountInformation contacts appointments
+    phoneCallHistory email chat radios bluetoothSync
+    broadFileSystemAccess documentsLibrary picturesLibrary
+    videosLibrary activity cellularData gazeInput graphicsCaptureProgrammatic
+) do (
+    reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\%%P" /v Value /t REG_SZ /d "Deny" /f >nul 2>&1
+    reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\%%P" /v Value /t REG_SZ /d "Deny" /f >nul 2>&1
+)
+:: Disable content delivery (app suggestions, preinstalled crap, lock screen tips)
+for %%N in (
+    SubscribedContent-310093Enabled SubscribedContent-314559Enabled
+    SubscribedContent-314563Enabled SubscribedContent-338387Enabled
+    SubscribedContent-338388Enabled SubscribedContent-338389Enabled
+    SubscribedContent-338393Enabled SubscribedContent-353698Enabled
+    RotatingLockScreenOverlayEnabled RotatingLockScreenEnabled
+    ContentDeliveryAllowed FeatureManagementEnabled
+    OemPreInstalledAppsEnabled PreInstalledAppsEnabled
+    PreInstalledAppsEverEnabled SilentInstalledAppsEnabled
+    SoftLandingEnabled SubscribedContentEnabled SystemPaneSuggestionsEnabled
+) do (
+    reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v %%N /t REG_DWORD /d 0 /f >nul 2>&1
+)
+:: Disable Game Bar/Game DVR
+reg add "HKCU\Software\Microsoft\GameBar" /v AutoGameModeEnabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKCU\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR" /v AllowGameDVR /t REG_DWORD /d 0 /f >nul 2>&1
 
 :: ── Processor scheduling: foreground priority ──────────────────
 echo Setting processor scheduling to foreground...

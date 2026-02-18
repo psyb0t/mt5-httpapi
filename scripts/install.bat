@@ -122,10 +122,9 @@ if !errorlevel! neq 0 (
     call :log "WARNING: Failed to add firewall rule (exit code !errorlevel!)"
 )
 
-(
-echo @echo off
-echo call "%SHARED%\start-mt5.bat"
-) > "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.bat"
+set STARTUP=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.bat
+echo @echo off> "%STARTUP%"
+echo call "%SHARED%\start-mt5.bat">> "%STARTUP%"
 
 call :log "============================================"
 call :log " Setup complete!"
