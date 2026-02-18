@@ -3,7 +3,8 @@ services:
     image: dockurr/windows
     environment:
       RAM_SIZE: "4G"
-      CPU_CORES: "4"
+      RAM_CHECK: "N"
+      CPU_CORES: "2"
       DISK_SIZE: "32G"
     devices:
       - /dev/kvm
@@ -20,8 +21,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 5G
-    memswap_limit: 15G
+          memory: 512M
+    memswap_limit: 5G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6542/ping"]
       interval: 30s
