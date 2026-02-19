@@ -17,7 +17,7 @@ This is a tool for automating trades. If you blow your account, that's on you. U
 
 - Linux host with KVM enabled (`/dev/kvm`)
 - Docker + Docker Compose
-- ~10 GB disk (Windows ISO + VM storage)
+- ~20 GB disk (4 GB ISO + 11 GB VM + MT5 installs)
 - 5 GB RAM (for the Windows VM)
 
 The container is configured with a `512M` memory limit but a `5G` memswap limit — so the VM runs mostly on swap. Sounds cursed, works fine. Windows + MT5 are not latency-sensitive enough for this to matter. tiny11 + our debloat script idles at ~1.4 GB RAM, and MT5 + the Python API barely add anything on top of that. noVNC is there so you can watch the installation progress and confirm everything started up. After that, forget the UI exists and just hit the REST API.

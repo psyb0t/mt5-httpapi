@@ -5,7 +5,6 @@ data/*
 mt5installers/*
 !mt5installers/.gitkeep
 config/accounts.json
-config/terminal.json
 config/terminals.json
 .env
 run.log
