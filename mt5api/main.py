@@ -1,51 +1,43 @@
-import sys
 import threading
+import time
 
-import MetaTrader5 as mt5
-
-from mt5api.config import HOST, PORT, TERMINAL_PATH
+from mt5api.config import ACCOUNT, BROKER, HOST, PORT
+from mt5api.mt5client import ensure_initialized, init_mt5
 from mt5api.server import app
 
-INIT_TIMEOUT = 60
+RETRY_INTERVAL = 30
 
 
-def _try_initialize():
-    """Try to initialize MT5 with a timeout so it doesn't hang forever."""
-    result = [None]
-
-    def _init():
-        result[0] = mt5.initialize(path=TERMINAL_PATH)
-
-    t = threading.Thread(target=_init, daemon=True)
-    t.start()
-    t.join(timeout=INIT_TIMEOUT)
-
-    if t.is_alive():
-        msg = f"WARNING: mt5.initialize() hung for {INIT_TIMEOUT}s - starting server anyway"
-        print(msg, flush=True)
-        print(msg, file=sys.stderr, flush=True)
-        return False
-
-    if not result[0]:
-        err = mt5.last_error()
-        msg = f"WARNING: MT5 init failed: {err}"
-        print(msg, flush=True)
-        print(msg, file=sys.stderr, flush=True)
-        return False
-
-    return True
+def _background_init():
+    """Keep retrying MT5 init until it connects. Runs in a daemon thread."""
+    attempt = 0
+    while True:
+        attempt += 1
+        print(f"MT5 init attempt {attempt}...", flush=True)
+        if ensure_initialized():
+            print(f"MT5 connected on attempt {attempt}.", flush=True)
+            return
+        print(f"MT5 not ready, retrying in {RETRY_INTERVAL}s...", flush=True)
+        time.sleep(RETRY_INTERVAL)
 
 
 def main():
-    print(f"Initializing MT5 from {TERMINAL_PATH} (timeout {INIT_TIMEOUT}s)...", flush=True)
-    if _try_initialize():
-        info = mt5.terminal_info()
-        print(f"MT5 connected: build {info.build}", flush=True)
+    print(f"Broker: {BROKER}, Account: {ACCOUNT}", flush=True)
+
+    connected = init_mt5()
+    if connected:
+        print("MT5 connected.", flush=True)
     else:
-        print("Server will start anyway - call POST /terminal/init to retry.", flush=True)
+        print(
+            f"MT5 not ready yet, will keep retrying every {RETRY_INTERVAL}s in background...",
+            flush=True,
+        )
+        t = threading.Thread(target=_background_init, daemon=True)
+        t.start()
 
     print(f"\nMT5 HTTP API listening on {HOST}:{PORT}", flush=True)
-    print("""
+    print(
+        """
 Endpoints:
   GET    /ping                          Health check
   GET    /error                         Last MT5 error
@@ -55,7 +47,6 @@ Endpoints:
   POST   /terminal/shutdown             Shutdown MT5
 
   GET    /account                       Account info
-  POST   /account/login                 Login {login, password, server}
 
   GET    /symbols                       List symbols (?group=*USD*)
   GET    /symbols/:symbol               Symbol details
@@ -76,7 +67,9 @@ Endpoints:
 
   GET    /history/orders                Order history (?from=TS&to=TS)
   GET    /history/deals                 Deal history (?from=TS&to=TS)
-""", flush=True)
+""",
+        flush=True,
+    )
 
     app.run(host=HOST, port=PORT)
 

@@ -4,7 +4,7 @@
 CLAUDE.md
 data/
 mt5installers/
-config/account.json
+config/accounts.json
 config/terminal.json
 run.log
 *.wav

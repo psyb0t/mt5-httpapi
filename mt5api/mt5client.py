@@ -5,9 +5,13 @@ import threading
 import MetaTrader5 as mt5
 
 from mt5api.config import (
-    TERMINAL_PATH, ACCOUNT_FILE, TERMINAL_FILE, BROKER, ACCOUNT,
-    load_terminal_config, save_terminal_config,
-    ORDER_TYPE_MAP, FILLING_MAP, TIME_MAP,
+    ACCOUNT,
+    ACCOUNT_FILE,
+    BROKER,
+    FILLING_MAP,
+    ORDER_TYPE_MAP,
+    TERMINAL_PATH,
+    TIME_MAP,
 )
 
 INIT_TIMEOUT = 60
@@ -27,27 +31,13 @@ def load_accounts():
     return data
 
 
-def get_account(name):
-    accounts = load_accounts()
-    return accounts.get(name)
-
-
 def get_first_account():
     accounts = load_accounts()
     if not accounts:
         return None
-    # Use configured account if set
     if ACCOUNT and ACCOUNT in accounts:
         return accounts[ACCOUNT]
     return next(iter(accounts.values()))
-
-
-def switch_account(broker, account_name):
-    """Update terminal.json to point to a different broker/account."""
-    config = load_terminal_config()
-    config["broker"] = broker
-    config["account"] = account_name
-    save_terminal_config(config)
 
 
 def _run_with_timeout(fn, timeout=INIT_TIMEOUT):

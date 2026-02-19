@@ -4,7 +4,9 @@ data/*
 !data/.gitkeep
 mt5installers/*
 !mt5installers/.gitkeep
-config/account.json
+config/accounts.json
 config/terminal.json
+config/terminals.json
+.env
 run.log
 __pycache__

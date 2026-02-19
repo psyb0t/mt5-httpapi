@@ -1,4 +1,4 @@
-.PHONY: up down logs status reinstall clean distclean help
+.PHONY: up down logs status clean distclean help
 
 all: up
 
@@ -14,9 +14,6 @@ logs:
 status:
 	./test.sh
 
-reinstall:
-	./run.sh --reinstall
-
 clean: down
 	sudo rm -rf data/storage data/metatrader5 data/oem run.log
 
@@ -30,5 +27,4 @@ help:
 	@echo "  logs      - Follow container logs"
 	@echo "  status    - Check VM and MT5 HTTP API status"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
-	@echo "  reinstall - Re-run install.bat on next VM boot"
 	@echo "  distclean - Remove everything including ISO"

@@ -1,6 +1,6 @@
 from flask import Flask
 
-from mt5api.handlers import terminal, account, symbols, positions, orders, history
+from mt5api.handlers import account, history, orders, positions, symbols, terminal
 
 app = Flask(__name__)
 
@@ -15,9 +15,6 @@ app.post("/terminal/shutdown")(terminal.shutdown)
 
 # ── Account ──────────────────────────────────────────────────────
 app.get("/account")(account.get_account)
-app.get("/account/list")(account.list_accounts)
-app.post("/account/login")(account.login)
-app.post("/account/login/<name>")(account.login)
 
 # ── Symbols ──────────────────────────────────────────────────────
 app.get("/symbols")(symbols.list_symbols)

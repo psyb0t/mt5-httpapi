@@ -12,7 +12,7 @@ services:
       - NET_ADMIN
     ports:
       - "${NOVNC_PORT:-8006}:8006"
-      - "${API_PORT:-6542}:6542"
+      - "${API_PORT_RANGE:-6542}:${API_PORT_RANGE:-6542}"
     volumes:
       - ./data/storage:/storage
       - ./data/oem:/oem

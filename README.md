@@ -2,7 +2,7 @@
 
 MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with a REST API slapped on top for programmatic trading. No Wine bullshit, no janky workarounds - a legit Windows environment running the full MT5 terminal in portable mode.
 
-Supports multiple brokers on the same VM. Throw in your broker's MT5 installers, set up your accounts, switch between them by editing `config/terminal.json` and restarting. Done.
+Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process on its own port. Run two FTMO challenges at once, or mix brokers - whatever you need.
 
 ## ⚠️ Disclaimer
 
@@ -10,7 +10,8 @@ This is a tool for automating trades. If you blow your account, that's on you. U
 
 ## Recommended Brokers
 
-- [RoboForex](https://my.roboforex.com/en/?a=zswg) — solid execution, crypto + forex, up to 1:2000 leverage, demo accounts available
+- [RoboForex](https://my.roboforex.com/en/?a=zswg)
+- [TeleTrade](https://my.teletrade-dj.com/agent_pp.html?agent_pp=26834897)
 
 ## Requirements
 
@@ -19,12 +20,20 @@ This is a tool for automating trades. If you blow your account, that's on you. U
 - ~10 GB disk (Windows ISO + VM storage)
 - 5 GB RAM (for the Windows VM)
 
+The container is configured with a `512M` memory limit but a `5G` memswap limit — so the VM runs mostly on swap. Sounds cursed, works fine. Windows + MT5 are not latency-sensitive enough for this to matter. tiny11 + our debloat script idles at ~1.4 GB RAM, and MT5 + the Python API barely add anything on top of that. noVNC is there so you can watch the installation progress and confirm everything started up. After that, forget the UI exists and just hit the REST API.
+
+### Real-world usage: 4 terminals on 2 vCPUs + 512M RAM
+
+![4 terminals running](assets/usage.png)
+
+This is 4 MT5 terminals (RoboForex, 2x TeleTrade, FTMO) running simultaneously on 2 virtual CPUs with only 512M of real RAM — the rest lives in swap. CPU spikes to 100% during startup while all terminals and APIs initialize at once, then drops to ~15% idle. Total memory usage: 2.1 GB, all comfortably handled by swap. You could easily run 10+ terminals in a single container like this.
+
 ## Quick Start
 
 ```bash
 # 1. Set up your broker account
-cp config/account.json.example config/account.json
-cp config/terminal.example.json config/terminal.json
+cp config/accounts.json.example config/accounts.json
+cp config/terminals.example.json config/terminals.json
 # Edit both files with your broker credentials
 
 # 2. Drop your broker's MT5 installer in mt5installers/
@@ -37,41 +46,66 @@ make up
 
 First run downloads [tiny11](https://archive.org/details/tiny-11-NTDEV) (stripped-down Windows 11, ~4 GB), installs it (~10 min), then sets up Python + MT5 automatically. After that, boots in ~1 min. Go grab a coffee on the first run.
 
-If you'd rather use your own Windows ISO, just drop it at `data/win.iso` and it'll skip the download.
-
 ## Configuration
 
-### `config/account.json`
+### `config/accounts.json`
 
 Your broker credentials. Organized by broker, then account name:
 
 ```json
 {
-    "roboforex": {
-        "main": {
-            "login": 12345678,
-            "password": "your_password",
-            "server": "RoboForex-Pro"
-        },
-        "demo": {
-            "login": 87654321,
-            "password": "demo_password",
-            "server": "RoboForex-Demo"
-        }
+  "roboforex": {
+    "main": {
+      "login": 12345678,
+      "password": "your_password",
+      "server": "RoboForex-Pro"
+    },
+    "demo": {
+      "login": 87654321,
+      "password": "demo_password",
+      "server": "RoboForex-Demo"
     }
+  }
 }
 ```
 
-### `config/terminal.json`
+### `config/terminals.json`
 
-Tells the system which broker and account to use:
+Defines which terminals to run. Each entry gets its own MT5 terminal instance and its own API process on a dedicated port:
+
+```json
+[
+  {
+    "broker": "roboforex",
+    "account": "main",
+    "port": 6542
+  },
+  {
+    "broker": "roboforex",
+    "account": "demo",
+    "port": 6543
+  }
+]
+```
+
+- `broker` — matches the installer name (`mt5setup-<broker>.exe`) and `accounts.json` key
+- `account` — matches the account name in `accounts.json` under that broker
+- `port` — unique port for this terminal's HTTP API
+
+Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
+
+### `config/terminal.json` (legacy)
+
+Single-terminal fallback. If `terminals.json` doesn't exist, the system falls back to this:
 
 ```json
 {
-    "broker": "roboforex",
-    "account": "main"
+  "broker": "roboforex",
+  "account": "main"
 }
 ```
+
+Runs one terminal on port 6542. You don't need this if you're using `terminals.json`.
 
 ### `config/requirements.txt`
 
@@ -87,145 +121,122 @@ Dump your broker MT5 installers here. Name them `mt5setup-<broker>.exe` and each
 
 ## API
 
-Default: `http://localhost:6542`
+Each terminal's API runs on its configured port (from `terminals.json`). Default: `http://localhost:6542`
 
 ### Health
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/ping` | Is this thing on? |
-| GET | `/error` | Last MT5 error |
+| Method | Endpoint | Description       |
+| ------ | -------- | ----------------- |
+| GET    | `/ping`  | Is this thing on? |
+| GET    | `/error` | Last MT5 error    |
 
 **GET `/ping`**:
 
 ```json
-{"status": "ok"}
+{ "status": "ok" }
 ```
 
 **GET `/error`**:
 
 ```json
-{"code": 1, "message": "Success"}
+{ "code": 1, "message": "Success" }
 ```
 
 ### Terminal
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/terminal` | Terminal info |
-| POST | `/terminal/init` | Initialize MT5 connection |
-| POST | `/terminal/shutdown` | Kill MT5 |
+| Method | Endpoint             | Description               |
+| ------ | -------------------- | ------------------------- |
+| GET    | `/terminal`          | Terminal info             |
+| POST   | `/terminal/init`     | Initialize MT5 connection |
+| POST   | `/terminal/shutdown` | Kill MT5                  |
 
 **GET `/terminal`**:
 
 ```json
 {
-    "build": 5602,
-    "codepage": 0,
-    "commondata_path": "C:\\Users\\Docker\\AppData\\Roaming\\MetaQuotes\\Terminal\\Common",
-    "community_account": false,
-    "community_balance": 0.0,
-    "community_connection": false,
-    "company": "Your Broker Inc.",
-    "connected": true,
-    "data_path": "C:\\Users\\Docker\\Desktop\\Shared\\mybroker",
-    "dlls_allowed": true,
-    "email_enabled": false,
-    "ftp_enabled": false,
-    "language": "English",
-    "maxbars": 100000,
-    "mqid": false,
-    "name": "MyBroker MetaTrader 5",
-    "notifications_enabled": false,
-    "path": "C:\\Users\\Docker\\Desktop\\Shared\\mybroker",
-    "ping_last": 0,
-    "retransmission": 0.003,
-    "trade_allowed": true,
-    "tradeapi_disabled": false
+  "build": 5602,
+  "codepage": 0,
+  "commondata_path": "C:\\Users\\Docker\\AppData\\Roaming\\MetaQuotes\\Terminal\\Common",
+  "community_account": false,
+  "community_balance": 0.0,
+  "community_connection": false,
+  "company": "Your Broker Inc.",
+  "connected": true,
+  "data_path": "C:\\Users\\Docker\\Desktop\\Shared\\mybroker",
+  "dlls_allowed": true,
+  "email_enabled": false,
+  "ftp_enabled": false,
+  "language": "English",
+  "maxbars": 100000,
+  "mqid": false,
+  "name": "MyBroker MetaTrader 5",
+  "notifications_enabled": false,
+  "path": "C:\\Users\\Docker\\Desktop\\Shared\\mybroker",
+  "ping_last": 0,
+  "retransmission": 0.003,
+  "trade_allowed": true,
+  "tradeapi_disabled": false
 }
 ```
 
 **POST `/terminal/init`** and **POST `/terminal/shutdown`**:
 
 ```json
-{"success": true}
+{ "success": true }
 ```
 
 The API auto-initializes on first request. You almost never need to call these manually.
 
 ### Account
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/account` | Current account info |
-| GET | `/account/list` | List saved accounts |
-| POST | `/account/login` | Login with `{login, password, server}` |
-| POST | `/account/login/:name` | Login by saved account name |
+| Method | Endpoint   | Description          |
+| ------ | ---------- | -------------------- |
+| GET    | `/account` | Current account info |
 
 **GET `/account`**:
 
 ```json
 {
-    "login": 12345678,
-    "name": "Your Name",
-    "server": "MyBroker-Server",
-    "company": "Your Broker Inc.",
-    "currency": "USD",
-    "currency_digits": 2,
-    "balance": 10000.0,
-    "credit": 0.0,
-    "profit": 0.0,
-    "equity": 10000.0,
-    "margin": 0.0,
-    "margin_free": 10000.0,
-    "margin_level": 0.0,
-    "margin_initial": 0.0,
-    "margin_maintenance": 0.0,
-    "margin_so_call": 70.0,
-    "margin_so_so": 20.0,
-    "margin_so_mode": 0,
-    "margin_mode": 2,
-    "assets": 0.0,
-    "liabilities": 0.0,
-    "commission_blocked": 0.0,
-    "leverage": 500,
-    "limit_orders": 0,
-    "trade_allowed": true,
-    "trade_expert": true,
-    "trade_mode": 0,
-    "fifo_close": false
-}
-```
-
-**GET `/account/list`** (passwords not included):
-
-```json
-{
-    "main": {"login": 12345678, "server": "RoboForex-Pro"},
-    "demo": {"login": 87654321, "server": "RoboForex-Demo"}
-}
-```
-
-**POST `/account/login`** and **POST `/account/login/:name`**:
-
-```json
-{
-    "success": true,
-    "login": 87654321,
-    "server": "RoboForex-Demo",
-    "balance": 10000.0
+  "login": 12345678,
+  "name": "Your Name",
+  "server": "MyBroker-Server",
+  "company": "Your Broker Inc.",
+  "currency": "USD",
+  "currency_digits": 2,
+  "balance": 10000.0,
+  "credit": 0.0,
+  "profit": 0.0,
+  "equity": 10000.0,
+  "margin": 0.0,
+  "margin_free": 10000.0,
+  "margin_level": 0.0,
+  "margin_initial": 0.0,
+  "margin_maintenance": 0.0,
+  "margin_so_call": 70.0,
+  "margin_so_so": 20.0,
+  "margin_so_mode": 0,
+  "margin_mode": 2,
+  "assets": 0.0,
+  "liabilities": 0.0,
+  "commission_blocked": 0.0,
+  "leverage": 500,
+  "limit_orders": 0,
+  "trade_allowed": true,
+  "trade_expert": true,
+  "trade_mode": 0,
+  "fifo_close": false
 }
 ```
 
 ### Symbols
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/symbols` | List symbols (`?group=*USD*`) |
-| GET | `/symbols/:symbol` | Symbol details |
-| GET | `/symbols/:symbol/tick` | Latest tick |
-| GET | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`) |
-| GET | `/symbols/:symbol/ticks` | Tick data (`?count=100`) |
+| Method | Endpoint                 | Description                               |
+| ------ | ------------------------ | ----------------------------------------- |
+| GET    | `/symbols`               | List symbols (`?group=*USD*`)             |
+| GET    | `/symbols/:symbol`       | Symbol details                            |
+| GET    | `/symbols/:symbol/tick`  | Latest tick                               |
+| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`) |
+| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100`)                  |
 
 **GET `/symbols`** — array of symbol names:
 
@@ -300,31 +311,31 @@ The API auto-initializes on first request. You almost never need to call these m
 
 There's a shitload of fields — these are the ones you'll actually use:
 
-| Field | What it is |
-|-------|-----------|
-| `bid`, `ask` | Current prices |
-| `digits` | Price decimal places |
-| `point` | Smallest price change |
-| `trade_tick_size` | Minimum price movement |
-| `trade_tick_value` | Profit/loss per tick per 1 lot |
-| `trade_contract_size` | Contract size (100000 for forex) |
-| `volume_min`, `volume_max`, `volume_step` | Lot size constraints |
-| `spread` | Current spread in points |
-| `swap_long`, `swap_short` | Overnight swap rates |
-| `trade_stops_level` | Min distance for SL/TP from price (points) |
+| Field                                     | What it is                                 |
+| ----------------------------------------- | ------------------------------------------ |
+| `bid`, `ask`                              | Current prices                             |
+| `digits`                                  | Price decimal places                       |
+| `point`                                   | Smallest price change                      |
+| `trade_tick_size`                         | Minimum price movement                     |
+| `trade_tick_value`                        | Profit/loss per tick per 1 lot             |
+| `trade_contract_size`                     | Contract size (100000 for forex)           |
+| `volume_min`, `volume_max`, `volume_step` | Lot size constraints                       |
+| `spread`                                  | Current spread in points                   |
+| `swap_long`, `swap_short`                 | Overnight swap rates                       |
+| `trade_stops_level`                       | Min distance for SL/TP from price (points) |
 
 **GET `/symbols/:symbol/tick`**:
 
 ```json
 {
-    "time": 1771150549,
-    "bid": 0.3001,
-    "ask": 0.3004,
-    "last": 0.0,
-    "volume": 0,
-    "time_msc": 1771150549145,
-    "flags": 1030,
-    "volume_real": 0.0
+  "time": 1771150549,
+  "bid": 0.3001,
+  "ask": 0.3004,
+  "last": 0.0,
+  "volume": 0,
+  "time_msc": 1771150549145,
+  "flags": 1030,
+  "volume_real": 0.0
 }
 ```
 
@@ -334,14 +345,14 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
 
 ```json
 {
-    "time": 1771128000,
-    "open": 0.2962,
-    "high": 0.3006,
-    "low": 0.2922,
-    "close": 0.2979,
-    "tick_volume": 4755,
-    "spread": 30,
-    "real_volume": 0
+  "time": 1771128000,
+  "open": 0.2962,
+  "high": 0.3006,
+  "low": 0.2922,
+  "close": 0.2979,
+  "tick_volume": 4755,
+  "spread": 30,
+  "real_volume": 0
 }
 ```
 
@@ -351,49 +362,49 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
 
 ```json
 {
-    "time": 1771146325,
-    "bid": 0.2973,
-    "ask": 0.2976,
-    "last": 0.0,
-    "volume": 0,
-    "time_msc": 1771146325123,
-    "flags": 6,
-    "volume_real": 0.0
+  "time": 1771146325,
+  "bid": 0.2973,
+  "ask": 0.2976,
+  "last": 0.0,
+  "volume": 0,
+  "time_msc": 1771146325123,
+  "flags": 6,
+  "volume_real": 0.0
 }
 ```
 
 ### Positions
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/positions` | List open positions (`?symbol=`) |
-| GET | `/positions/:ticket` | Get position |
-| PUT | `/positions/:ticket` | Update SL/TP |
-| DELETE | `/positions/:ticket` | Close position |
+| Method | Endpoint             | Description                      |
+| ------ | -------------------- | -------------------------------- |
+| GET    | `/positions`         | List open positions (`?symbol=`) |
+| GET    | `/positions/:ticket` | Get position                     |
+| PUT    | `/positions/:ticket` | Update SL/TP                     |
+| DELETE | `/positions/:ticket` | Close position                   |
 
 **GET `/positions`** — array of position objects:
 
 ```json
 {
-    "ticket": 42094820,
-    "time": 1771150554,
-    "time_msc": 1771150554509,
-    "time_update": 1771150554,
-    "time_update_msc": 1771150554509,
-    "type": 0,
-    "magic": 0,
-    "identifier": 42094820,
-    "reason": 3,
-    "volume": 100.0,
-    "price_open": 0.3005,
-    "sl": 0.28,
-    "tp": 0.32,
-    "price_current": 0.3003,
-    "swap": 0.0,
-    "profit": -0.02,
-    "symbol": "ADAUSD",
-    "comment": "",
-    "external_id": ""
+  "ticket": 42094820,
+  "time": 1771150554,
+  "time_msc": 1771150554509,
+  "time_update": 1771150554,
+  "time_update_msc": 1771150554509,
+  "type": 0,
+  "magic": 0,
+  "identifier": 42094820,
+  "reason": 3,
+  "volume": 100.0,
+  "price_open": 0.3005,
+  "sl": 0.28,
+  "tp": 0.32,
+  "price_current": 0.3003,
+  "swap": 0.0,
+  "profit": -0.02,
+  "symbol": "ADAUSD",
+  "comment": "",
+  "external_id": ""
 }
 ```
 
@@ -403,8 +414,8 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
 
 ```json
 {
-    "sl": 0.27,
-    "tp": 0.36
+  "sl": 0.27,
+  "tp": 0.36
 }
 ```
 
@@ -412,8 +423,8 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
 
 ```json
 {
-    "volume": 500,
-    "deviation": 20
+  "volume": 500,
+  "deviation": 20
 }
 ```
 
@@ -421,42 +432,42 @@ All fields optional. `volume` defaults to full position, `deviation` defaults to
 
 ### Orders
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/orders` | List pending orders (`?symbol=`) |
-| POST | `/orders` | Place an order |
-| GET | `/orders/:ticket` | Get order |
-| PUT | `/orders/:ticket` | Modify order |
-| DELETE | `/orders/:ticket` | Cancel order |
+| Method | Endpoint          | Description                      |
+| ------ | ----------------- | -------------------------------- |
+| GET    | `/orders`         | List pending orders (`?symbol=`) |
+| POST   | `/orders`         | Place an order                   |
+| GET    | `/orders/:ticket` | Get order                        |
+| PUT    | `/orders/:ticket` | Modify order                     |
+| DELETE | `/orders/:ticket` | Cancel order                     |
 
 **GET `/orders`** — array of pending order objects:
 
 ```json
 {
-    "ticket": 42094812,
-    "time_setup": 1771147800,
-    "time_setup_msc": 1771147800123,
-    "time_done": 0,
-    "time_done_msc": 0,
-    "time_expiration": 0,
-    "type": 2,
-    "type_time": 0,
-    "type_filling": 1,
-    "state": 1,
-    "magic": 0,
-    "position_id": 0,
-    "position_by_id": 0,
-    "reason": 3,
-    "volume_initial": 1000.0,
-    "volume_current": 1000.0,
-    "price_open": 0.28,
-    "sl": 0.25,
-    "tp": 0.35,
-    "price_current": 0.2989,
-    "price_stoplimit": 0.0,
-    "symbol": "ADAUSD",
-    "comment": "",
-    "external_id": ""
+  "ticket": 42094812,
+  "time_setup": 1771147800,
+  "time_setup_msc": 1771147800123,
+  "time_done": 0,
+  "time_done_msc": 0,
+  "time_expiration": 0,
+  "type": 2,
+  "type_time": 0,
+  "type_filling": 1,
+  "state": 1,
+  "magic": 0,
+  "position_id": 0,
+  "position_by_id": 0,
+  "reason": 3,
+  "volume_initial": 1000.0,
+  "volume_current": 1000.0,
+  "price_open": 0.28,
+  "sl": 0.25,
+  "tp": 0.35,
+  "price_current": 0.2989,
+  "price_stoplimit": 0.0,
+  "symbol": "ADAUSD",
+  "comment": "",
+  "external_id": ""
 }
 ```
 
@@ -466,23 +477,24 @@ All fields optional. `volume` defaults to full position, `deviation` defaults to
 
 ```json
 {
-    "symbol": "ADAUSD",
-    "type": "BUY",
-    "volume": 1000,
-    "price": 0.28,
-    "sl": 0.25,
-    "tp": 0.35,
-    "deviation": 20,
-    "magic": 0,
-    "comment": "",
-    "type_filling": "IOC",
-    "type_time": "GTC"
+  "symbol": "ADAUSD",
+  "type": "BUY",
+  "volume": 1000,
+  "price": 0.28,
+  "sl": 0.25,
+  "tp": 0.35,
+  "deviation": 20,
+  "magic": 0,
+  "comment": "",
+  "type_filling": "IOC",
+  "type_time": "GTC"
 }
 ```
 
 Required: `symbol`, `type`, `volume`. Everything else is optional. `price` gets auto-filled for market orders.
 
 Order types:
+
 - Market: `BUY`, `SELL`
 - Pending: `BUY_LIMIT`, `SELL_LIMIT`, `BUY_STOP`, `SELL_STOP`, `BUY_STOP_LIMIT`, `SELL_STOP_LIMIT`
 
@@ -494,10 +506,10 @@ Expiration types: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`
 
 ```json
 {
-    "price": 0.29,
-    "sl": 0.26,
-    "tp": 0.36,
-    "type_time": "GTC"
+  "price": 0.29,
+  "sl": 0.26,
+  "tp": 0.36,
+  "type_time": "GTC"
 }
 ```
 
@@ -509,16 +521,16 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ```json
 {
-    "retcode": 10009,
-    "deal": 40536203,
-    "order": 42094820,
-    "volume": 100.0,
-    "price": 0.3005,
-    "bid": 0.3002,
-    "ask": 0.3005,
-    "comment": "Request executed",
-    "request_id": 1549268253,
-    "retcode_external": 0
+  "retcode": 10009,
+  "deal": 40536203,
+  "order": 42094820,
+  "volume": 100.0,
+  "price": 0.3005,
+  "bid": 0.3002,
+  "ask": 0.3005,
+  "comment": "Request executed",
+  "request_id": 1549268253,
+  "retcode_external": 0
 }
 ```
 
@@ -526,10 +538,10 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ### History
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/history/orders` | Order history (`?from=TS&to=TS`) |
-| GET | `/history/deals` | Deal history (`?from=TS&to=TS`) |
+| Method | Endpoint          | Description                      |
+| ------ | ----------------- | -------------------------------- |
+| GET    | `/history/orders` | Order history (`?from=TS&to=TS`) |
+| GET    | `/history/deals`  | Deal history (`?from=TS&to=TS`)  |
 
 `from` and `to` are required, unix epoch seconds.
 
@@ -537,30 +549,30 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ```json
 {
-    "ticket": 42094820,
-    "time_setup": 1771150554,
-    "time_setup_msc": 1771150554509,
-    "time_done": 1771150554,
-    "time_done_msc": 1771150554509,
-    "time_expiration": 0,
-    "type": 0,
-    "type_time": 0,
-    "type_filling": 1,
-    "state": 4,
-    "magic": 0,
-    "position_id": 42094820,
-    "position_by_id": 0,
-    "reason": 3,
-    "volume_initial": 100.0,
-    "volume_current": 0.0,
-    "price_open": 0.3005,
-    "sl": 0.28,
-    "tp": 0.32,
-    "price_current": 0.3005,
-    "price_stoplimit": 0.0,
-    "symbol": "ADAUSD",
-    "comment": "Request executed",
-    "external_id": ""
+  "ticket": 42094820,
+  "time_setup": 1771150554,
+  "time_setup_msc": 1771150554509,
+  "time_done": 1771150554,
+  "time_done_msc": 1771150554509,
+  "time_expiration": 0,
+  "type": 0,
+  "type_time": 0,
+  "type_filling": 1,
+  "state": 4,
+  "magic": 0,
+  "position_id": 42094820,
+  "position_by_id": 0,
+  "reason": 3,
+  "volume_initial": 100.0,
+  "volume_current": 0.0,
+  "price_open": 0.3005,
+  "sl": 0.28,
+  "tp": 0.32,
+  "price_current": 0.3005,
+  "price_stoplimit": 0.0,
+  "symbol": "ADAUSD",
+  "comment": "Request executed",
+  "external_id": ""
 }
 ```
 
@@ -570,24 +582,24 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ```json
 {
-    "ticket": 40536203,
-    "order": 42094820,
-    "time": 1771150554,
-    "time_msc": 1771150554509,
-    "type": 0,
-    "entry": 0,
-    "position_id": 42094820,
-    "symbol": "ADAUSD",
-    "volume": 100.0,
-    "price": 0.3005,
-    "commission": 0.0,
-    "swap": 0.0,
-    "profit": 0.0,
-    "fee": 0.0,
-    "magic": 0,
-    "reason": 3,
-    "comment": "",
-    "external_id": ""
+  "ticket": 40536203,
+  "order": 42094820,
+  "time": 1771150554,
+  "time_msc": 1771150554509,
+  "type": 0,
+  "entry": 0,
+  "position_id": 42094820,
+  "symbol": "ADAUSD",
+  "volume": 100.0,
+  "price": 0.3005,
+  "commission": 0.0,
+  "swap": 0.0,
+  "profit": 0.0,
+  "fee": 0.0,
+  "magic": 0,
+  "reason": 3,
+  "comment": "",
+  "external_id": ""
 }
 ```
 
@@ -625,8 +637,9 @@ curl -X DELETE http://localhost:6542/positions/12345 \
 # Close everything
 curl -X DELETE http://localhost:6542/positions/12345
 
-# Switch to demo account
-curl -X POST http://localhost:6542/account/login/demo
+# Hit different terminals when running multi-terminal
+curl http://localhost:6542/account   # terminal 1
+curl http://localhost:6543/account   # terminal 2
 
 # Get deal history for the last 24h
 curl "http://localhost:6542/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
@@ -665,48 +678,56 @@ make up          Fire up the VM (downloads ISO if needed)
 make down        Shut it down
 make logs        Tail the logs
 make status      Check VM and API status
-make reinstall   Re-run MT5 installation on next boot
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
 
 ## Ports
 
-| Port | Service | Override |
-|------|---------|----------|
-| 8006 | noVNC (VM desktop) | `NOVNC_PORT=9006 make up` |
-| 6542 | HTTP API | `API_PORT=7000 make up` |
+| Port  | Service                 | Override                       |
+| ----- | ----------------------- | ------------------------------ |
+| 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`      |
+| 6542+ | HTTP API (per terminal) | Set in `config/terminals.json` |
+
+API ports are determined by `config/terminals.json`. The `run.sh` script reads all configured ports, generates an `.env` file with `API_PORT_RANGE`, and docker-compose maps the range automatically. Each terminal's API process listens on its own port.
 
 ## Project Structure
 
 ```
-config/                 Your config shit
-  account.json          Broker credentials (gitignored)
-  terminal.json         Active broker/account selection (gitignored)
-  account.json.example  Example credentials
-  terminal.example.json Example terminal config
-  requirements.txt      Python packages for the VM
-  setup.bat             Custom boot commands
+config/                      Your config shit
+  accounts.json              Broker credentials (gitignored)
+  terminals.json             Multi-terminal config (gitignored)
+  terminals.example.json     Example multi-terminal config
+  terminal.json              Legacy single-terminal config (gitignored)
+  accounts.json.example        Example credentials
+  terminal.example.json      Legacy example terminal config
+  requirements.txt           Python packages for the VM
+  setup.bat                  Custom boot commands
 
-scripts/                Scripts that run inside the Windows VM
-  install.bat           First-time setup (Python, MT5, firewall)
-  start-mt5.bat         Runs on every boot (starts MT5 + API)
+scripts/                     Scripts that run inside the Windows VM
+  oem-install.bat            First-boot OEM script (creates startup entry)
+  install.bat                Setup (Python, MT5, firewall) — runs every boot
+  start-mt5.bat              Boot entrypoint (install + start terminals + APIs)
+  debloat.bat                Windows debloat script
+  defender-remover/          Windows Defender removal tool
 
-mt5api/                 Python HTTP API server
-  handlers/             Route handlers
-  config.py             Configuration
-  mt5client.py          MT5 wrapper
-  server.py             Flask routes
+mt5api/                      Python HTTP API server
+  handlers/                  Route handlers
+  config.py                  Configuration (--broker, --account, --port CLI args)
+  mt5client.py               MT5 wrapper
+  server.py                  Flask routes
 
-examples/               Usage examples
-  python/               TA, charting, and API client modules
+examples/                    Usage examples
+  python/                    TA, charting, and API client modules
 
-mt5installers/          Broker MT5 setup executables (gitignored)
-data/                   Generated/volatile data (gitignored)
-  win.iso               Windows ISO
-  storage/              VM disk
-  metatrader5/          Shared folder with VM
-  oem/                  First-boot scripts
+mt5installers/               Broker MT5 setup executables (gitignored)
+data/                        Generated/volatile data (gitignored)
+  win.iso                    Windows ISO
+  storage/                   VM disk
+  metatrader5/               Shared folder with VM
+    <broker>/base/           Base MT5 install per broker
+    <broker>/<account>/      Per-account copy (created at startup)
+  oem/                       First-boot scripts
 ```
 
 ## Logs
@@ -716,7 +737,8 @@ Inside the VM's shared folder (`data/metatrader5/logs/`):
 - `install.log` - MT5 installation progress
 - `setup.log` - Boot-time setup output
 - `pip.log` - Python package installation
-- `api.log` - HTTP API server output
+- `api.log` - HTTP API server output (single-terminal mode)
+- `api-<broker>-<account>.log` - Per-terminal API logs (multi-terminal mode)
 
 When shit breaks, check these first.
 

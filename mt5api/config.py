@@ -1,15 +1,24 @@
+import argparse
 import json
 import os
 
 import MetaTrader5 as mt5
 
 HOST = "0.0.0.0"
-PORT = 6542
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
-ACCOUNT_FILE = os.path.join(BASE_DIR, "account.json")
+ACCOUNT_FILE = os.path.join(BASE_DIR, "accounts.json")
 TERMINAL_FILE = os.path.join(BASE_DIR, "terminal.json")
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="MT5 HTTP API")
+    parser.add_argument("--broker", default=None)
+    parser.add_argument("--account", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    args, _ = parser.parse_known_args()
+    return args
 
 
 def load_terminal_config():
@@ -19,32 +28,53 @@ def load_terminal_config():
     return {"broker": "default", "account": ""}
 
 
-def save_terminal_config(config):
-    with open(TERMINAL_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-
+_args = _parse_args()
 _terminal_config = load_terminal_config()
-BROKER = _terminal_config.get("broker", "default")
-ACCOUNT = _terminal_config.get("account", "")
 
-# terminal64.exe lives in <BASE_DIR>/<broker>/
-TERMINAL_PATH = os.path.join(BASE_DIR, BROKER, "terminal64.exe")
-# Backward compat: if broker subdir doesn't exist, check BASE_DIR directly
-if not os.path.exists(TERMINAL_PATH):
-    _legacy = os.path.join(BASE_DIR, "terminal64.exe")
-    if os.path.exists(_legacy):
-        TERMINAL_PATH = _legacy
+BROKER = _args.broker or _terminal_config.get("broker", "default")
+ACCOUNT = _args.account or _terminal_config.get("account", "")
+PORT = _args.port or 6542
+
+# Resolve TERMINAL_PATH with fallback chain:
+# 1. <broker>/<account>/terminal64.exe  (multi-terminal layout)
+# 2. <broker>/base/terminal64.exe       (base install)
+# 3. <broker>/terminal64.exe            (legacy layout)
+# 4. terminal64.exe                     (ancient legacy)
+_candidates = []
+if ACCOUNT:
+    _candidates.append(os.path.join(BASE_DIR, BROKER, ACCOUNT, "terminal64.exe"))
+_candidates.append(os.path.join(BASE_DIR, BROKER, "base", "terminal64.exe"))
+_candidates.append(os.path.join(BASE_DIR, BROKER, "terminal64.exe"))
+_candidates.append(os.path.join(BASE_DIR, "terminal64.exe"))
+
+TERMINAL_PATH = _candidates[0]
+for _c in _candidates:
+    if os.path.exists(_c):
+        TERMINAL_PATH = _c
+        break
 
 TIMEFRAME_MAP = {
-    "M1": mt5.TIMEFRAME_M1, "M2": mt5.TIMEFRAME_M2, "M3": mt5.TIMEFRAME_M3,
-    "M4": mt5.TIMEFRAME_M4, "M5": mt5.TIMEFRAME_M5, "M6": mt5.TIMEFRAME_M6,
-    "M10": mt5.TIMEFRAME_M10, "M12": mt5.TIMEFRAME_M12,
-    "M15": mt5.TIMEFRAME_M15, "M20": mt5.TIMEFRAME_M20, "M30": mt5.TIMEFRAME_M30,
-    "H1": mt5.TIMEFRAME_H1, "H2": mt5.TIMEFRAME_H2, "H3": mt5.TIMEFRAME_H3,
-    "H4": mt5.TIMEFRAME_H4, "H6": mt5.TIMEFRAME_H6, "H8": mt5.TIMEFRAME_H8,
+    "M1": mt5.TIMEFRAME_M1,
+    "M2": mt5.TIMEFRAME_M2,
+    "M3": mt5.TIMEFRAME_M3,
+    "M4": mt5.TIMEFRAME_M4,
+    "M5": mt5.TIMEFRAME_M5,
+    "M6": mt5.TIMEFRAME_M6,
+    "M10": mt5.TIMEFRAME_M10,
+    "M12": mt5.TIMEFRAME_M12,
+    "M15": mt5.TIMEFRAME_M15,
+    "M20": mt5.TIMEFRAME_M20,
+    "M30": mt5.TIMEFRAME_M30,
+    "H1": mt5.TIMEFRAME_H1,
+    "H2": mt5.TIMEFRAME_H2,
+    "H3": mt5.TIMEFRAME_H3,
+    "H4": mt5.TIMEFRAME_H4,
+    "H6": mt5.TIMEFRAME_H6,
+    "H8": mt5.TIMEFRAME_H8,
     "H12": mt5.TIMEFRAME_H12,
-    "D1": mt5.TIMEFRAME_D1, "W1": mt5.TIMEFRAME_W1, "MN1": mt5.TIMEFRAME_MN1,
+    "D1": mt5.TIMEFRAME_D1,
+    "W1": mt5.TIMEFRAME_W1,
+    "MN1": mt5.TIMEFRAME_MN1,
 }
 
 ORDER_TYPE_MAP = {

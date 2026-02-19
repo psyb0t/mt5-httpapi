@@ -10,6 +10,10 @@ mkdir "%LOGDIR%" 2>nul
 
 call :log "%INSTALL_LOG%" "====== Boot ======"
 call "%SHARED%\install.bat"
+if !errorlevel! equ 3 (
+    call :log "%INSTALL_LOG%" "Reboot scheduled by install.bat, stopping."
+    exit /b 0
+)
 if !errorlevel! neq 0 (
     call :log "%INSTALL_LOG%" "ERROR: install.bat failed (exit code !errorlevel!)"
     pause
@@ -24,7 +28,25 @@ if !errorlevel! neq 0 (
     call :log "%PIP_LOG%" "pip done."
 )
 
-:: Read broker and account from terminal.json
+:: Kill lingering MT5 terminals
+tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul && (
+    call :log "%API_LOG%" "Killing lingering MT5 terminals..."
+    taskkill /f /im terminal64.exe >nul 2>&1
+    timeout /t 2 /nobreak >nul
+)
+
+:: ── Check for terminals.json (multi-terminal) or fallback to terminal.json ──
+if exist "%SHARED%\terminals.json" (
+    call :log "%API_LOG%" "Found terminals.json, launching multi-terminal mode..."
+    goto :launch_multi
+)
+
+call :log "%API_LOG%" "No terminals.json, falling back to single terminal mode..."
+goto :launch_single
+
+:: ══════════════════════════════════════════════════════════════════
+:launch_single
+:: Legacy single-terminal mode (reads terminal.json)
 set BROKER=default
 set ACCOUNT=
 for /f "usebackq delims=" %%L in (`python -c "import json;t=json.load(open(r'%SHARED%\terminal.json'));print(t.get('broker','default'));print(t.get('account',''))" 2^>nul`) do (
@@ -38,48 +60,136 @@ for /f "usebackq delims=" %%L in (`python -c "import json;t=json.load(open(r'%SH
 set _GOT_BROKER=
 set "MT5DIR=%SHARED%\!BROKER!"
 
-call :log "%API_LOG%" "Using broker: !BROKER!, account: !ACCOUNT!"
-call :log "%API_LOG%" "Terminal dir: !MT5DIR!"
-
+:: Support new layout: check broker\account\ then broker\base\ then broker\
+if defined ACCOUNT if not "!ACCOUNT!"=="" (
+    if exist "!MT5DIR!\!ACCOUNT!\terminal64.exe" (
+        set "MT5DIR=!MT5DIR!\!ACCOUNT!"
+        goto :single_found
+    )
+)
+if exist "!MT5DIR!\base\terminal64.exe" (
+    set "MT5DIR=!MT5DIR!\base"
+    goto :single_found
+)
 if not exist "!MT5DIR!\terminal64.exe" (
-    call :log "%API_LOG%" "ERROR: terminal64.exe not found in !MT5DIR!"
-    goto :start_api
+    call :log "%API_LOG%" "ERROR: terminal64.exe not found for broker !BROKER!"
+    goto :start_single_api
 )
 
-:: Write MT5 startup config with algo trading enabled + account from account.json
-set MT5CFG=!MT5DIR!\mt5start.ini
-python -c "import json,os;d=json.load(open(os.path.join(r'%SHARED%','account.json')));b=d.get('!BROKER!',{});a='!ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!MT5CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%API_LOG%" 2>&1
-if errorlevel 1 (
-    call :log "%API_LOG%" "WARNING: account.json not found or invalid, starting without login"
-    (
-    echo [Common]
-    echo NewsEnable=0
-    echo [Experts]
-    echo AllowLiveTrading=1
-    echo AllowDllImport=1
-    echo Enabled=1
-    echo [Email]
-    echo Enable=0
-    ) > "!MT5CFG!"
-)
+:single_found
+call :log "%API_LOG%" "Single mode: broker=!BROKER! account=!ACCOUNT! dir=!MT5DIR!"
 
-:: Kill any non-portable MT5 terminals left over from installation
-tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul && (
-    call :log "%API_LOG%" "Killing lingering MT5 terminals..."
-    taskkill /f /im terminal64.exe >nul 2>&1
-    timeout /t 2 /nobreak >nul
-)
-
+call :write_ini "!MT5DIR!" "!BROKER!" "!ACCOUNT!"
 call :log "%API_LOG%" "Starting MetaTrader 5 (portable)..."
-start "" "!MT5DIR!\terminal64.exe" /portable /config:"!MT5CFG!"
-
-:: Give MT5 time to start before the API connects
+start "" "!MT5DIR!\terminal64.exe" /portable /config:"!MT5DIR!\mt5start.ini"
 timeout /t 10 /nobreak >nul
 
-:start_api
-call :log "%API_LOG%" "Starting HTTP API server..."
+:start_single_api
+call :log "%API_LOG%" "Starting HTTP API server (single mode, port 6542)..."
 cd /d "%SHARED%"
 python -m mt5api >> "%API_LOG%" 2>&1
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:launch_multi
+:: Read terminals.json and launch each terminal
+set TERM_COUNT=0
+for /f "usebackq delims=" %%L in (`python -c "import json;[print(t['broker'],t['account'],t['port']) for t in json.load(open(r'%SHARED%\terminals.json'))]" 2^>nul`) do (
+    call :launch_terminal %%L
+    set /a TERM_COUNT+=1
+)
+
+if !TERM_COUNT! equ 0 (
+    call :log "%API_LOG%" "ERROR: No terminals configured in terminals.json"
+    exit /b 1
+)
+
+:: Wait for terminals to initialize
+call :log "%API_LOG%" "Waiting 10s for !TERM_COUNT! MT5 terminal(s) to initialize..."
+timeout /t 10 /nobreak >nul
+
+:: Launch all API processes (all but last as background, last in foreground)
+set API_IDX=0
+for /f "usebackq delims=" %%L in (`python -c "import json;[print(t['broker'],t['account'],t['port']) for t in json.load(open(r'%SHARED%\terminals.json'))]" 2^>nul`) do (
+    set /a API_IDX+=1
+    if !API_IDX! equ !TERM_COUNT! (
+        call :launch_api_fg %%L
+    ) else (
+        call :launch_api_bg %%L
+    )
+)
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:launch_terminal
+:: %1=broker %2=account %3=port
+set "LT_BROKER=%~1"
+set "LT_ACCOUNT=%~2"
+set "LT_PORT=%~3"
+set "LT_BASEDIR=%SHARED%\!LT_BROKER!\base"
+set "LT_DIR=%SHARED%\!LT_BROKER!\!LT_ACCOUNT!"
+
+if not exist "!LT_BASEDIR!\terminal64.exe" (
+    call :log "%API_LOG%" "ERROR: No base install for !LT_BROKER! at !LT_BASEDIR!"
+    exit /b 1
+)
+
+:: Copy base to account dir if it doesn't exist
+if not exist "!LT_DIR!\terminal64.exe" (
+    call :log "%API_LOG%" "Copying !LT_BROKER!\base to !LT_BROKER!\!LT_ACCOUNT!..."
+    xcopy "!LT_BASEDIR!\*" "!LT_DIR!\" /E /I /H /Y /Q >nul 2>&1
+)
+
+call :write_ini "!LT_DIR!" "!LT_BROKER!" "!LT_ACCOUNT!"
+
+call :log "%API_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!)"
+start "" "!LT_DIR!\terminal64.exe" /portable /config:"!LT_DIR!\mt5start.ini"
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:launch_api_bg
+:: %1=broker %2=account %3=port — background API process
+set "LA_BROKER=%~1"
+set "LA_ACCOUNT=%~2"
+set "LA_PORT=%~3"
+set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
+
+call :log "%API_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
+start "" cmd /c "cd /d %SHARED% && python -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! >> "!LA_LOG!" 2>&1"
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:launch_api_fg
+:: %1=broker %2=account %3=port — foreground API process (keeps script alive)
+set "LA_BROKER=%~1"
+set "LA_ACCOUNT=%~2"
+set "LA_PORT=%~3"
+set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
+
+call :log "%API_LOG%" "Starting API (fg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
+cd /d "%SHARED%"
+python -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! >> "!LA_LOG!" 2>&1
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:write_ini
+:: %1=mt5dir %2=broker %3=account
+set "WI_DIR=%~1"
+set "WI_BROKER=%~2"
+set "WI_ACCOUNT=%~3"
+set "WI_CFG=!WI_DIR!\mt5start.ini"
+python -c "import json,os;d=json.load(open(os.path.join(r'%SHARED%','accounts.json')));b=d.get('!WI_BROKER!',{});a='!WI_ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!WI_CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%API_LOG%" 2>&1
+if errorlevel 1 (
+    call :log "%API_LOG%" "WARNING: Could not write ini for !WI_BROKER!/!WI_ACCOUNT!, using defaults"
+    echo [Common]> "!WI_CFG!"
+    echo NewsEnable=0>> "!WI_CFG!"
+    echo [Experts]>> "!WI_CFG!"
+    echo AllowLiveTrading=1>> "!WI_CFG!"
+    echo AllowDllImport=1>> "!WI_CFG!"
+    echo Enabled=1>> "!WI_CFG!"
+    echo [Email]>> "!WI_CFG!"
+    echo Enable=0>> "!WI_CFG!"
+)
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

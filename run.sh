@@ -34,7 +34,7 @@ fi
 
 # Copy scripts to their mount points
 echo "Syncing scripts to mount points..."
-cp "${DIR}/scripts/install.bat" "${DIR}/data/oem/install.bat"
+cp "${DIR}/scripts/oem-install.bat" "${DIR}/data/oem/install.bat"
 cp "${DIR}/scripts/install.bat" "${DIR}/data/metatrader5/install.bat"
 cp "${DIR}/scripts/start-mt5.bat" "${DIR}/data/metatrader5/start-mt5.bat"
 cp "${DIR}/scripts/debloat.bat" "${DIR}/data/metatrader5/debloat.bat"
@@ -62,6 +62,33 @@ if [ "${DEBLOAT}" = "1" ]; then
     touch "${DIR}/data/metatrader5/debloat.flag"
 fi
 
+# Always clear stale lock file (VM may have crashed mid-install)
+rm -f "${DIR}/data/metatrader5/install.lock"
+
+# Generate .env with port range from terminals.json for docker-compose
+if [ -f "${DIR}/config/terminals.json" ]; then
+    PORTS=$(python3 -c "
+import json
+ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
+print(min(ports), max(ports))
+" 2>/dev/null)
+    read -r PORT_MIN PORT_MAX <<< "$PORTS"
+    if [ "$PORT_MIN" = "$PORT_MAX" ]; then
+        echo "API_PORT_RANGE=${PORT_MIN}" > "${DIR}/.env"
+    else
+        echo "API_PORT_RANGE=${PORT_MIN}-${PORT_MAX}" > "${DIR}/.env"
+    fi
+    API_PORTS=$(python3 -c "
+import json
+ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
+print(' '.join(str(p) for p in ports))
+" 2>/dev/null)
+    echo "Configured API ports: ${API_PORTS}"
+else
+    echo "API_PORT_RANGE=6542" > "${DIR}/.env"
+    API_PORTS="6542"
+fi
+
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
     echo "Stopping existing container..."
@@ -75,7 +102,9 @@ echo ""
 echo "Container starting. Windows will install on first run (~10-15 min)."
 echo ""
 echo "  noVNC: http://localhost:${NOVNC_PORT:-8006}"
-echo "  API:   http://localhost:${API_PORT:-6542}/ping"
+for PORT in ${API_PORTS}; do
+    echo "  API:   http://localhost:${PORT}/ping"
+done
 echo ""
 echo "Logs: docker compose -f ${DIR}/docker-compose.yml logs -f"
 
@@ -86,15 +115,17 @@ for i in $(seq 1 60); do
     VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
     if [ -n "${VM_IP}" ]; then
         echo "VM IP: ${VM_IP}"
-        docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c "
-            iptables -t nat -C PREROUTING -p tcp --dport 6542 -j DNAT --to-destination ${VM_IP}:6542 2>/dev/null || \
-            iptables -t nat -A PREROUTING -p tcp --dport 6542 -j DNAT --to-destination ${VM_IP}:6542
-            iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport 6542 -j MASQUERADE 2>/dev/null || \
-            iptables -t nat -A POSTROUTING -p tcp -d ${VM_IP} --dport 6542 -j MASQUERADE
-            iptables -C FORWARD -p tcp -d ${VM_IP} --dport 6542 -j ACCEPT 2>/dev/null || \
-            iptables -A FORWARD -p tcp -d ${VM_IP} --dport 6542 -j ACCEPT
-        "
-        echo "Port forwarding: host:${API_PORT:-6542} -> container:6542 -> VM:6542"
+        for PORT in ${API_PORTS}; do
+            docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c "
+                iptables -t nat -C PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT} 2>/dev/null || \
+                iptables -t nat -A PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT}
+                iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE 2>/dev/null || \
+                iptables -t nat -A POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE
+                iptables -C FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT 2>/dev/null || \
+                iptables -A FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT
+            "
+            echo "Port forwarding: host:${PORT} -> container:${PORT} -> VM:${PORT}"
+        done
         break
     fi
     sleep 5

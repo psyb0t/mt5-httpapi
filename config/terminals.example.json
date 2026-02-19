@@ -1,0 +1,12 @@
+[
+  {
+    "broker": "ftmo",
+    "account": "tenkchallenge",
+    "port": 6542
+  },
+  {
+    "broker": "ftmo",
+    "account": "bigchallenge",
+    "port": 6543
+  }
+]
