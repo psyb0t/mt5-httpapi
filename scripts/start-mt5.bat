@@ -35,63 +35,14 @@ tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul
     timeout /t 2 /nobreak >nul
 )
 
-:: ── Check for terminals.json (multi-terminal) or fallback to terminal.json ──
-if exist "%SHARED%\terminals.json" (
-    call :log "%API_LOG%" "Found terminals.json, launching multi-terminal mode..."
-    goto :launch_multi
+if not exist "%SHARED%\terminals.json" (
+    call :log "%API_LOG%" "============================================"
+    call :log "%API_LOG%" " ERROR: terminals.json not found!"
+    call :log "%API_LOG%" " Create config/terminals.json and re-run."
+    call :log "%API_LOG%" "============================================"
+    exit /b 1
 )
 
-call :log "%API_LOG%" "No terminals.json, falling back to single terminal mode..."
-goto :launch_single
-
-:: ══════════════════════════════════════════════════════════════════
-:launch_single
-:: Legacy single-terminal mode (reads terminal.json)
-set BROKER=default
-set ACCOUNT=
-for /f "usebackq delims=" %%L in (`python -c "import json;t=json.load(open(r'%SHARED%\terminal.json'));print(t.get('broker','default'));print(t.get('account',''))" 2^>nul`) do (
-    if not defined _GOT_BROKER (
-        set "BROKER=%%L"
-        set _GOT_BROKER=1
-    ) else (
-        set "ACCOUNT=%%L"
-    )
-)
-set _GOT_BROKER=
-set "MT5DIR=%SHARED%\!BROKER!"
-
-:: Support new layout: check broker\account\ then broker\base\ then broker\
-if defined ACCOUNT if not "!ACCOUNT!"=="" (
-    if exist "!MT5DIR!\!ACCOUNT!\terminal64.exe" (
-        set "MT5DIR=!MT5DIR!\!ACCOUNT!"
-        goto :single_found
-    )
-)
-if exist "!MT5DIR!\base\terminal64.exe" (
-    set "MT5DIR=!MT5DIR!\base"
-    goto :single_found
-)
-if not exist "!MT5DIR!\terminal64.exe" (
-    call :log "%API_LOG%" "ERROR: terminal64.exe not found for broker !BROKER!"
-    goto :start_single_api
-)
-
-:single_found
-call :log "%API_LOG%" "Single mode: broker=!BROKER! account=!ACCOUNT! dir=!MT5DIR!"
-
-call :write_ini "!MT5DIR!" "!BROKER!" "!ACCOUNT!"
-call :log "%API_LOG%" "Starting MetaTrader 5 (portable)..."
-start "" "!MT5DIR!\terminal64.exe" /portable /config:"!MT5DIR!\mt5start.ini"
-timeout /t 10 /nobreak >nul
-
-:start_single_api
-call :log "%API_LOG%" "Starting HTTP API server (single mode, port 6542)..."
-cd /d "%SHARED%"
-python -m mt5api >> "%API_LOG%" 2>&1
-exit /b 0
-
-:: ══════════════════════════════════════════════════════════════════
-:launch_multi
 :: Read terminals.json and launch each terminal
 set TERM_COUNT=0
 for /f "usebackq delims=" %%L in (`python -c "import json;[print(t['broker'],t['account'],t['port']) for t in json.load(open(r'%SHARED%\terminals.json'))]" 2^>nul`) do (

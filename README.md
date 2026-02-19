@@ -94,19 +94,6 @@ Defines which terminals to run. Each entry gets its own MT5 terminal instance an
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
 
-### `config/terminal.json` (legacy)
-
-Single-terminal fallback. If `terminals.json` doesn't exist, the system falls back to this:
-
-```json
-{
-  "broker": "roboforex",
-  "account": "main"
-}
-```
-
-Runs one terminal on port 6542. You don't need this if you're using `terminals.json`.
-
 ### `config/requirements.txt`
 
 Extra Python packages you want in the VM. `MetaTrader5` and `flask` are already in there.
@@ -697,10 +684,8 @@ API ports are determined by `config/terminals.json`. The `run.sh` script reads a
 config/                      Your config shit
   accounts.json              Broker credentials (gitignored)
   terminals.json             Multi-terminal config (gitignored)
-  terminals.example.json     Example multi-terminal config
-  terminal.json              Legacy single-terminal config (gitignored)
-  accounts.json.example        Example credentials
-  terminal.example.json      Legacy example terminal config
+  terminals.example.json     Example config
+  accounts.json.example      Example credentials
   requirements.txt           Python packages for the VM
   setup.bat                  Custom boot commands
 

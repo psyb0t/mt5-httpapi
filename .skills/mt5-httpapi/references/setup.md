@@ -45,7 +45,7 @@ Broker credentials organized by broker, then account name:
 
 ### `config/terminals.json`
 
-Which terminals to run — each gets its own MT5 instance and API port:
+Required. Defines which terminals to run — each gets its own MT5 instance and API port:
 
 ```json
 [
