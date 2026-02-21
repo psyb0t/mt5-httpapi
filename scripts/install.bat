@@ -19,6 +19,9 @@ call :log "============================================"
 call :log " MetaTrader 5 + Python Automated Setup"
 call :log "============================================"
 
+:: ── Disable UAC (headless VM, no need for it) ────────────────────
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
+
 :: ── Step 1: Install Python 3.12 ─────────────────────────────────
 set "PATH=C:\Program Files\Python312;C:\Program Files\Python312\Scripts;%PATH%"
 python --version >nul 2>&1
