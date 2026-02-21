@@ -68,13 +68,30 @@ def init_mt5(login=None, password=None, server=None):
 
 
 def ensure_initialized():
-    info = _run_with_timeout(mt5.terminal_info, timeout=5)
-    if info is not None:
+    info = _run_with_timeout(mt5.terminal_info, timeout=15)
+    if info is None:
+        account = get_first_account()
+        if account:
+            return init_mt5(**account)
+        return init_mt5()
+
+    # Terminal is running — check if actually logged in
+    acc = _run_with_timeout(mt5.account_info, timeout=15)
+    if acc is not None and acc.login != 0:
         return True
+
+    # Not logged in — try mt5.login()
     account = get_first_account()
-    if account:
-        return init_mt5(**account)
-    return init_mt5()
+    if not account:
+        return True
+    return _run_with_timeout(
+        lambda: mt5.login(
+            login=int(account["login"]),
+            password=account["password"],
+            server=account["server"],
+        ),
+        timeout=INIT_TIMEOUT,
+    )
 
 
 def to_dict(named_tuple):
