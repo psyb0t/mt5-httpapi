@@ -62,8 +62,8 @@ if [ "${DEBLOAT}" = "1" ]; then
     touch "${DIR}/data/metatrader5/debloat.flag"
 fi
 
-# Always clear stale lock file (VM may have crashed mid-install)
-rm -f "${DIR}/data/metatrader5/install.lock"
+# Always clear stale lock dir (VM may have crashed mid-install)
+rm -rf "${DIR}/data/metatrader5/install.running"
 
 # Generate .env with port range from terminals.json for docker-compose
 if [ -f "${DIR}/config/terminals.json" ]; then

@@ -719,11 +719,10 @@ data/                        Generated/volatile data (gitignored)
 
 Inside the VM's shared folder (`data/metatrader5/logs/`):
 
-- `install.log` - MT5 installation progress
-- `setup.log` - Boot-time setup output
+- `install.log` - MT5 installation progress (install.bat)
+- `start-mt5.log` - Boot sequence log (start-mt5.bat)
 - `pip.log` - Python package installation
-- `api.log` - HTTP API server output (single-terminal mode)
-- `api-<broker>-<account>.log` - Per-terminal API logs (multi-terminal mode)
+- `api-<broker>-<account>.log` - Per-terminal API logs
 
 When shit breaks, check these first.
 
