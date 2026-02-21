@@ -9,3 +9,4 @@ config/terminals.json
 .env
 run.log
 __pycache__
+commit.sh
