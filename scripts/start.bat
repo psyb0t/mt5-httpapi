@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 set SHARED=C:\Users\Docker\Desktop\Shared
 set SCRIPTS=%SHARED%\scripts
 set CONFIG=%SHARED%\config
-set BROKERS=%SHARED%\brokers
+set BROKERS=%SHARED%\terminals
 set LOGDIR=%SHARED%\logs
 set INSTALL_LOG=%LOGDIR%\install.log
 set PIP_LOG=%LOGDIR%\pip.log

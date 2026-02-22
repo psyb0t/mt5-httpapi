@@ -10,7 +10,7 @@ PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
 ACCOUNT_FILE = os.path.join(BASE_DIR, "config", "accounts.json")
 TERMINAL_FILE = os.path.join(BASE_DIR, "config", "terminal.json")
-BROKERS_DIR = os.path.join(BASE_DIR, "brokers")
+BROKERS_DIR = os.path.join(BASE_DIR, "terminals")
 
 
 def _parse_args():

@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 set SHARED=C:\Users\Docker\Desktop\Shared
 set SCRIPTS=%SHARED%\scripts
 set CONFIG=%SHARED%\config
-set BROKERS=%SHARED%\brokers
+set BROKERS=%SHARED%\terminals
 set LOGDIR=%SHARED%\logs
 set INSTALL_LOG=%LOGDIR%\install.log
 set "LOCKDIR=%SHARED%\install.running"
@@ -21,6 +21,12 @@ set NEEDS_REBOOT=0
 call :log "============================================"
 call :log " MetaTrader 5 + Python Automated Setup"
 call :log "============================================"
+
+:: ── Disable Windows Store app execution aliases (fake python) ────
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\python.exe" /f >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\python3.exe" /f >nul 2>&1
+if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe" del "%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe" >nul 2>&1
+if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe" del "%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe" >nul 2>&1
 
 :: ── Disable UAC + admin consent prompts (headless VM) ─────────────
 :: EnableLUA=0 disables UAC entirely (needs reboot)
@@ -76,10 +82,10 @@ del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.b
 del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.lnk" 2>nul
 
 :: ── Step 1: Install Python 3.12 ─────────────────────────────────
-set "PATH=C:\Program Files\Python312;C:\Program Files\Python312\Scripts;%PATH%"
-python --version >nul 2>&1
-if !errorlevel! equ 0 (
-    for /f "delims=" %%V in ('python --version 2^>^&1') do call :log "[1/5] Python already installed: %%V"
+set "PYDIR=C:\Program Files\Python312"
+set "PATH=%PYDIR%;%PYDIR%\Scripts;%PATH%"
+if exist "%PYDIR%\python.exe" (
+    for /f "delims=" %%V in ('"%PYDIR%\python.exe" --version 2^>^&1') do call :log "[1/5] Python already installed: %%V"
 ) else (
     call :log "[1/5] Downloading Python 3.12..."
     curl -L -o C:\python-installer.exe https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe
@@ -98,13 +104,12 @@ if !errorlevel! equ 0 (
     )
     timeout /t 10 /nobreak >nul
     del C:\python-installer.exe
-    python --version >nul 2>&1
-    if !errorlevel! neq 0 (
+    if not exist "%PYDIR%\python.exe" (
         call :log "ERROR: Python not found after installation"
         rmdir "%LOCKDIR%" 2>nul
         exit /b 1
     )
-    for /f "delims=" %%V in ('python --version 2^>^&1') do call :log "[1/5] Python installed: %%V"
+    for /f "delims=" %%V in ('"%PYDIR%\python.exe" --version 2^>^&1') do call :log "[1/5] Python installed: %%V"
 )
 
 :: ── Step 2: Install MetaTrader5 Python package ──────────────────

@@ -12,7 +12,7 @@ done
 LOG_FILE="${DIR}/run.log"
 exec > >(tee "${LOG_FILE}") 2>&1
 
-mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/brokers" "${DIR}/data/oem"
+mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem"
 
 # Check for KVM
 if [ ! -e /dev/kvm ]; then
@@ -52,7 +52,7 @@ done
 for f in "${DIR}"/mt5installers/mt5setup-*.exe; do
     [ -f "$f" ] || continue
     echo "Found broker installer: $(basename "$f")"
-    cp "$f" "${DIR}/data/shared/brokers/$(basename "$f")"
+    cp "$f" "${DIR}/data/shared/terminals/$(basename "$f")"
 done
 
 # Copy the mt5api package directory
