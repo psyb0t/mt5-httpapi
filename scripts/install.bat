@@ -19,8 +19,16 @@ call :log "============================================"
 call :log " MetaTrader 5 + Python Automated Setup"
 call :log "============================================"
 
-:: ── Disable UAC (headless VM, no need for it) ────────────────────
+:: ── Disable UAC (headless VM, liveupdate needs no prompts) ──────
+set UAC_ENABLED=0x1
+for /f "tokens=3" %%V in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA 2^>nul ^| findstr /i "EnableLUA"') do set UAC_ENABLED=%%V
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
+if "!UAC_ENABLED!" neq "0x0" (
+    call :log "UAC was enabled — disabled, rebooting to apply..."
+    rmdir "%LOCKDIR%" 2>nul
+    shutdown /r /t 5 /f
+    exit /b 3
+)
 
 :: ── Ensure elevated scheduled task exists (idempotent) ───────────
 schtasks /query /tn "MT5Start" >nul 2>&1

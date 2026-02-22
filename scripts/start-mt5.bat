@@ -26,11 +26,6 @@ if !errorlevel! neq 0 (
 )
 call :log "%START_LOG%" "install.bat done."
 
-:: ── Kill MT5 auto-updater to prevent surprise reboots ───────────
-call :log "%START_LOG%" "Killing MT5 updater processes..."
-taskkill /f /im liveupdate.exe >nul 2>&1
-taskkill /f /im mtupdate.exe >nul 2>&1
-
 :: ── Pip install ──────────────────────────────────────────────────
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
@@ -74,10 +69,6 @@ if !TERM_COUNT! equ 0 (
 
 call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 10s to initialize..."
 timeout /t 10 /nobreak >nul
-
-:: Kill updater again after terminals had a chance to start ───────
-taskkill /f /im liveupdate.exe >nul 2>&1
-taskkill /f /im mtupdate.exe >nul 2>&1
 
 :: ── Launch API processes ─────────────────────────────────────────
 call :log "%START_LOG%" "Launching API processes..."
