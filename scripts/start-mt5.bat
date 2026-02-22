@@ -6,8 +6,17 @@ set INSTALL_LOG=%LOGDIR%\install.log
 set PIP_LOG=%LOGDIR%\pip.log
 set API_LOG=%LOGDIR%\api.log
 set START_LOG=%LOGDIR%\start-mt5.log
+set "LOCKDIR=%SHARED%\start-mt5.running"
 
 mkdir "%LOGDIR%" 2>nul
+
+:: ── Atomic lock (only one start-mt5.bat instance at a time) ──────
+mkdir "%LOCKDIR%" 2>nul
+if !errorlevel! neq 0 (
+    echo [%date% %time%] Another start-mt5.bat is already running, exiting.
+    echo [%date% %time%] Another start-mt5.bat is already running, exiting. >> "%START_LOG%"
+    exit /b 0
+)
 
 call :log "%START_LOG%" "====== Boot ======"
 call :log "%INSTALL_LOG%" "====== Boot ======"
