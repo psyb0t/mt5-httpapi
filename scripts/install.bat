@@ -22,6 +22,17 @@ call :log "============================================"
 :: ── Disable UAC (headless VM, no need for it) ────────────────────
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
 
+:: ── Ensure elevated scheduled task exists (idempotent) ───────────
+schtasks /query /tn "MT5Start" >nul 2>&1
+if !errorlevel! neq 0 (
+    call :log "Creating MT5Start scheduled task..."
+    schtasks /create /tn "MT5Start" /tr "cmd /c \"%SHARED%\start-mt5.bat\"" /sc onlogon /ru "Docker" /rl HIGHEST /f >nul 2>&1
+    call :log "MT5Start task created — rebooting to apply..."
+    rmdir "%LOCKDIR%" 2>nul
+    shutdown /r /t 5 /f
+    exit /b 3
+)
+
 :: ── Step 1: Install Python 3.12 ─────────────────────────────────
 set "PATH=C:\Program Files\Python312;C:\Program Files\Python312\Scripts;%PATH%"
 python --version >nul 2>&1

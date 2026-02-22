@@ -115,7 +115,7 @@ if not exist "!LT_DIR!\terminal64.exe" (
 call :write_ini "!LT_DIR!" "!LT_BROKER!" "!LT_ACCOUNT!"
 
 call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!)"
-start "" "!LT_DIR!\terminal64.exe" /portable /config:"!LT_DIR!\mt5start.ini"
+powershell -Command "Start-Process '!LT_DIR!\terminal64.exe' -ArgumentList '/portable','/config:\"!LT_DIR!\mt5start.ini\"' -Verb RunAs -WindowStyle Normal"
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

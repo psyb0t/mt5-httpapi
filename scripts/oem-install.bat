@@ -1,7 +1,6 @@
 @echo off
-:: OEM first-boot script — only creates the startup entry.
+:: OEM first-boot script — registers start-mt5.bat as an elevated scheduled task.
 :: All real work happens via start-mt5.bat -> install.bat on the shared drive.
 set SHARED=C:\Users\Docker\Desktop\Shared
-set "STARTUP=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.bat"
-echo @echo off> "%STARTUP%"
-echo call "%SHARED%\start-mt5.bat">> "%STARTUP%"
+
+schtasks /create /tn "MT5Start" /tr "cmd /c \"%SHARED%\start-mt5.bat\"" /sc onlogon /ru "Docker" /rl HIGHEST /f >nul 2>&1
