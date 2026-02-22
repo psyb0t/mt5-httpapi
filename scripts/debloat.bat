@@ -143,7 +143,7 @@ fsutil behavior set disablelastaccess 1 >nul 2>&1
 :: ── Nuke Windows Defender / Antimalware ────────────────────────
 :: Using https://github.com/ionuttbara/windows-defender-remover
 echo Removing Windows Defender...
-set "DEFREM=%SHARED%\defender-remover"
+set "DEFREM=%SHARED%\scripts\defender-remover"
 
 :: Step 1: Apply all .reg files via PowerRun (runs as SYSTEM to bypass Tamper Protection)
 echo   Applying registry patches as SYSTEM...

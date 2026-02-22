@@ -8,8 +8,9 @@ HOST = "0.0.0.0"
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
-ACCOUNT_FILE = os.path.join(BASE_DIR, "accounts.json")
-TERMINAL_FILE = os.path.join(BASE_DIR, "terminal.json")
+ACCOUNT_FILE = os.path.join(BASE_DIR, "config", "accounts.json")
+TERMINAL_FILE = os.path.join(BASE_DIR, "config", "terminal.json")
+BROKERS_DIR = os.path.join(BASE_DIR, "brokers")
 
 
 def _parse_args():
@@ -35,17 +36,11 @@ BROKER = _args.broker or _terminal_config.get("broker", "default")
 ACCOUNT = _args.account or _terminal_config.get("account", "")
 PORT = _args.port or 6542
 
-# Resolve TERMINAL_PATH with fallback chain:
-# 1. <broker>/<account>/terminal64.exe  (multi-terminal layout)
-# 2. <broker>/base/terminal64.exe       (base install)
-# 3. <broker>/terminal64.exe            (legacy layout)
-# 4. terminal64.exe                     (ancient legacy)
+# Resolve TERMINAL_PATH: account-specific copy first, then base install
 _candidates = []
 if ACCOUNT:
-    _candidates.append(os.path.join(BASE_DIR, BROKER, ACCOUNT, "terminal64.exe"))
-_candidates.append(os.path.join(BASE_DIR, BROKER, "base", "terminal64.exe"))
-_candidates.append(os.path.join(BASE_DIR, BROKER, "terminal64.exe"))
-_candidates.append(os.path.join(BASE_DIR, "terminal64.exe"))
+    _candidates.append(os.path.join(BROKERS_DIR, BROKER, ACCOUNT, "terminal64.exe"))
+_candidates.append(os.path.join(BROKERS_DIR, BROKER, "base", "terminal64.exe"))
 
 TERMINAL_PATH = _candidates[0]
 for _c in _candidates:

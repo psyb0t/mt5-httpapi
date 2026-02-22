@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 set SHARED=C:\Users\Docker\Desktop\Shared
+set SCRIPTS=%SHARED%\scripts
+set CONFIG=%SHARED%\config
+set BROKERS=%SHARED%\brokers
 set LOGDIR=%SHARED%\logs
 set INSTALL_LOG=%LOGDIR%\install.log
 set "LOCKDIR=%SHARED%\install.running"
@@ -35,11 +38,29 @@ if not exist "%UAC_DONE%" (
     exit /b 3
 )
 
+:: ── Append custom hosts entries (idempotent) ─────────────────────
+set "HOSTS=%SystemRoot%\System32\drivers\etc\hosts"
+set "CUSTOM_HOSTS=%CONFIG%\hosts"
+if exist "%CUSTOM_HOSTS%" (
+    findstr /c:"# MT5-CUSTOM-HOSTS" "%HOSTS%" >nul 2>&1
+    if !errorlevel! neq 0 (
+        call :log "Appending custom hosts entries..."
+        echo.>> "%HOSTS%"
+        echo # MT5-CUSTOM-HOSTS>> "%HOSTS%"
+        type "%CUSTOM_HOSTS%" >> "%HOSTS%"
+        call :log "Custom hosts entries applied."
+    )
+)
+
+:: ── Disable Windows Update service ───────────────────────────────
+sc config wuauserv start= disabled >nul 2>&1
+sc stop wuauserv >nul 2>&1
+
 :: ── Ensure elevated scheduled task exists (idempotent) ───────────
 schtasks /query /tn "MT5Start" >nul 2>&1
 if !errorlevel! neq 0 (
     call :log "Creating MT5Start scheduled task..."
-    schtasks /create /tn "MT5Start" /tr "cmd /c \"%SHARED%\start-mt5.bat\"" /sc onlogon /ru "Docker" /rl HIGHEST /f >nul 2>&1
+    schtasks /create /tn "MT5Start" /tr "cmd /c \"%SCRIPTS%\start.bat\"" /sc onlogon /ru "Docker" /rl HIGHEST /f >nul 2>&1
     call :log "MT5Start task created — rebooting to apply..."
     rmdir "%LOCKDIR%" 2>nul
     shutdown /r /t 5 /f
@@ -47,8 +68,10 @@ if !errorlevel! neq 0 (
 )
 
 :: ── Remove legacy startup folder entries (prevent double-launch) ─
+del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start.bat" 2>nul
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.bat" 2>nul
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.lnk" 2>nul
+del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start.bat" 2>nul
 del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.bat" 2>nul
 del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.lnk" 2>nul
 
@@ -101,7 +124,8 @@ if !errorlevel! neq 0 (
 call :log "[2/5] MetaTrader5 package installed."
 
 :: ── Step 2.5: Migrate old broker dirs to base\ layout ─────────
-for /d %%D in ("%SHARED%\*") do (
+mkdir "%BROKERS%" 2>nul
+for /d %%D in ("%BROKERS%\*") do (
     if exist "%%D\terminal64.exe" (
         if not exist "%%D\base\terminal64.exe" (
             call :log "Migrating %%~nxD to %%~nxD\base..."
@@ -126,7 +150,7 @@ if exist "%DEBLOAT_DONE%" (
     call :log "[3/5] Already debloated, skipping."
 ) else (
     call :log "[3/5] Running Windows debloat..."
-    call "%SHARED%\debloat.bat"
+    call "%SCRIPTS%\debloat.bat"
     echo done > "%DEBLOAT_DONE%"
     call :log "[3/5] Debloat done — rebooting before MT5 install..."
     rmdir "%LOCKDIR%" 2>nul
@@ -138,7 +162,7 @@ if exist "%DEBLOAT_DONE%" (
 call :log "[4/5] Installing MetaTrader 5 terminal(s)..."
 
 set BROKER_COUNT=0
-for %%F in ("%SHARED%\mt5setup-*.exe") do (
+for %%F in ("%BROKERS%\mt5setup-*.exe") do (
     set /a BROKER_COUNT+=1
     set "FNAME=%%~nF"
     set "BNAME=!FNAME:mt5setup-=!"
@@ -162,7 +186,18 @@ call :log "[4/5] MetaTrader 5 terminal installation complete."
 
 :: ── Step 5: Firewall ──────────────────────────────────────────────
 call :log "[5/5] Configuring firewall..."
-netsh advfirewall firewall add rule name="MT5 HTTP API" dir=in action=allow protocol=TCP localport=6542-6552 >> "%INSTALL_LOG%" 2>&1
+:: Delete old rule first (idempotent), then create with current ports
+netsh advfirewall firewall delete rule name="MT5 HTTP API" >nul 2>&1
+set "FW_PORTS=6542"
+if exist "%CONFIG%\terminals.json" (
+    for /f "delims=" %%P in ('python -c "import json;ports=[t['port'] for t in json.load(open(r'%CONFIG%\terminals.json'))];print(str(min(ports))+'-'+str(max(ports)) if min(ports)!=max(ports) else str(min(ports)))" 2^>nul') do (
+        set "FW_PORTS=%%P"
+    )
+) else (
+    set "FW_PORTS=6542"
+)
+call :log "Opening firewall ports: !FW_PORTS!"
+netsh advfirewall firewall add rule name="MT5 HTTP API" dir=in action=allow protocol=TCP localport=!FW_PORTS! >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
     call :log "WARNING: Failed to add firewall rule (exit code !errorlevel!)"
 )
@@ -188,7 +223,7 @@ exit /b 0
 :install_one
 :: %~1 = broker name, %~2 = path to installer exe
 set "BROKER=%~1"
-set "BROKER_DIR=%SHARED%\%BROKER%\base"
+set "BROKER_DIR=%BROKERS%\%BROKER%\base"
 
 call :log "Processing broker: %BROKER%"
 

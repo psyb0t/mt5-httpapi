@@ -1,5 +1,5 @@
 services:
-  metatrader5:
+  mt5:
     image: dockurr/windows
     environment:
       RAM_SIZE: "4G"
@@ -16,7 +16,7 @@ services:
     volumes:
       - ./data/storage:/storage
       - ./data/oem:/oem
-      - ./data/metatrader5:/shared
+      - ./data/shared:/shared
       - ./data/win.iso:/boot.iso
     deploy:
       resources:

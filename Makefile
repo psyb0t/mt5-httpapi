@@ -15,7 +15,7 @@ status:
 	./test.sh
 
 clean: down
-	sudo rm -rf data/storage data/metatrader5 data/oem run.log
+	sudo rm -rf data/storage data/shared data/metatrader5 data/oem run.log
 
 distclean: clean
 	rm -f data/win.iso

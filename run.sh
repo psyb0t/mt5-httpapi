@@ -12,7 +12,7 @@ done
 LOG_FILE="${DIR}/run.log"
 exec > >(tee "${LOG_FILE}") 2>&1
 
-mkdir -p "${DIR}/data/storage" "${DIR}/data/metatrader5" "${DIR}/data/oem"
+mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/brokers" "${DIR}/data/oem"
 
 # Check for KVM
 if [ ! -e /dev/kvm ]; then
@@ -35,35 +35,39 @@ fi
 # Copy scripts to their mount points
 echo "Syncing scripts to mount points..."
 cp "${DIR}/scripts/oem-install.bat" "${DIR}/data/oem/install.bat"
-cp "${DIR}/scripts/install.bat" "${DIR}/data/metatrader5/install.bat"
-cp "${DIR}/scripts/start-mt5.bat" "${DIR}/data/metatrader5/start-mt5.bat"
-cp "${DIR}/scripts/debloat.bat" "${DIR}/data/metatrader5/debloat.bat"
-rm -rf "${DIR}/data/metatrader5/defender-remover"
-cp -r "${DIR}/scripts/defender-remover" "${DIR}/data/metatrader5/defender-remover"
-# Copy all config files to metatrader5 mount point
+cp "${DIR}/scripts/install.bat" "${DIR}/data/shared/scripts/install.bat"
+cp "${DIR}/scripts/start.bat" "${DIR}/data/shared/scripts/start.bat"
+cp "${DIR}/scripts/debloat.bat" "${DIR}/data/shared/scripts/debloat.bat"
+rm -rf "${DIR}/data/shared/scripts/defender-remover"
+cp -r "${DIR}/scripts/defender-remover" "${DIR}/data/shared/scripts/defender-remover"
+
+# Copy config files
 for f in "${DIR}"/config/*; do
     [ -e "$f" ] || continue
-    cp -a "$f" "${DIR}/data/metatrader5/"
-    echo "  copied: $(basename "$f")"
+    cp -a "$f" "${DIR}/data/shared/config/"
+    echo "  copied config: $(basename "$f")"
 done
+
 # Copy broker MT5 installers (mt5setup-*.exe)
 for f in "${DIR}"/mt5installers/mt5setup-*.exe; do
     [ -f "$f" ] || continue
     echo "Found broker installer: $(basename "$f")"
-    cp "$f" "${DIR}/data/metatrader5/$(basename "$f")"
+    cp "$f" "${DIR}/data/shared/brokers/$(basename "$f")"
 done
+
 # Copy the mt5api package directory
-rm -rf "${DIR}/data/metatrader5/mt5api"
-cp -r "${DIR}/mt5api" "${DIR}/data/metatrader5/mt5api"
+rm -rf "${DIR}/data/shared/mt5api"
+cp -r "${DIR}/mt5api" "${DIR}/data/shared/mt5api"
 
 # Drop debloat flag if requested
 if [ "${DEBLOAT}" = "1" ]; then
     echo "Debloat requested — will force re-debloat on next VM boot."
-    touch "${DIR}/data/metatrader5/debloat.flag"
+    touch "${DIR}/data/shared/debloat.flag"
 fi
 
-# Always clear stale lock dir (VM may have crashed mid-install)
-rm -rf "${DIR}/data/metatrader5/install.running"
+# Always clear stale lock dirs (VM may have crashed mid-run)
+rm -rf "${DIR}/data/shared/install.running"
+rm -rf "${DIR}/data/shared/start.running"
 
 # Generate .env with port range from terminals.json for docker-compose
 if [ -f "${DIR}/config/terminals.json" ]; then
@@ -91,7 +95,13 @@ fi
 
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
-    echo "Stopping existing container..."
+    echo "Container is already running."
+    read -p "Stop and restart? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
     docker compose -f "${DIR}/docker-compose.yml" down
 fi
 
@@ -112,11 +122,11 @@ echo "Logs: docker compose -f ${DIR}/docker-compose.yml logs -f"
 echo ""
 echo "Waiting for VM to get an IP (for API port forwarding)..."
 for i in $(seq 1 60); do
-    VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
+    VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T mt5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
     if [ -n "${VM_IP}" ]; then
         echo "VM IP: ${VM_IP}"
         for PORT in ${API_PORTS}; do
-            docker compose -f "${DIR}/docker-compose.yml" exec -T metatrader5 bash -c "
+            docker compose -f "${DIR}/docker-compose.yml" exec -T mt5 bash -c "
                 iptables -t nat -C PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT} 2>/dev/null || \
                 iptables -t nat -A PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT}
                 iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE 2>/dev/null || \

@@ -1,0 +1,17 @@
+# Block Windows Update
+127.0.0.1 windowsupdate.microsoft.com
+127.0.0.1 update.microsoft.com
+127.0.0.1 windowsupdate.com
+127.0.0.1 download.windowsupdate.com
+127.0.0.1 download.microsoft.com
+127.0.0.1 wustat.windows.com
+127.0.0.1 ntservicepack.microsoft.com
+127.0.0.1 fe2.update.microsoft.com
+127.0.0.1 fe3.delivery.mp.microsoft.com
+127.0.0.1 sls.update.microsoft.com
+127.0.0.1 ctldl.windowsupdate.com
+127.0.0.1 go.microsoft.com
+127.0.0.1 dl.delivery.mp.microsoft.com
+127.0.0.1 emdl.ws.microsoft.com
+127.0.0.1 statsfe2.update.microsoft.com
+127.0.0.1 statsfe2.ws.microsoft.com
