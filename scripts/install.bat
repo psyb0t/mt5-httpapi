@@ -129,12 +129,15 @@ call :log "[4/5] Installing MetaTrader 5 terminal(s)..."
 set BROKER_COUNT=0
 for %%F in ("%SHARED%\mt5setup-*.exe") do (
     set /a BROKER_COUNT+=1
-    set "INSTALLER_!BROKER_COUNT!=%%F"
     set "FNAME=%%~nF"
-    set "BNAME_!BROKER_COUNT!=!FNAME:mt5setup-=!"
-    call :log "  found installer: %%~nxF (broker: !FNAME:mt5setup-=!)"
+    set "BNAME=!FNAME:mt5setup-=!"
+    call :log "  found installer: %%~nxF (broker: !BNAME!)"
+    call :install_one "!BNAME!" "%%~F"
+    if !errorlevel! neq 0 (
+        rmdir "%LOCKDIR%" 2>nul
+        exit /b 1
+    )
 )
-call :log "Detected !BROKER_COUNT! MT5 installer(s)."
 
 if !BROKER_COUNT! equ 0 (
     call :log "============================================"
@@ -142,14 +145,6 @@ if !BROKER_COUNT! equ 0 (
     call :log " Place mt5setup-BROKER.exe in mt5installers/"
     call :log " then restart the VM."
     call :log "============================================"
-) else (
-    for /l %%I in (1,1,!BROKER_COUNT!) do (
-        call :install_one "!BNAME_%%I!" "!INSTALLER_%%I!"
-        if !errorlevel! neq 0 (
-            rmdir "%LOCKDIR%" 2>nul
-            exit /b 1
-        )
-    )
 )
 
 call :log "[4/5] MetaTrader 5 terminal installation complete."
