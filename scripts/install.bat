@@ -19,8 +19,13 @@ call :log "============================================"
 call :log " MetaTrader 5 + Python Automated Setup"
 call :log "============================================"
 
-:: ── Disable UAC (headless VM, liveupdate needs no prompts) ──────
+:: ── Disable UAC + admin consent prompts (headless VM) ─────────────
+:: EnableLUA=0 disables UAC entirely (needs reboot)
+:: ConsentPromptBehaviorAdmin=0 auto-elevates without prompting
+:: PromptOnSecureDesktop=0 prevents the secure desktop dimming
 set "UAC_DONE=%SHARED%\uac-disabled.done"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v ConsentPromptBehaviorAdmin /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v PromptOnSecureDesktop /t REG_DWORD /d 0 /f >nul 2>&1
 if not exist "%UAC_DONE%" (
     reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
     echo done > "%UAC_DONE%"
