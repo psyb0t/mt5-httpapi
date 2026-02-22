@@ -20,11 +20,11 @@ call :log " MetaTrader 5 + Python Automated Setup"
 call :log "============================================"
 
 :: ── Disable UAC (headless VM, liveupdate needs no prompts) ──────
-set UAC_ENABLED=0x1
-for /f "tokens=3" %%V in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA 2^>nul ^| findstr /i "EnableLUA"') do set UAC_ENABLED=%%V
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
-if "!UAC_ENABLED!" neq "0x0" (
-    call :log "UAC was enabled — disabled, rebooting to apply..."
+set "UAC_DONE=%SHARED%\uac-disabled.done"
+if not exist "%UAC_DONE%" (
+    reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f >nul 2>&1
+    echo done > "%UAC_DONE%"
+    call :log "UAC disabled — rebooting to apply..."
     rmdir "%LOCKDIR%" 2>nul
     shutdown /r /t 5 /f
     exit /b 3
@@ -40,6 +40,12 @@ if !errorlevel! neq 0 (
     shutdown /r /t 5 /f
     exit /b 3
 )
+
+:: ── Remove legacy startup folder entries (prevent double-launch) ─
+del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.bat" 2>nul
+del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start-mt5.lnk" 2>nul
+del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.bat" 2>nul
+del "%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\StartUp\start-mt5.lnk" 2>nul
 
 :: ── Step 1: Install Python 3.12 ─────────────────────────────────
 set "PATH=C:\Program Files\Python312;C:\Program Files\Python312\Scripts;%PATH%"
