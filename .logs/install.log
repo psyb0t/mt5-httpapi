@@ -1,0 +1,61 @@
+[Sun 02/22/2026 12:59:53.93] ====== Boot ====== 
+[Sun 02/22/2026 12:59:55.55] ============================================ 
+[Sun 02/22/2026 12:59:55.58]  MetaTrader 5 + Python Automated Setup 
+[Sun 02/22/2026 12:59:55.60] [5/5] Configuring firewall... 
+[Sun 02/22/2026 12:59:57.73] Opening firewall ports: 6542 
+Ok.
+
+[Sun 02/22/2026 12:59:58.19] ============================================ 
+[Sun 02/22/2026 12:59:58.23]  Setup complete 
+[Sun 02/22/2026 12:59:58.30] ============================================ 
+[Sun 02/22/2026 13:03:00.80] ====== Boot ====== 
+[Sun 02/22/2026 13:03:01.93] ============================================ 
+[Sun 02/22/2026 13:03:01.98]  MetaTrader 5 + Python Automated Setup 
+[Sun 02/22/2026 13:03:02.03] [5/5] Configuring firewall... 
+[Sun 02/22/2026 13:03:03.23] Opening firewall ports: 6542 
+Ok.
+
+[Sun 02/22/2026 13:03:03.36] ============================================ 
+[Sun 02/22/2026 13:03:03.39]  Setup complete 
+[Sun 02/22/2026 13:03:03.39] ============================================ 
+[Sun 02/22/2026 13:03:03.56] Appending custom hosts entries... 
+[Sun 02/22/2026 13:03:03.73] Custom hosts entries applied. 
+[Sun 02/22/2026 13:03:04.05] Creating MT5Start scheduled task... 
+[Sun 02/22/2026 13:03:04.17] MT5Start task created — rebooting to apply... 
+[Sun 02/22/2026 13:04:36.63] ====== Boot ====== 
+[Sun 02/22/2026 13:04:36.91] ============================================ 
+[Sun 02/22/2026 13:04:36.93]  MetaTrader 5 + Python Automated Setup 
+[Sun 02/22/2026 13:04:37.04] [5/5] Configuring firewall... 
+[Sun 02/22/2026 13:04:38.91] Opening firewall ports: 6542 
+Ok.
+
+[Sun 02/22/2026 13:04:39.16] ============================================ 
+[Sun 02/22/2026 13:04:39.17]  Setup complete 
+[Sun 02/22/2026 13:04:39.19] ============================================ 
+[Sun 02/22/2026 13:04:39.63] [1/5] Downloading Python 3.12... 
+[Sun 02/22/2026 13:04:49.47] [1/5] Installing Python 3.12... 
+[Sun 02/22/2026 13:06:18.39] [1/5] Python installed: Python 3.12.7 
+[Sun 02/22/2026 13:06:18.50] [2/5] Installing MetaTrader5 Python package... 
+Requirement already satisfied: pip in c:\program files\python312\lib\site-packages (24.2)
+Collecting pip
+  Downloading pip-26.0.1-py3-none-any.whl.metadata (4.7 kB)
+Downloading pip-26.0.1-py3-none-any.whl (1.8 MB)
+   ---------------------------------------- 1.8/1.8 MB 8.1 MB/s eta 0:00:00
+Installing collected packages: pip
+  Attempting uninstall: pip
+    Found existing installation: pip 24.2
+    Uninstalling pip-24.2:
+      Successfully uninstalled pip-24.2
+Successfully installed pip-26.0.1
+Collecting MetaTrader5
+  Downloading metatrader5-5.0.5640-cp312-cp312-win_amd64.whl.metadata (2.5 kB)
+Collecting numpy>=1.7 (from MetaTrader5)
+  Downloading numpy-2.4.2-cp312-cp312-win_amd64.whl.metadata (6.6 kB)
+Downloading metatrader5-5.0.5640-cp312-cp312-win_amd64.whl (48 kB)
+Downloading numpy-2.4.2-cp312-cp312-win_amd64.whl (12.3 MB)
+   ---------------------------------------- 12.3/12.3 MB 4.2 MB/s  0:00:02
+Installing collected packages: numpy, MetaTrader5
+
+Successfully installed MetaTrader5-5.0.5640 numpy-2.4.2
+[Sun 02/22/2026 13:07:39.09] [2/5] MetaTrader5 package installed. 
+[Sun 02/22/2026 13:07:39.23] [3/5] Running Windows debloat... 
