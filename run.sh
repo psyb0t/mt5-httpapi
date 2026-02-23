@@ -69,6 +69,12 @@ fi
 rm -rf "${DIR}/data/shared/install.running"
 rm -rf "${DIR}/data/shared/start.running"
 
+# If VM disk is gone (fresh install), clear done flags so install.bat re-runs everything
+if [ ! -f "${DIR}/data/storage/data.img" ]; then
+    echo "No VM disk found — clearing done flags for fresh install."
+    rm -f "${DIR}/data/shared/"*.done
+fi
+
 # Generate .env with port range from terminals.json for docker-compose
 if [ -f "${DIR}/config/terminals.json" ]; then
     PORTS=$(python3 -c "

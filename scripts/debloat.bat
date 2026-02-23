@@ -82,7 +82,6 @@ for %%S in (
     DoSvc
     DusmSvc
     SEMgrSvc
-    Ndu
     CamSvc
     cbdhsvc
     CDPSvc
@@ -119,7 +118,6 @@ for %%S in (
 ) do (
     echo   %%S
     sc config %%S start= disabled >nul 2>&1
-    sc stop %%S >nul 2>&1
 )
 
 :: ── Disable Security and Maintenance notifications ───────────
@@ -130,6 +128,14 @@ reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel
 reg add "HKCU\Software\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f >nul 2>&1
 sc config wscsvc start= disabled >nul 2>&1
 sc stop wscsvc >nul 2>&1
+
+:: ── Disable Windows Firewall ────────────────────────────────────
+echo Disabling Windows Firewall...
+netsh advfirewall set allprofiles state off >nul 2>&1
+sc config MpsSvc start= disabled >nul 2>&1
+sc stop MpsSvc >nul 2>&1
+sc config BFE start= disabled >nul 2>&1
+sc stop BFE >nul 2>&1
 
 :: ── Disable Windows Error Reporting ────────────────────────────
 echo Disabling error reporting UI...
