@@ -48,6 +48,12 @@ for _c in _candidates:
         TERMINAL_PATH = _c
         break
 
+TERMINAL_DIR = os.path.dirname(TERMINAL_PATH)
+INI_FILE = os.path.join(TERMINAL_DIR, "mt5start.ini")
+IDENTITY = f"{BROKER}/{ACCOUNT}" if ACCOUNT else BROKER
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+FULL_LOG = os.path.join(LOG_DIR, "full.log")
+
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,
     "M2": mt5.TIMEFRAME_M2,

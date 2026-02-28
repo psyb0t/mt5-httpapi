@@ -1,8 +1,16 @@
-from flask import Flask
-
+from flask import Flask, request
 from mt5api.handlers import account, history, orders, positions, symbols, terminal
+from mt5api.logger import log
 
 app = Flask(__name__)
+
+
+@app.after_request
+def _log_request(response):
+    if request.path != "/ping":
+        log.info("%s %s -> %s", request.method, request.path, response.status_code)
+    return response
+
 
 # ── Health / System ──────────────────────────────────────────────
 app.get("/ping")(terminal.ping)
@@ -12,6 +20,7 @@ app.get("/error")(terminal.last_error)
 app.get("/terminal")(terminal.get_terminal)
 app.post("/terminal/init")(terminal.init)
 app.post("/terminal/shutdown")(terminal.shutdown)
+app.post("/terminal/restart")(terminal.restart)
 
 # ── Account ──────────────────────────────────────────────────────
 app.get("/account")(account.get_account)

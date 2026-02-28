@@ -2,6 +2,8 @@ import threading
 import time
 
 from mt5api.config import ACCOUNT, BROKER, HOST, PORT
+from mt5api.logger import log
+from mt5api.monitor import start_monitor
 from mt5api.mt5client import ensure_initialized, init_mt5
 from mt5api.server import app
 
@@ -13,64 +15,31 @@ def _background_init():
     attempt = 0
     while True:
         attempt += 1
-        print(f"MT5 init attempt {attempt}...", flush=True)
+        log.info("MT5 init attempt %d...", attempt)
         if ensure_initialized():
-            print(f"MT5 connected on attempt {attempt}.", flush=True)
+            log.info("MT5 connected on attempt %d.", attempt)
             return
-        print(f"MT5 not ready, retrying in {RETRY_INTERVAL}s...", flush=True)
+        log.warning("MT5 not ready, retrying in %ds...", RETRY_INTERVAL)
         time.sleep(RETRY_INTERVAL)
 
 
 def main():
-    print(f"Broker: {BROKER}, Account: {ACCOUNT}", flush=True)
+    log.info("Starting — broker=%s account=%s port=%d", BROKER, ACCOUNT, PORT)
 
     connected = init_mt5()
     if connected:
-        print("MT5 connected.", flush=True)
+        log.info("MT5 connected.")
     else:
-        print(
-            f"MT5 not ready yet, will keep retrying every {RETRY_INTERVAL}s in background...",
-            flush=True,
+        log.warning(
+            "MT5 not ready yet, retrying every %ds in background...",
+            RETRY_INTERVAL,
         )
         t = threading.Thread(target=_background_init, daemon=True)
         t.start()
 
-    print(f"\nMT5 HTTP API listening on {HOST}:{PORT}", flush=True)
-    print(
-        """
-Endpoints:
-  GET    /ping                          Health check
-  GET    /error                         Last MT5 error
+    start_monitor()
 
-  GET    /terminal                      Terminal info
-  POST   /terminal/init                 Initialize MT5
-  POST   /terminal/shutdown             Shutdown MT5
-
-  GET    /account                       Account info
-
-  GET    /symbols                       List symbols (?group=*USD*)
-  GET    /symbols/:symbol               Symbol details
-  GET    /symbols/:symbol/tick          Latest tick
-  GET    /symbols/:symbol/rates         OHLCV (?timeframe=H1&count=100)
-  GET    /symbols/:symbol/ticks         Tick data (?count=100)
-
-  GET    /positions                     List open positions (?symbol=)
-  GET    /positions/:ticket             Get position
-  PUT    /positions/:ticket             Update SL/TP {sl, tp}
-  DELETE /positions/:ticket             Close position {volume, deviation}
-
-  GET    /orders                        List pending orders (?symbol=)
-  POST   /orders                        Create order {symbol, type, volume, ...}
-  GET    /orders/:ticket                Get order
-  PUT    /orders/:ticket                Modify order {price, sl, tp}
-  DELETE /orders/:ticket                Cancel order
-
-  GET    /history/orders                Order history (?from=TS&to=TS)
-  GET    /history/deals                 Deal history (?from=TS&to=TS)
-""",
-        flush=True,
-    )
-
+    log.info("HTTP API listening on %s:%d", HOST, PORT)
     app.run(host=HOST, port=PORT)
 
 

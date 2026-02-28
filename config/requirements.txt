@@ -1,2 +1,3 @@
 MetaTrader5
 flask
+psutil

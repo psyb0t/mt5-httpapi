@@ -8,17 +8,20 @@ set LOGDIR=%SHARED%\logs
 set INSTALL_LOG=%LOGDIR%\install.log
 set PIP_LOG=%LOGDIR%\pip.log
 set START_LOG=%LOGDIR%\start.log
+set FULL_LOG=%LOGDIR%\full.log
 set "PYDIR=C:\Program Files\Python312"
 set "PATH=%PYDIR%;%PYDIR%\Scripts;%PATH%"
 set "LOCKDIR=%SHARED%\start.running"
 
 mkdir "%LOGDIR%" 2>nul
+rmdir "%FULL_LOG%.lock" 2>nul
 
 :: ── Atomic lock (only one start.bat instance at a time) ──────────
 mkdir "%LOCKDIR%" 2>nul
 if !errorlevel! neq 0 (
     echo [%date% %time%] Another start.bat is already running, exiting.
     echo [%date% %time%] Another start.bat is already running, exiting. >> "%START_LOG%"
+    echo [%date% %time%] [start] Another start.bat is already running, exiting. >> "%FULL_LOG%"
     exit /b 0
 )
 
@@ -99,8 +102,8 @@ if !TERM_COUNT! equ 0 (
     exit /b 1
 )
 
-call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 10s to initialize..."
-timeout /t 10 /nobreak >nul
+call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 30s to initialize..."
+timeout /t 30 /nobreak >nul
 
 :: ── Launch API processes ─────────────────────────────────────────
 call :log "%START_LOG%" "Launching API processes..."
@@ -146,8 +149,35 @@ del "!LT_DIR!\Config\common.ini" 2>nul
 
 call :write_ini "!LT_DIR!" "!LT_BROKER!" "!LT_ACCOUNT!"
 
-call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!)"
+rem Save journal log size before launch so we only check NEW content
+for /f "delims=" %%D in ('python -c "from datetime import date;print(date.today().strftime('%%Y%%m%%d'))"') do set "LT_LOGDATE=%%D"
+set "LT_LOGFILE=!LT_DIR!\logs\!LT_LOGDATE!.log"
+set LT_LOGSIZE=0
+if exist "!LT_LOGFILE!" (
+    for %%A in ("!LT_LOGFILE!") do set LT_LOGSIZE=%%~zA
+)
+
+call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!) [log offset !LT_LOGSIZE!]"
 powershell -Command "Start-Process '!LT_DIR!\terminal64.exe' -ArgumentList '/portable','/config:\"!LT_DIR!\mt5start.ini\"' -Verb RunAs -WindowStyle Normal"
+
+rem Wait for 'started for' in journal log (for /L avoids goto inside call)
+set LT_STARTED=0
+for /L %%N in (1,1,120) do (
+    if !LT_STARTED! equ 0 (
+        python -c "import sys;f=open(sys.argv[1],'rb');f.seek(int(sys.argv[2]));d=f.read().decode('utf-16-le',errors='ignore');f.close();sys.exit(0 if 'started for' in d else 1)" "!LT_LOGFILE!" !LT_LOGSIZE! 2>nul
+        if !errorlevel! equ 0 (
+            set LT_STARTED=1
+        ) else (
+            call :log "%START_LOG%" "  Waiting for !LT_BROKER!/!LT_ACCOUNT! to start (%%N)..."
+            timeout /t 5 /nobreak >nul
+        )
+    )
+)
+if !LT_STARTED! equ 0 (
+    call :log "%START_LOG%" "ERROR: !LT_BROKER!/!LT_ACCOUNT! failed to start after 10 minutes"
+    exit /b 1
+)
+call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT! started."
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════
@@ -179,10 +209,12 @@ set "WI_DIR=%~1"
 set "WI_BROKER=%~2"
 set "WI_ACCOUNT=%~3"
 set "WI_CFG=!WI_DIR!\mt5start.ini"
-"%PYDIR%\python.exe" -c "import json,os;d=json.load(open(os.path.join(r'%CONFIG%','accounts.json')));b=d.get('!WI_BROKER!',{});a='!WI_ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!WI_CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%START_LOG%" 2>&1
+"%PYDIR%\python.exe" -c "import json,os;d=json.load(open(os.path.join(r'%CONFIG%','accounts.json')));b=d.get('!WI_BROKER!',{});a='!WI_ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!WI_CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nKeepPrivate=0\nAutoTrading=1\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nKeepPrivate=0\nAutoTrading=1\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%START_LOG%" 2>&1
 if errorlevel 1 (
     call :log "%START_LOG%" "WARNING: Could not write ini for !WI_BROKER!/!WI_ACCOUNT!, using defaults"
     echo [Common]> "!WI_CFG!"
+    echo KeepPrivate=0>> "!WI_CFG!"
+    echo AutoTrading=1>> "!WI_CFG!"
     echo NewsEnable=0>> "!WI_CFG!"
     echo [Experts]>> "!WI_CFG!"
     echo AllowLiveTrading=1>> "!WI_CFG!"
@@ -197,4 +229,5 @@ exit /b 0
 :log
 echo [%date% %time%] %~2
 echo [%date% %time%] %~2 >> "%~1"
+echo [%date% %time%] [start] %~2 >> "%FULL_LOG%"
 exit /b 0

@@ -305,4 +305,5 @@ exit /b 0
 :log
 echo [%date% %time%] %~1
 echo [%date% %time%] %~1 >> "%INSTALL_LOG%"
+echo [%date% %time%] [install] %~1 >> "%LOGDIR%\full.log"
 exit /b 0

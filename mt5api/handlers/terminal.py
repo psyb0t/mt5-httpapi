@@ -1,8 +1,6 @@
-from flask import jsonify
-
 import MetaTrader5 as mt5
-
-from mt5api.mt5client import ensure_initialized, to_dict
+from flask import jsonify
+from mt5api.mt5client import ensure_initialized, restart_terminal, to_dict
 
 
 def ping():
@@ -29,4 +27,10 @@ def init():
 
 def shutdown():
     mt5.shutdown()
+    return jsonify({"success": True})
+
+
+def restart():
+    if not restart_terminal():
+        return jsonify({"success": False, "error": "Terminal restart failed"}), 500
     return jsonify({"success": True})
