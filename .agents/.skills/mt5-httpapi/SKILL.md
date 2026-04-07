@@ -1,7 +1,7 @@
 ---
 name: mt5-httpapi
 description: MetaTrader 5 trading via REST API — get market data, place/modify/close orders, manage positions, pull history. Use when you need to interact with forex/crypto/stock markets through MT5.
-compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL env var must be set.
+compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL and MT5_API_TOKEN env vars must be set.
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
@@ -15,15 +15,18 @@ For installation and setup, see [references/setup.md](references/setup.md).
 
 ## Setup
 
-The API should already be running. Set the base URL:
+The API should already be running. Set the base URL and token:
 
 ```bash
 export MT5_API_URL=http://localhost:6542
+export MT5_API_TOKEN=your_token_here
 ```
 
 Each terminal has its own port (configured in `terminals.json`). If running multiple terminals, set `MT5_API_URL` to the port for the terminal you want to talk to.
 
-**Verify:** `curl $MT5_API_URL/ping` — should return `{"status": "ok"}`. If not, the API isn't up yet (may still be initializing — it retries in the background).
+**Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok"}`. If not, the API isn't up yet (may still be initializing — it retries in the background).
+
+Auth is optional — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it.
 
 ## How It Works
 
@@ -49,19 +52,19 @@ Before placing any trade:
 ### Health
 
 ```bash
-curl $MT5_API_URL/ping
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping
 # {"status": "ok"}
 
-curl $MT5_API_URL/error
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/error
 # {"code": 1, "message": "Success"}
 ```
 
 ### Terminal
 
 ```bash
-curl $MT5_API_URL/terminal
-curl -X POST $MT5_API_URL/terminal/init
-curl -X POST $MT5_API_URL/terminal/shutdown
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/init
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/shutdown
 ```
 
 Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`.
@@ -69,7 +72,7 @@ Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`.
 ### Account
 
 ```bash
-curl $MT5_API_URL/account
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/account
 ```
 
 ```json
@@ -91,12 +94,12 @@ curl $MT5_API_URL/account
 ### Symbols
 
 ```bash
-curl $MT5_API_URL/symbols
-curl "$MT5_API_URL/symbols?group=*USD*"
-curl $MT5_API_URL/symbols/EURUSD
-curl $MT5_API_URL/symbols/EURUSD/tick
-curl "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
-curl "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols?group=*USD*"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD/tick
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
 ```
 
 Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2` `H3` `H4` `H6` `H8` `H12` `D1` `W1` `MN1`
@@ -107,22 +110,22 @@ Key symbol fields: `bid`, `ask`, `digits`, `point`, `trade_contract_size`, `trad
 
 ```bash
 # Place market order
-curl -X POST $MT5_API_URL/orders \
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H 'Content-Type: application/json' \
   -d '{"symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.08, "tp": 1.10}'
 
 # List pending orders
-curl $MT5_API_URL/orders
-curl "$MT5_API_URL/orders?symbol=EURUSD"
-curl $MT5_API_URL/orders/42094812
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/orders?symbol=EURUSD"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders/42094812
 
 # Modify pending order
-curl -X PUT $MT5_API_URL/orders/42094812 \
+curl -X PUT -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders/42094812 \
   -H 'Content-Type: application/json' \
   -d '{"price": 1.09, "sl": 1.07, "tp": 1.11}'
 
 # Cancel pending order
-curl -X DELETE $MT5_API_URL/orders/42094812
+curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders/42094812
 ```
 
 Order types: `BUY`, `SELL`, `BUY_LIMIT`, `SELL_LIMIT`, `BUY_STOP`, `SELL_STOP`, `BUY_STOP_LIMIT`, `SELL_STOP_LIMIT`
@@ -151,20 +154,20 @@ Trade result:
 ### Positions
 
 ```bash
-curl $MT5_API_URL/positions
-curl "$MT5_API_URL/positions?symbol=EURUSD"
-curl $MT5_API_URL/positions/42094820
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/positions?symbol=EURUSD"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/42094820
 
 # Update SL/TP
-curl -X PUT $MT5_API_URL/positions/42094820 \
+curl -X PUT -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/42094820 \
   -H 'Content-Type: application/json' \
   -d '{"sl": 1.085, "tp": 1.105}'
 
 # Close full position
-curl -X DELETE $MT5_API_URL/positions/42094820
+curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/42094820
 
 # Partial close
-curl -X DELETE $MT5_API_URL/positions/42094820 \
+curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/42094820 \
   -H 'Content-Type: application/json' \
   -d '{"volume": 0.05}'
 ```
@@ -174,8 +177,8 @@ Key position fields: `ticket`, `type` (0=buy, 1=sell), `volume`, `price_open`, `
 ### History
 
 ```bash
-curl "$MT5_API_URL/history/orders?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
-curl "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/orders?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
 ```
 
 `from` and `to` are required, unix epoch seconds.
