@@ -6,6 +6,7 @@ mt5installers/*
 !mt5installers/.gitkeep
 config/accounts.json
 config/terminals.json
+config/api_token.txt
 .env
 run.log
 __pycache__

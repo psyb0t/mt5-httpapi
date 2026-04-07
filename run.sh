@@ -99,6 +99,16 @@ else
     API_PORTS="6542"
 fi
 
+# Append API_TOKEN to .env from config/api_token.txt
+if [ -f "${DIR}/config/api_token.txt" ]; then
+    API_TOKEN=$(tr -d '[:space:]' < "${DIR}/config/api_token.txt")
+    echo "API_TOKEN=${API_TOKEN}" >> "${DIR}/.env"
+    echo "API token loaded from config/api_token.txt"
+else
+    echo "WARNING: config/api_token.txt not found — API will run without auth"
+    echo "  Create it: openssl rand -hex 32 > config/api_token.txt"
+fi
+
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
     echo "Container is already running."
