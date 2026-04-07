@@ -1,7 +1,7 @@
 ---
 name: mt5-httpapi
 description: MetaTrader 5 trading via REST API — get market data, place/modify/close orders, manage positions, pull history. Use when you need to interact with forex/crypto/stock markets through MT5.
-compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL and MT5_API_TOKEN env vars must be set.
+compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL env var must be set. MT5_API_TOKEN is optional (only needed if the server has auth configured).
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
@@ -65,6 +65,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/error
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/init
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/shutdown
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/restart
 ```
 
 Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`.

@@ -36,11 +36,14 @@ cp config/accounts.json.example config/accounts.json
 cp config/terminals.example.json config/terminals.json
 # Edit both files with your broker credentials
 
-# 2. Drop your broker's MT5 installer in mt5installers/
+# 2. Generate an API token (optional but recommended)
+openssl rand -hex 32 > config/api_token.txt
+
+# 3. Drop your broker's MT5 installer in mt5installers/
 #    Name it: mt5setup-<broker>.exe
 cp ~/Downloads/mt5setup.exe mt5installers/mt5setup-roboforex.exe
 
-# 3. Fire it up
+# 4. Fire it up
 make up
 ```
 
@@ -94,6 +97,14 @@ Defines which terminals to run. Each entry gets its own MT5 terminal instance an
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
 
+### `config/api_token.txt`
+
+Optional. If present, all API endpoints require `Authorization: Bearer <token>`. Without it, the API runs open with no auth.
+
+```bash
+openssl rand -hex 32 > config/api_token.txt
+```
+
 ### `config/requirements.txt`
 
 Extra Python packages you want in the VM. `MetaTrader5` and `flask` are already in there.
@@ -109,6 +120,13 @@ Dump your broker MT5 installers here. Name them `mt5setup-<broker>.exe` and each
 ## API
 
 Each terminal's API runs on its configured port (from `terminals.json`). Default: `http://localhost:6542`
+
+If `config/api_token.txt` is set, include the token on every request:
+
+```bash
+export MT5_API_TOKEN=$(cat config/api_token.txt)
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6542/ping
+```
 
 ### Health
 
@@ -595,41 +613,44 @@ What comes back from POST/PUT/DELETE on orders and positions:
 ## Examples
 
 ```bash
+export MT5_API_URL=http://localhost:6542
+export MT5_API_TOKEN=$(cat config/api_token.txt)  # omit if no auth configured
+
 # Check your balance
-curl http://localhost:6542/account
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/account
 
 # Grab some EURUSD H4 candles
-curl "http://localhost:6542/symbols/EURUSD/rates?timeframe=H4&count=100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
 
 # YOLO 1000 ADAUSD with SL and TP
-curl -X POST http://localhost:6542/orders \
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H "Content-Type: application/json" \
   -d '{"symbol": "ADAUSD", "type": "BUY", "volume": 1000, "sl": 0.25, "tp": 0.35}'
 
 # Place a pending buy limit
-curl -X POST http://localhost:6542/orders \
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H "Content-Type: application/json" \
   -d '{"symbol": "ADAUSD", "type": "BUY_LIMIT", "volume": 1000, "price": 0.28, "sl": 0.25, "tp": 0.35}'
 
 # Move your SL and TP
-curl -X PUT http://localhost:6542/positions/12345 \
+curl -X PUT -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/12345 \
   -H "Content-Type: application/json" \
   -d '{"sl": 0.27, "tp": 0.36}'
 
 # Close half
-curl -X DELETE http://localhost:6542/positions/12345 \
+curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/12345 \
   -H "Content-Type: application/json" \
   -d '{"volume": 500}'
 
 # Close everything
-curl -X DELETE http://localhost:6542/positions/12345
+curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/12345
 
 # Hit different terminals when running multi-terminal
-curl http://localhost:6542/account   # terminal 1
-curl http://localhost:6543/account   # terminal 2
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6542/account   # terminal 1
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6543/account   # terminal 2
 
 # Get deal history for the last 24h
-curl "http://localhost:6542/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
 ```
 
 ## Technical Analysis
@@ -709,15 +730,18 @@ mt5installers/               Broker MT5 setup executables (gitignored)
 data/                        Generated/volatile data (gitignored)
   win.iso                    Windows ISO
   storage/                   VM disk
-  metatrader5/               Shared folder with VM
-    <broker>/base/           Base MT5 install per broker
-    <broker>/<account>/      Per-account copy (created at startup)
+  shared/                    Shared folder with VM
+    scripts/                 Bat scripts synced from scripts/
+    config/                  Config synced from config/
+    terminals/               MT5 installs per broker/account
+    logs/                    All log files
+    mt5api/                  Python API package
   oem/                       First-boot scripts
 ```
 
 ## Logs
 
-Inside the VM's shared folder (`data/metatrader5/logs/`):
+Inside the VM's shared folder (`data/shared/logs/`):
 
 - `install.log` - MT5 installation progress (install.bat)
 - `start-mt5.log` - Boot sequence log (start-mt5.bat)

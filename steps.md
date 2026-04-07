@@ -15,7 +15,7 @@
 11. Copies `mt5api/` → `data/shared/mt5api/`
 12. Clears stale lock dirs: `install.running`, `start.running`
 13. If `data/storage/data.img` missing (fresh VM) → clears all `*.done` flags
-14. Generates `.env` with `API_PORT_RANGE` from `config/terminals.json`
+14. Generates `.env` with `API_PORT_RANGE` from `config/terminals.json` and `API_TOKEN` from `config/api_token.txt` (if present)
 15. Starts docker-compose (`dockurr/windows` image)
 16. Waits for VM IP, sets up iptables port forwarding
 
@@ -147,8 +147,8 @@ on boot 1 due to the reboot). start.bat's mkdir lock ensures only one runs.
 14. **Launch API processes**: for each entry:
     → Background (`start "" cmd /c ...`) for all but last
     → Foreground (blocking) for last one
-    → Each runs: `python -m mt5api --broker X --account Y --port Z`
-    → Logs go to `api-<broker>-<account>.log`
+    → Each runs: `python -m mt5api --broker X --account Y --port Z --token T` (token from `config/api_token.txt`, omitted if not set)
+    → Logs go to `data/shared/logs/api-<broker>-<account>.log`
     → Cleans lock before starting foreground API
 
 **System is now running.** Foreground API keeps start.bat alive.
