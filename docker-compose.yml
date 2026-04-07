@@ -24,10 +24,22 @@ services:
           memory: 512M
     memswap_limit: 5G
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6542/ping"]
+      test: ["CMD", "curl", "-f", "-H", "Authorization: Bearer ${API_TOKEN}", "http://localhost:6542/ping"]
       interval: 30s
       timeout: 5s
       retries: 10
       start_period: 120s
     restart: unless-stopped
     stop_grace_period: 2m
+
+  # ── Cloudflare Tunnel (uncomment to expose API publicly) ──────────
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   command: tunnel --config /etc/cloudflared/config.yml run
+  #   volumes:
+  #     - ./.data/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+  #     - ./.data/cloudflared/creds.json:/etc/cloudflared/creds.json:ro
+  #   depends_on:
+  #     - mt5

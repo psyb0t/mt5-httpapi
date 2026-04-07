@@ -18,6 +18,7 @@ def _parse_args():
     parser.add_argument("--broker", default=None)
     parser.add_argument("--account", default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--token", default=None)
     args, _ = parser.parse_known_args()
     return args
 
@@ -35,6 +36,7 @@ _terminal_config = load_terminal_config()
 BROKER = _args.broker or _terminal_config.get("broker", "default")
 ACCOUNT = _args.account or _terminal_config.get("account", "")
 PORT = _args.port or 6542
+API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
 
 # Resolve TERMINAL_PATH: account-specific copy first, then base install
 _candidates = []

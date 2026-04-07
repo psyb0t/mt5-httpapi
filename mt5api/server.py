@@ -1,14 +1,23 @@
-from flask import Flask, request
+from flask import Flask, abort, request
+from mt5api.config import API_TOKEN
 from mt5api.handlers import account, history, orders, positions, symbols, terminal
 from mt5api.logger import log
 
 app = Flask(__name__)
 
 
+@app.before_request
+def _require_auth():
+    if not API_TOKEN:
+        return
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {API_TOKEN}":
+        abort(401)
+
+
 @app.after_request
 def _log_request(response):
-    if request.path != "/ping":
-        log.info("%s %s -> %s", request.method, request.path, response.status_code)
+    log.info("%s %s -> %s", request.method, request.path, response.status_code)
     return response
 
 

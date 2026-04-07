@@ -105,6 +105,17 @@ if !TERM_COUNT! equ 0 (
 call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 30s to initialize..."
 timeout /t 30 /nobreak >nul
 
+:: ── Load API token (optional) ─────────────────────────────────────
+set "API_TOKEN="
+if exist "%CONFIG%\api_token.txt" (
+    set /p API_TOKEN=<"%CONFIG%\api_token.txt"
+)
+if defined API_TOKEN (
+    call :log "%START_LOG%" "API token loaded."
+) else (
+    call :log "%START_LOG%" "WARNING: No api_token.txt found, API running without auth."
+)
+
 :: ── Launch API processes ─────────────────────────────────────────
 call :log "%START_LOG%" "Launching API processes..."
 set API_IDX=0
@@ -188,7 +199,7 @@ set "LA_PORT=%~3"
 set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
 
 call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
-start "" cmd /c "cd /d %SHARED% && "%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! >> "!LA_LOG!" 2>&1"
+start "" cmd /c "cd /d %SHARED% && "%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! --token "!API_TOKEN!" >> "!LA_LOG!" 2>&1"
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════
@@ -200,7 +211,7 @@ set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
 
 call :log "%START_LOG%" "Starting API (fg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
 cd /d "%SHARED%"
-"%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! >> "!LA_LOG!" 2>&1
+"%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! --token "!API_TOKEN!" >> "!LA_LOG!" 2>&1
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════
