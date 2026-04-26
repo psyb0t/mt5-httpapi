@@ -116,21 +116,27 @@ if defined API_TOKEN (
     call :log "%START_LOG%" "WARNING: No api_token.txt found, API running without auth."
 )
 
-:: ── Launch API processes ─────────────────────────────────────────
+:: ── Launch API processes (all background) ────────────────────────
 call :log "%START_LOG%" "Launching API processes..."
-set API_IDX=0
 for /f "usebackq delims=" %%L in ("%TERM_LIST%") do (
-    set /a API_IDX+=1
-    if !API_IDX! equ !TERM_COUNT! (
-        call :log "%START_LOG%" "Running last API in foreground..."
-        del "%TERM_LIST%" 2>nul
-        rmdir "%LOCKDIR%" 2>nul
-        call :launch_api_fg %%L
-    ) else (
-        call :launch_api_bg %%L
-    )
+    call :launch_api_bg %%L
 )
-exit /b 0
+del "%TERM_LIST%" 2>nul
+rmdir "%LOCKDIR%" 2>nul
+call :log "%START_LOG%" "All !TERM_COUNT! API(s) running in background."
+
+:: ── Foreground: status + health monitor ──────────────────────────
+:status_loop
+cls
+echo.
+echo  =====================================================
+echo    MT5 HTTP API RUNNING  --  %DATE% %TIME%
+echo  =====================================================
+echo.
+"%PYDIR%\python.exe" "%SCRIPTS%\check_health.py"
+echo.
+timeout /t 60 /nobreak >nul
+goto status_loop
 
 :: ══════════════════════════════════════════════════════════════════
 :launch_terminal
@@ -196,22 +202,9 @@ exit /b 0
 set "LA_BROKER=%~1"
 set "LA_ACCOUNT=%~2"
 set "LA_PORT=%~3"
-set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
 
 call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
-start "" cmd /c "cd /d %SHARED% && "%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! --token "!API_TOKEN!" >> "!LA_LOG!" 2>&1"
-exit /b 0
-
-:: ══════════════════════════════════════════════════════════════════
-:launch_api_fg
-set "LA_BROKER=%~1"
-set "LA_ACCOUNT=%~2"
-set "LA_PORT=%~3"
-set "LA_LOG=%LOGDIR%\api-!LA_BROKER!-!LA_ACCOUNT!.log"
-
-call :log "%START_LOG%" "Starting API (fg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
-cd /d "%SHARED%"
-"%PYDIR%\python.exe" -m mt5api --broker !LA_BROKER! --account !LA_ACCOUNT! --port !LA_PORT! --token "!API_TOKEN!" >> "!LA_LOG!" 2>&1
+start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN!"
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

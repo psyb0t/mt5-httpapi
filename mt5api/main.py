@@ -1,3 +1,5 @@
+import signal
+import sys
 import threading
 import time
 
@@ -23,8 +25,16 @@ def _background_init():
         time.sleep(RETRY_INTERVAL)
 
 
+def _handle_signal(sig, _frame):
+    log.critical("Received signal %d — exiting.", sig)
+    sys.exit(sig)
+
+
 def main():
     log.info("Starting — broker=%s account=%s port=%d", BROKER, ACCOUNT, PORT)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
 
     connected = init_mt5()
     if connected:
@@ -40,7 +50,16 @@ def main():
     start_monitor()
 
     log.info("HTTP API listening on %s:%d", HOST, PORT)
-    app.run(host=HOST, port=PORT)
+    try:
+        app.run(host=HOST, port=PORT)
+    except Exception:
+        log.critical("Flask server crashed.", exc_info=True)
+        raise
+    finally:
+        log.critical(
+            "API process exiting — broker=%s account=%s port=%d",
+            BROKER, ACCOUNT, PORT,
+        )
 
 
 if __name__ == "__main__":
