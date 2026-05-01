@@ -875,3 +875,7 @@ When shit breaks, check these first.
 ## License
 
 WTFPL
+
+## Download History
+
+[![Download History](https://skill-history.com/chart/psyb0t/mt5-httpapi.svg)](https://skill-history.com/psyb0t/mt5-httpapi)
