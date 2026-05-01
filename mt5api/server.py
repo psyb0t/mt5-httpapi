@@ -1,9 +1,11 @@
 from flask import Flask, abort, request
+from flask_compress import Compress
 from mt5api.config import API_TOKEN
 from mt5api.handlers import account, history, orders, positions, symbols, terminal
 from mt5api.logger import log
 
 app = Flask(__name__)
+Compress(app)
 
 
 @app.before_request

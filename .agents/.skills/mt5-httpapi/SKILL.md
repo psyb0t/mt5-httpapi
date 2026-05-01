@@ -100,10 +100,21 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols?group=*USD*
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD/tick
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date -d '7 days ago' +%s)&to=$(date +%s)"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&to=$(date +%s)"
 ```
 
 Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2` `H3` `H4` `H6` `H8` `H12` `D1` `W1` `MN1`
+
+Rates/ticks support three modes:
+- `count=N` — last N from current bar
+- `from=<unix>&count=N` — N starting from that time forward
+- `from=<unix>&to=<unix>` — all bars/ticks in that window (use this for backfills). Inclusive both ends, ascending by time.
+
+Capped at `terminal_info().maxbars` rows per request (default 100k — see `GET /terminal`). Long backfills must chunk client-side. Symbols auto-select into MarketWatch on first access. Responses are gzipped if the client requests it (`curl --compressed`).
+
+Tick `flags` param: `ALL` (default), `INFO` (bid/ask only — ~10× smaller), `TRADE` (trades only).
 
 Key symbol fields: `bid`, `ask`, `digits`, `point`, `trade_contract_size`, `trade_tick_value`, `trade_tick_size`, `volume_min`, `volume_max`, `volume_step`, `spread`, `swap_long`, `swap_short`, `trade_stops_level`, `trade_mode`.
 

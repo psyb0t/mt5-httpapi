@@ -316,11 +316,24 @@ type ClosePositionRequest struct {
 type RatesQuery struct {
 	Timeframe string
 	Count     int
+	From      int64 // unix seconds, 0 = unset
+	To        int64 // unix seconds, 0 = unset
 }
 
 type TicksQuery struct {
 	Count int
+	From  int64    // unix seconds, 0 = unset
+	To    int64    // unix seconds, 0 = unset
+	Flags TickFlag // empty = ALL
 }
+
+type TickFlag string
+
+const (
+	TickFlagAll   TickFlag = "ALL"
+	TickFlagInfo  TickFlag = "INFO"
+	TickFlagTrade TickFlag = "TRADE"
+)
 
 type HistoryQuery struct {
 	From int64

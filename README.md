@@ -240,8 +240,8 @@ The API auto-initializes on first request. You almost never need to call these m
 | GET    | `/symbols`               | List symbols (`?group=*USD*`)             |
 | GET    | `/symbols/:symbol`       | Symbol details                            |
 | GET    | `/symbols/:symbol/tick`  | Latest tick                               |
-| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`) |
-| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100`)                  |
+| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100` or `?timeframe=H1&from=...&to=...`) |
+| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100` or `?from=...&to=...`)                               |
 
 **GET `/symbols`** — array of symbol names:
 
@@ -363,6 +363,19 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
 
 `time` is the candle open time, unix epoch seconds.
 
+Query params (rates):
+
+| Param | Behavior |
+| --- | --- |
+| `timeframe` | Required-ish (defaults `M1`) |
+| `count` only | Last N candles from the current bar (default 100) |
+| `from` only | N candles starting from `from` forward (use `count` to control N) |
+| `from` + `to` | All candles in `[from, to]` — **inclusive both ends**, ascending by time, unix seconds UTC |
+
+**MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
+
+Symbols are auto-selected into MarketWatch on first access — backfilling rarely-traded instruments works without a manual select step.
+
 **GET `/symbols/:symbol/ticks`** — array of ticks:
 
 ```json
@@ -377,6 +390,14 @@ Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2
   "volume_real": 0.0
 }
 ```
+
+Query params (ticks): same modes as rates (`count`, `from`+`count`, `from`+`to`), inclusive bounds, ascending order. Plus:
+
+| Param | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `flags` | `ALL`, `INFO`, `TRADE` | `ALL` | `INFO` = bid/ask changes only (~10× smaller payload), `TRADE` = trades only, `ALL` = everything |
+
+Responses are gzip-compressed when the client sends `Accept-Encoding: gzip` — typically a 5–10× bandwidth reduction for large rate/tick fetches. `curl` honors this if you pass `--compressed`.
 
 ### Positions
 

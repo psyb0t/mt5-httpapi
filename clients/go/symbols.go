@@ -55,6 +55,14 @@ func (c *Client) GetRates(
 		query.Set("count", strconv.Itoa(q.Count))
 	}
 
+	if q.From > 0 {
+		query.Set("from", strconv.FormatInt(q.From, 10))
+	}
+
+	if q.To > 0 {
+		query.Set("to", strconv.FormatInt(q.To, 10))
+	}
+
 	out := []Rate{}
 	if err := c.do(ctx, http.MethodGet, "/symbols/"+symbol+"/rates", query, nil, &out); err != nil {
 		return nil, ctxerrors.Wrapf(err, "get rates %s", symbol)
@@ -71,6 +79,18 @@ func (c *Client) GetTicks(
 	query := url.Values{}
 	if q.Count > 0 {
 		query.Set("count", strconv.Itoa(q.Count))
+	}
+
+	if q.From > 0 {
+		query.Set("from", strconv.FormatInt(q.From, 10))
+	}
+
+	if q.To > 0 {
+		query.Set("to", strconv.FormatInt(q.To, 10))
+	}
+
+	if q.Flags != "" {
+		query.Set("flags", string(q.Flags))
 	}
 
 	out := []Tick{}
