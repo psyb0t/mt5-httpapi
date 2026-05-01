@@ -653,6 +653,107 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6543/account   #
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
 ```
 
+## Go Client
+
+A typed Go client lives in [`clients/go/`](clients/go/). All endpoints are covered, errors map to typed sentinels, and structs have been verified against live responses.
+
+```bash
+go get github.com/psyb0t/mt5-httpapi/clients/go
+```
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"os"
+	"time"
+
+	mt5 "github.com/psyb0t/mt5-httpapi/clients/go"
+	"github.com/psyb0t/aichteeteapee"
+)
+
+func main() {
+	c, err := mt5.New(mt5.Config{
+		BaseURL: os.Getenv("MT5_API_URL"),
+		Token:   os.Getenv("MT5_API_TOKEN"), // empty string if server has no auth
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	acc, err := c.GetAccount(ctx)
+	if errors.Is(err, mt5.ErrNotInitialized) {
+		log.Fatal("MT5 still booting, retry in a sec")
+	}
+	if errors.Is(err, aichteeteapee.ErrUnauthorized) {
+		log.Fatal("bad token")
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("balance=%.2f %s leverage=1:%d", acc.Balance, acc.Currency, acc.Leverage)
+
+	// Place a market buy
+	res, err := c.CreateOrder(ctx, &mt5.CreateOrderRequest{
+		Symbol: "EURUSD",
+		Type:   "BUY",
+		Volume: 0.1,
+		SL:     1.08,
+		TP:     1.10,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("retcode=%d order=%d deal=%d price=%.5f", res.Retcode, res.Order, res.Deal, res.Price)
+
+	// Pull H4 candles
+	rates, err := c.GetRates(ctx, "EURUSD", mt5.RatesQuery{Timeframe: "H4", Count: 100})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("got %d candles, last close=%.5f", len(rates), rates[len(rates)-1].Close)
+}
+```
+
+### Available methods
+
+| Method | Endpoint |
+| --- | --- |
+| `Ping` | `GET /ping` |
+| `LastError` | `GET /error` |
+| `GetTerminal` / `InitTerminal` / `ShutdownTerminal` / `RestartTerminal` | `/terminal[/...]` |
+| `GetAccount` | `GET /account` |
+| `ListSymbols` / `GetSymbol` / `GetTick` / `GetRates` / `GetTicks` | `/symbols[/...]` |
+| `ListOrders` / `CreateOrder` / `GetOrder` / `UpdateOrder` / `CancelOrder` | `/orders[/...]` |
+| `ListPositions` / `GetPosition` / `UpdatePosition` / `ClosePosition` | `/positions[/...]` |
+| `HistoryOrders` / `HistoryDeals` | `/history/...` |
+
+### Error mapping
+
+HTTP status maps to typed errors you can `errors.Is()` against:
+
+| Status | Error |
+| --- | --- |
+| 400 | `aichteeteapee.ErrBadRequest` |
+| 401 | `aichteeteapee.ErrUnauthorized` |
+| 403 | `aichteeteapee.ErrForbidden` |
+| 404 | `aichteeteapee.ErrNotFound` |
+| 409 | `aichteeteapee.ErrConflict` |
+| 422 | `aichteeteapee.ErrUnprocessableEntity` |
+| 429 | `aichteeteapee.ErrTooManyRequests` |
+| 500 | `aichteeteapee.ErrInternalServer` |
+| 502 | `aichteeteapee.ErrBadGateway` |
+| 503 | `mt5httpapi.ErrNotInitialized` (MT5 still booting) |
+| 504 | `aichteeteapee.ErrGatewayTimeout` |
+
+Helper: `mt5httpapi.IsNotInitialized(err)` shortcuts the common 503 retry case.
+
 ## Technical Analysis
 
 The API gives you raw market data — it doesn't do TA. If you need indicators, grab the candles from here and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.

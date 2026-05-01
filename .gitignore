@@ -12,4 +12,5 @@ run.log
 __pycache__
 commit.sh
 git-update.sh
+fix.sh
 .data
