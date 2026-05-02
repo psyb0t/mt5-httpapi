@@ -20,13 +20,26 @@ This is a tool for automating trades. If you blow your account, that's on you. U
 - ~20 GB disk (4 GB ISO + 11 GB VM + MT5 installs)
 - 5 GB RAM (for the Windows VM)
 
-The container is configured with a `512M` memory limit but a `5G` memswap limit — so the VM runs mostly on swap. Sounds cursed, works fine. Windows + MT5 are not latency-sensitive enough for this to matter. tiny11 + our debloat script idles at ~1.4 GB RAM, and MT5 + the Python API barely add anything on top of that. noVNC is there so you can watch the installation progress and confirm everything started up. After that, forget the UI exists and just hit the REST API.
+The container ships with a `512M` memory limit and `5G` memswap limit — so the VM runs mostly on host swap. tiny11 + the debloat script idles at ~1.4 GB, MT5 + the Python API add a bit on top. For low-volume use (placing trades, polling positions, pulling small recent candle windows) this is fine — it's not latency-sensitive enough for swap to matter. noVNC is there so you can watch the installation progress; after that, forget the UI exists and just hit the REST API.
 
-### Real-world usage: 4 terminals on 2 vCPUs + 512M RAM
+### When 512M is NOT enough
+
+MT5 terminals cache every loaded chart in process RAM and never release it. The moment you start backfilling deep history (e.g. scraping all symbols × multiple timeframes × years of data) each terminal balloons to multi-GB. With a 512M container limit that all gets paged to host swap, Windows guest memory manager doesn't know the pages are on disk, processes appear unresponsive, and Windows starts trimming/killing them silently. The cmd.exe wrappers stay open but blank, the Python API processes are dead, and you get a hung tunnel.
+
+If you're doing **heavy historical data scraping**, do at least one of:
+
+- Bump the container memory limit to match real demand (4–8 GB for multi-terminal heavy scraping).
+- Scrape one broker at a time (stop the others) so only one terminal accumulates cache.
+- Restart the terminal between batches via `POST /terminal/restart` to flush the chart cache.
+- Chunk time ranges instead of pulling 10 years of M1 in one shot.
+
+Or just run MT5 on a dedicated box if you're hammering it.
+
+### Real-world usage: 4 terminals on 2 vCPUs + 512M RAM (light load only)
 
 ![4 terminals running](assets/usage.png)
 
-This is 4 MT5 terminals (RoboForex, 2x TeleTrade, FTMO) running simultaneously on 2 virtual CPUs with only 512M of real RAM — the rest lives in swap. CPU spikes to 100% during startup while all terminals and APIs initialize at once, then drops to ~15% idle. Total memory usage: 2.1 GB, all comfortably handled by swap. You could easily run 10+ terminals in a single container like this.
+4 MT5 terminals (RoboForex, 2x TeleTrade, FTMO) running simultaneously on 2 vCPUs with only 512M real RAM. CPU spikes to 100% during startup, drops to ~15% idle. Total memory usage: 2.1 GB, comfortably on swap. This works **as long as you're not stress-loading it with deep history scrapes** — at idle / light polling, you can pack 10+ terminals in here.
 
 ## Quick Start
 
