@@ -8,6 +8,7 @@ config/accounts.json
 config/terminals.json
 config/api_token.txt
 .env
+docker-compose.yml
 run.log
 __pycache__
 commit.sh

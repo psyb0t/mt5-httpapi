@@ -14,6 +14,17 @@ exec > >(tee "${LOG_FILE}") 2>&1
 
 mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem"
 
+# Bootstrap docker-compose.yml from example on first run; user owns the real file.
+if [ ! -f "${DIR}/docker-compose.yml" ]; then
+    if [ -f "${DIR}/docker-compose.yml.example" ]; then
+        echo "docker-compose.yml not found — seeding from docker-compose.yml.example"
+        cp "${DIR}/docker-compose.yml.example" "${DIR}/docker-compose.yml"
+    else
+        echo "ERROR: neither docker-compose.yml nor docker-compose.yml.example found."
+        exit 1
+    fi
+fi
+
 # Check for KVM
 if [ ! -e /dev/kvm ]; then
     echo "ERROR: /dev/kvm not found. Enable virtualization in BIOS."
