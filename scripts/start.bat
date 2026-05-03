@@ -72,7 +72,7 @@ if not exist "%CONFIG%\terminals.json" (
 
 :: ── Parse terminals.json once ───────────────────────────────────
 set "TERM_LIST=%TEMP%\mt5_terminals.txt"
-"%PYDIR%\python.exe" -c "import json;[print(t['broker'],t['account'],t['port']) for t in json.load(open(r'%CONFIG%\terminals.json'))]" > "%TERM_LIST%" 2>"%TEMP%\mt5_parse_err.txt"
+"%PYDIR%\python.exe" -c "import json;[print(t['broker'],t['account'],t['port'],str(t.get('utc_offset','0')).replace(' ','')) for t in json.load(open(r'%CONFIG%\terminals.json'))]" > "%TERM_LIST%" 2>"%TEMP%\mt5_parse_err.txt"
 if !errorlevel! neq 0 (
     call :log "%START_LOG%" "ERROR: Failed to parse terminals.json:"
     type "%TEMP%\mt5_parse_err.txt" >> "%START_LOG%"
@@ -140,7 +140,7 @@ goto status_loop
 
 :: ══════════════════════════════════════════════════════════════════
 :launch_terminal
-:: %1=broker %2=account %3=port
+:: %1=broker %2=account %3=port %4=utc_offset (ignored here)
 set "LT_BROKER=%~1"
 set "LT_ACCOUNT=%~2"
 set "LT_PORT=%~3"
@@ -202,9 +202,11 @@ exit /b 0
 set "LA_BROKER=%~1"
 set "LA_ACCOUNT=%~2"
 set "LA_PORT=%~3"
+set "LA_OFFSET=%~4"
+if "!LA_OFFSET!"=="" set "LA_OFFSET=0"
 
-call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT!"
-start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN!"
+call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT! (utc_offset=!LA_OFFSET!)"
+start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN! !LA_OFFSET!"
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

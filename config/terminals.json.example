@@ -2,11 +2,13 @@
   {
     "broker": "ftmo",
     "account": "tenkchallenge",
-    "port": 6542
+    "port": 6542,
+    "utc_offset": "3h"
   },
   {
     "broker": "ftmo",
     "account": "bigchallenge",
-    "port": 6543
+    "port": 6543,
+    "utc_offset": "3h"
   }
 ]

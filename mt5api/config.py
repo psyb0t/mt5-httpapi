@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 
 import MetaTrader5 as mt5
 
@@ -19,8 +20,60 @@ def _parse_args():
     parser.add_argument("--account", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--token", default=None)
+    parser.add_argument(
+        "--utc-offset",
+        default=None,
+        dest="utc_offset",
+        help="Broker's UTC offset as a duration string ('3h', '3h30m', "
+             "'-2h', '0', '90m'). MT5 returns timestamps in broker wall-clock "
+             "time disguised as unix UTC; this offset normalizes them to real "
+             "UTC on the wire. Negative values are allowed for west-of-UTC "
+             "brokers.",
+    )
     args, _ = parser.parse_known_args()
     return args
+
+
+_DURATION_RE = re.compile(
+    r"^\s*(?P<sign>[+-])?\s*"
+    r"(?:(?P<h>\d+(?:\.\d+)?)\s*h)?\s*"
+    r"(?:(?P<m>\d+(?:\.\d+)?)\s*m)?\s*"
+    r"(?:(?P<s>\d+(?:\.\d+)?)\s*s)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_duration_to_seconds(value):
+    """Parse '3h', '3h30m', '-2h', '90m', '0' into integer seconds.
+
+    Bare numbers (e.g. '3' or '3.5' or 3) are interpreted as HOURS for
+    convenience — most brokers run on whole-hour offsets.
+    """
+    if value is None or value == "":
+        return 0
+    if isinstance(value, (int, float)):
+        return int(round(float(value) * 3600))
+    s = str(value).strip()
+    if not s:
+        return 0
+    # Bare number → hours.
+    try:
+        return int(round(float(s) * 3600))
+    except ValueError:
+        pass
+    m = _DURATION_RE.match(s)
+    if not m or not (m.group("h") or m.group("m") or m.group("s")):
+        raise ValueError(
+            f"Invalid duration: {value!r}. "
+            "Use '3h', '3h30m', '-2h', '90m', or a bare number (hours)."
+        )
+    h = float(m.group("h") or 0)
+    minutes = float(m.group("m") or 0)
+    secs = float(m.group("s") or 0)
+    total = h * 3600 + minutes * 60 + secs
+    if m.group("sign") == "-":
+        total = -total
+    return int(round(total))
 
 
 def load_terminal_config():
@@ -37,6 +90,9 @@ BROKER = _args.broker or _terminal_config.get("broker", "default")
 ACCOUNT = _args.account or _terminal_config.get("account", "")
 PORT = _args.port or 6542
 API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
+UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
+UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)
+UTC_OFFSET_HOURS = UTC_OFFSET_SECONDS / 3600.0
 
 # Resolve TERMINAL_PATH: account-specific copy first, then base install
 _candidates = []

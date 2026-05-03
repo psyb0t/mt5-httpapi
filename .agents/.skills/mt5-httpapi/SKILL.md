@@ -68,7 +68,19 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/shu
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/restart
 ```
 
-Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`.
+Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`, `broker_utc_offset_hours` (signed offset applied to all timestamps in/out — see Broker time below).
+
+### Broker time vs real UTC
+
+MT5 returns timestamps in the **broker server's wall-clock time** disguised as unix integers (RoboForex/FTMO = UTC+3, TeleTrade = UTC+2, etc.). The API normalizes this when `utc_offset` is set per terminal in `terminals.json`:
+
+```json
+{ "broker": "roboforex", "account": "main", "port": 6542, "utc_offset": "3h" }
+```
+
+Forms accepted: `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
+
+When set, every outgoing time field (tick `time`, rate `time`, position/order/deal `time*` and `time_*_msc`) is real UTC unix, and every incoming `from`/`to` query param is interpreted as real UTC unix. If unset or `0`, raw broker timestamps pass through (legacy behavior). Check `GET /terminal` → `broker_utc_offset_hours` to confirm.
 
 ### Account
 

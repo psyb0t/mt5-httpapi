@@ -5,7 +5,13 @@ from flask import jsonify, request
 import MetaTrader5 as mt5
 
 from mt5api.config import TIMEFRAME_MAP
-from mt5api.mt5client import ensure_initialized, to_dict
+from mt5api.mt5client import (
+    broker_to_utc_ms,
+    broker_to_utc_seconds,
+    ensure_initialized,
+    to_dict,
+    utc_seconds_to_broker_dt,
+)
 
 TICK_FLAGS_MAP = {
     "ALL": mt5.COPY_TICKS_ALL,
@@ -15,9 +21,10 @@ TICK_FLAGS_MAP = {
 
 
 def _parse_unix(s):
-    """Parse a unix-seconds string to a UTC datetime. Returns None on failure."""
+    """Parse a real-UTC unix-seconds string to the broker-time datetime that
+    MT5 expects for copy_*_range / copy_*_from. Returns None on failure."""
     try:
-        return datetime.fromtimestamp(int(s), tz=timezone.utc)
+        return utc_seconds_to_broker_dt(s)
     except (TypeError, ValueError):
         return None
 
@@ -104,7 +111,8 @@ def get_rates(symbol):
         return jsonify([])
 
     return jsonify([{
-        "time": int(r[0]), "open": float(r[1]), "high": float(r[2]),
+        "time": broker_to_utc_seconds(r[0]),
+        "open": float(r[1]), "high": float(r[2]),
         "low": float(r[3]), "close": float(r[4]), "tick_volume": int(r[5]),
         "spread": int(r[6]), "real_volume": int(r[7]),
     } for r in rates])
@@ -151,7 +159,9 @@ def get_ticks(symbol):
         return jsonify([])
 
     return jsonify([{
-        "time": int(t[0]), "bid": float(t[1]), "ask": float(t[2]),
-        "last": float(t[3]), "volume": int(t[4]), "time_msc": int(t[5]),
+        "time": broker_to_utc_seconds(t[0]),
+        "bid": float(t[1]), "ask": float(t[2]),
+        "last": float(t[3]), "volume": int(t[4]),
+        "time_msc": broker_to_utc_ms(t[5]),
         "flags": int(t[6]), "volume_real": float(t[7]),
     } for t in ticks])

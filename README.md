@@ -94,12 +94,14 @@ Defines which terminals to run. Each entry gets its own MT5 terminal instance an
   {
     "broker": "roboforex",
     "account": "main",
-    "port": 6542
+    "port": 6542,
+    "utc_offset": "3h"
   },
   {
     "broker": "roboforex",
     "account": "demo",
-    "port": 6543
+    "port": 6543,
+    "utc_offset": "3h"
   }
 ]
 ```
@@ -107,6 +109,7 @@ Defines which terminals to run. Each entry gets its own MT5 terminal instance an
 - `broker` — matches the installer name (`mt5setup-<broker>.exe`) and `accounts.json` key
 - `account` — matches the account name in `accounts.json` under that broker
 - `port` — unique port for this terminal's HTTP API
+- `utc_offset` — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0` (no normalization). Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
 
@@ -193,7 +196,9 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6542/ping
   "ping_last": 0,
   "retransmission": 0.003,
   "trade_allowed": true,
-  "tradeapi_disabled": false
+  "tradeapi_disabled": false,
+  "broker_utc_offset_hours": 3,
+  "broker_utc_offset_seconds": 10800
 }
 ```
 
@@ -245,6 +250,24 @@ The API auto-initializes on first request. You almost never need to call these m
   "fifo_close": false
 }
 ```
+
+### Broker time vs real UTC
+
+MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2 — so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
+
+The MT5 Python SDK doesn't expose `TimeCurrent()` / `TimeGMT()`, so the API can't auto-detect this. Instead, set `utc_offset` per terminal in `terminals.json`:
+
+```json
+{ "broker": "roboforex", "account": "main", "port": 6542, "utc_offset": "3h" }
+```
+
+When set, the API:
+- Subtracts the offset from every outgoing timestamp (tick time, rate time, position/order/deal times, `_msc` fields), so responses are real UTC unix.
+- Adds the offset to incoming `from`/`to` query params, so callers always pass real UTC unix and get back real UTC unix.
+
+Inspect via `GET /terminal` — fields `broker_utc_offset_hours` and `broker_utc_offset_seconds` show what's in effect.
+
+If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps through unchanged (pre-1.8 behavior).
 
 ### Symbols
 

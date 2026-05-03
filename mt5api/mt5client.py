@@ -3,7 +3,7 @@ import os
 import subprocess
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 
 import MetaTrader5 as mt5
 import psutil
@@ -17,8 +17,53 @@ from mt5api.config import (
     TERMINAL_DIR,
     TERMINAL_PATH,
     TIME_MAP,
+    UTC_OFFSET_SECONDS,
 )
 from mt5api.logger import log
+
+# Field names whose values are unix-seconds in BROKER time and need to be
+# converted to real UTC for the wire response.
+TIME_FIELDS_SECONDS = frozenset({
+    "time",
+    "time_setup",
+    "time_done",
+    "time_expiration",
+    "time_update",
+    "time_current",
+    "time_last",
+})
+
+# Same idea, but milliseconds.
+TIME_FIELDS_MS = frozenset({
+    "time_msc",
+    "time_setup_msc",
+    "time_done_msc",
+    "time_update_msc",
+})
+
+
+def broker_to_utc_seconds(broker_unix):
+    """Convert a broker-time unix-seconds value into real UTC unix-seconds."""
+    return int(broker_unix) - UTC_OFFSET_SECONDS
+
+
+def broker_to_utc_ms(broker_unix_ms):
+    """Convert a broker-time unix-milliseconds value into real UTC unix-ms."""
+    return int(broker_unix_ms) - UTC_OFFSET_SECONDS * 1000
+
+
+def utc_seconds_to_broker_dt(utc_unix):
+    """Convert a real-UTC unix-seconds input into the broker-time datetime
+    that MT5 expects for copy_*_range / copy_*_from calls.
+
+    MT5 reads only the clock face of the supplied datetime — it does NOT
+    apply any timezone math — and treats those wall-clock numbers as broker
+    server time. So to ask MT5 about a real UTC moment, we need to hand it a
+    datetime whose clock face matches the broker's wall clock at that moment.
+    Using a tz-aware UTC datetime here is intentional — it just makes the
+    clock face deterministic across systems with different LOCAL timezones.
+    """
+    return datetime.fromtimestamp(int(utc_unix) + UTC_OFFSET_SECONDS, tz=timezone.utc)
 
 INIT_TIMEOUT = 60
 
@@ -218,7 +263,18 @@ def restart_terminal():
 def to_dict(named_tuple):
     if named_tuple is None:
         return None
-    return named_tuple._asdict()
+    d = named_tuple._asdict()
+    if UTC_OFFSET_SECONDS == 0:
+        return d
+    for k in TIME_FIELDS_SECONDS:
+        v = d.get(k)
+        if v:
+            d[k] = int(v) - UTC_OFFSET_SECONDS
+    for k in TIME_FIELDS_MS:
+        v = d.get(k)
+        if v:
+            d[k] = int(v) - UTC_OFFSET_SECONDS * 1000
+    return d
 
 
 def build_order_request(body):
