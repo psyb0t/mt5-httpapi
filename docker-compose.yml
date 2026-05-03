@@ -24,9 +24,9 @@ services:
           memory: 512M
     memswap_limit: 5G
     healthcheck:
-      test: ["CMD", "curl", "-f", "-H", "Authorization: Bearer ${API_TOKEN}", "http://localhost:6542/ping"]
+      test: ["CMD", "sh", "/shared/scripts/healthcheck.sh"]
       interval: 30s
-      timeout: 5s
+      timeout: 30s
       retries: 10
       start_period: 120s
     restart: unless-stopped
