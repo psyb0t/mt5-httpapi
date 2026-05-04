@@ -110,6 +110,16 @@ def get_rates(symbol):
     if rates is None or len(rates) == 0:
         return jsonify([])
 
+    # Filter out bars outside the requested range.  Brokers sometimes return
+    # their oldest bar even when the requested window is entirely before it.
+    if date_from and date_to:
+        req_from = int(date_from)
+        req_to = int(date_to)
+        rates = [r for r in rates
+                 if req_from <= broker_to_utc_seconds(r[0]) <= req_to]
+        if not rates:
+            return jsonify([])
+
     return jsonify([{
         "time": broker_to_utc_seconds(r[0]),
         "open": float(r[1]), "high": float(r[2]),
@@ -157,6 +167,14 @@ def get_ticks(symbol):
 
     if ticks is None or len(ticks) == 0:
         return jsonify([])
+
+    if date_from and date_to:
+        req_from = int(date_from)
+        req_to = int(date_to)
+        ticks = [t for t in ticks
+                 if req_from <= broker_to_utc_seconds(t[0]) <= req_to]
+        if not ticks:
+            return jsonify([])
 
     return jsonify([{
         "time": broker_to_utc_seconds(t[0]),

@@ -19,7 +19,7 @@ def _require_auth():
 
 @app.after_request
 def _log_request(response):
-    log.info("%s %s -> %s", request.method, request.path, response.status_code)
+    log.info("%s %s -> %s", request.method, request.full_path, response.status_code)
     return response
 
 
