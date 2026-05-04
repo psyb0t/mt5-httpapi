@@ -178,7 +178,7 @@ type Tick struct {
 	Bid        float64 `json:"bid"`
 	Ask        float64 `json:"ask"`
 	Last       float64 `json:"last"`
-	Volume     int64   `json:"volume"`
+	Volume     uint64  `json:"volume"`
 	TimeMsc    int64   `json:"time_msc"`
 	Flags      int     `json:"flags"`
 	VolumeReal float64 `json:"volume_real"`
@@ -190,9 +190,9 @@ type Rate struct {
 	High        float64 `json:"high"`
 	Low         float64 `json:"low"`
 	Close       float64 `json:"close"`
-	TickVolume  int64   `json:"tick_volume"`
+	TickVolume  uint64  `json:"tick_volume"`
 	Spread      int     `json:"spread"`
-	RealVolume  int64   `json:"real_volume"`
+	RealVolume  uint64  `json:"real_volume"`
 }
 
 type Order struct {
