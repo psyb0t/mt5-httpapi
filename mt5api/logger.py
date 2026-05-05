@@ -44,16 +44,22 @@ class _LockedFileHandler(logging.FileHandler):
 
 log = logging.getLogger("mt5api")
 log.setLevel(logging.INFO)
+# Don't bubble to root — Flask/werkzeug or any library that adds a root
+# handler would otherwise emit a duplicate copy of every line.
+log.propagate = False
 
-_formatter = logging.Formatter(_FMT, datefmt=_DATEFMT)
+# Idempotent setup — guards against the module being initialized more
+# than once (Flask reloader, test re-imports, etc.).
+if not log.handlers:
+    _formatter = logging.Formatter(_FMT, datefmt=_DATEFMT)
 
-# stdout — captured by start.bat into per-API log files
-_stdout = logging.StreamHandler()
-_stdout.setFormatter(_formatter)
-log.addHandler(_stdout)
+    # stdout — captured by start.bat into per-API log files
+    _stdout = logging.StreamHandler()
+    _stdout.setFormatter(_formatter)
+    log.addHandler(_stdout)
 
-# full.log — shared across all APIs and bat scripts, mkdir-locked per write
-os.makedirs(LOG_DIR, exist_ok=True)
-_file = _LockedFileHandler(FULL_LOG, encoding="utf-8")
-_file.setFormatter(_formatter)
-log.addHandler(_file)
+    # full.log — shared across all APIs and bat scripts, mkdir-locked per write
+    os.makedirs(LOG_DIR, exist_ok=True)
+    _file = _LockedFileHandler(FULL_LOG, encoding="utf-8")
+    _file.setFormatter(_formatter)
+    log.addHandler(_file)

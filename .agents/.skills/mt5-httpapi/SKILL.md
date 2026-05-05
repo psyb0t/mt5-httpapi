@@ -113,17 +113,19 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD/tick
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date +%s)&count=-100"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&count=500"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&to=$(date +%s)"
 ```
 
 Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2` `H3` `H4` `H6` `H8` `H12` `D1` `W1` `MN1`
 
-Rates/ticks query model — anchor (`from`) + signed `count`:
-- `count=N` (positive) — N forward from `from`. Omit `from` to get last N up to the current bar.
-- `count=-N` (negative) — `\|N\|` ending at `from`. Omit `from` to anchor at now.
-- `count=0` — empty result.
-- No `to` param. For range backfills, walk forward in chunks: anchor at the start, fetch `count=N`, take last bar's `time` as the next anchor, repeat.
+Rates/ticks query model — two modes, mutually exclusive:
+- **Anchor + signed `count`:** `count=N` = N forward from `from`, `count=-N` = `\|N\|` ending at `from`, `count=0` = empty. Omit `from` to anchor at now.
+- **Range (`from` + `to`):** all bars/ticks in the window, no count cap beyond `terminal_info().maxbars`. `to` requires `from` and rejects `count` (returns 400).
+
+`from` and `to` accept three formats (all real UTC): unix seconds (`1700000000`), full datetime `YYYY_MM_DD_HH_MM_SS` (`2024_01_15_14_30_00`), or date-only `YYYY_MM_DD` (midnight UTC).
 
 Capped at `terminal_info().maxbars` rows per request (default 100k — see `GET /terminal`). Symbols auto-select into MarketWatch on first access. Responses are gzipped if the client requests it (`curl --compressed`).
 

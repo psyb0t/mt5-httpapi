@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# MetaTrader5 is a Windows-only pip package — install everything else and
+# rely on tests/conftest.py to inject a stub for it at import time.
+COPY config/requirements.txt /tmp/requirements.txt
+RUN grep -v -i '^MetaTrader5' /tmp/requirements.txt > /tmp/req-test.txt && \
+    pip install --no-cache-dir -r /tmp/req-test.txt pytest
+
+COPY mt5api ./mt5api
+COPY tests ./tests
+
+ENV PYTHONPATH=/app
+ENV PYTHONDONTWRITEBYTECODE=1
+
+CMD ["pytest", "-v", "--tb=short", "tests/"]

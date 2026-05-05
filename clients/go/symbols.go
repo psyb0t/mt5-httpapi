@@ -51,12 +51,24 @@ func (c *Client) GetRates(
 		query.Set("timeframe", q.Timeframe)
 	}
 
+	if q.To > 0 && q.Count != 0 {
+		return nil, ctxerrors.New("rates query: count and to are mutually exclusive")
+	}
+
+	if q.To > 0 && q.From <= 0 {
+		return nil, ctxerrors.New("rates query: to requires from")
+	}
+
 	if q.Count != 0 {
 		query.Set("count", strconv.Itoa(q.Count))
 	}
 
 	if q.From > 0 {
 		query.Set("from", strconv.FormatInt(q.From, 10))
+	}
+
+	if q.To > 0 {
+		query.Set("to", strconv.FormatInt(q.To, 10))
 	}
 
 	out := []Rate{}
@@ -73,12 +85,24 @@ func (c *Client) GetTicks(
 	q TicksQuery,
 ) ([]Tick, error) {
 	query := url.Values{}
+	if q.To > 0 && q.Count != 0 {
+		return nil, ctxerrors.New("ticks query: count and to are mutually exclusive")
+	}
+
+	if q.To > 0 && q.From <= 0 {
+		return nil, ctxerrors.New("ticks query: to requires from")
+	}
+
 	if q.Count != 0 {
 		query.Set("count", strconv.Itoa(q.Count))
 	}
 
 	if q.From > 0 {
 		query.Set("from", strconv.FormatInt(q.From, 10))
+	}
+
+	if q.To > 0 {
+		query.Set("to", strconv.FormatInt(q.To, 10))
 	}
 
 	if q.Flags != "" {

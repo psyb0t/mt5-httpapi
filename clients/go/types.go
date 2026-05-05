@@ -313,15 +313,23 @@ type ClosePositionRequest struct {
 	Deviation int     `json:"deviation,omitempty"`
 }
 
+// RatesQuery selects bars in one of two modes (mutually exclusive):
+//   - Anchor + signed Count: positive = N forward from From, negative = |N|
+//     ending at From. From=0 anchors at "now".
+//   - Range: From + To returns every bar in the window. Requires From > 0.
+//     If To > 0, Count must be 0 — server rejects both with 400.
 type RatesQuery struct {
 	Timeframe string
-	Count     int   // positive = forward, negative = backward from From
-	From      int64 // unix seconds, 0 = unset (defaults to now)
+	Count     int   // positive = forward, negative = backward from From; ignored when To > 0
+	From      int64 // unix seconds, 0 = unset (defaults to now in count mode)
+	To        int64 // unix seconds, 0 = unset; when > 0 selects range mode
 }
 
+// TicksQuery: same two modes as RatesQuery — anchor+count, or from+to range.
 type TicksQuery struct {
-	Count int      // positive = forward, negative = backward from From
-	From  int64    // unix seconds, 0 = unset (defaults to now)
+	Count int      // positive = forward, negative = backward from From; ignored when To > 0
+	From  int64    // unix seconds, 0 = unset (defaults to now in count mode)
+	To    int64    // unix seconds, 0 = unset; when > 0 selects range mode
 	Flags TickFlag // empty = ALL
 }
 

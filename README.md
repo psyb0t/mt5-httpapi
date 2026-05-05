@@ -276,8 +276,8 @@ If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps throug
 | GET    | `/symbols`               | List symbols (`?group=*USD*`)             |
 | GET    | `/symbols/:symbol`       | Symbol details                            |
 | GET    | `/symbols/:symbol/tick`  | Latest tick                               |
-| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100` or `?timeframe=H1&from=<unix>&count=-100`) |
-| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100` or `?from=<unix>&count=-100`)                               |
+| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`, `?timeframe=H1&from=<unix>&count=-100`, or `?timeframe=H1&from=<unix>&to=<unix>`) |
+| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100`, `?from=<unix>&count=-100`, or `?from=<unix>&to=<unix>`)                                            |
 
 **GET `/symbols`** — array of symbol names:
 
@@ -404,15 +404,17 @@ Query params (rates):
 | Param | Behavior |
 | --- | --- |
 | `timeframe` | Defaults `M1` |
-| `count` | Signed integer (default `100`). Positive = N forward from `from` (or last N if no `from`). Negative = `\|N\|` ending at `from`. Zero = empty result. |
-| `from` | Anchor unix-seconds (real UTC). Omitted = anchor is now. |
+| `count` | Signed integer (default `100`). Positive = N forward from `from` (or last N if no `from`). Negative = `\|N\|` ending at `from`. Zero = empty result. Mutually exclusive with `to`. |
+| `from` | Anchor (real UTC). Omitted = now. Accepts unix seconds, `YYYY_MM_DD_HH_MM_SS`, or `YYYY_MM_DD` (midnight UTC). |
+| `to` | Range end (real UTC, same formats as `from`). Requires `from`. Returns all bars in `[from, to]`, no count cap beyond `terminal_info().maxbars`. Mutually exclusive with `count`. |
 
 Examples:
 - `?timeframe=H1&count=100` — last 100 H1 candles up to current bar
 - `?timeframe=H1&from=1700000000&count=100` — 100 candles forward from anchor
-- `?timeframe=H1&from=1700000000&count=-100` — 100 candles ending at anchor
+- `?timeframe=H1&from=2024_01_15&count=-100` — 100 candles ending at midnight UTC on 2024-01-15
+- `?timeframe=H1&from=2024_01_15_09_30_00&to=2024_01_15_16_00_00` — every H1 candle in the window
 
-Backward fetches (negative `count`) walk back `\|count\| * timeframe_seconds` from the anchor (with weekend/holiday padding) and trim to the last `\|count\|` bars at or before the anchor — no client-side range math needed.
+Pick the mode that fits: `count` when you want exactly N bars and don't care about the end time; `to` when you have an explicit window and want everything in it. The `count` mode internally computes the range with weekend/holiday padding; the `to` mode is a direct passthrough to `copy_rates_range`.
 
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
@@ -433,11 +435,19 @@ Symbols are auto-selected into MarketWatch on first access — backfilling rarel
 }
 ```
 
-Query params (ticks): same `count` / `from` model as rates (positive = forward, negative = backward, omitted `from` = now). Plus:
+Query params (ticks): same `count` / `from` / `to` model as rates — positive `count` = forward from `from`, negative = backward, `from+to` = range, `count` and `to` mutually exclusive, `to` requires `from`. Plus:
 
 | Param | Values | Default | Meaning |
 | --- | --- | --- | --- |
 | `flags` | `ALL`, `INFO`, `TRADE` | `ALL` | `INFO` = bid/ask changes only (~10× smaller payload), `TRADE` = trades only, `ALL` = everything |
+
+Examples:
+- `?count=100` — last 100 ticks up to now
+- `?from=2024_01_15_14_30_00&count=500` — 500 ticks forward from that timestamp
+- `?from=1700000000&count=-500` — 500 ticks ending at anchor
+- `?from=2024_01_15_09_00_00&to=2024_01_15_10_00_00` — every tick in that 1-hour window
+
+Tick-density caveat: liquid pairs (EURUSD in NY hours) emit 10–100 ticks/sec. A 1-hour `from+to` window can return millions of rows. Prefer `count` mode unless you really need every tick in a window — and even then, keep the window small or paginate.
 
 Responses are gzip-compressed when the client sends `Accept-Encoding: gzip` — typically a 5–10× bandwidth reduction for large rate/tick fetches. `curl` honors this if you pass `--compressed`.
 

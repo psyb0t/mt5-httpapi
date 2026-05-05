@@ -1,15 +1,31 @@
-from flask import Flask, abort, request
+import os
+import time
+
+from flask import Flask, abort, g, request
 from flask_compress import Compress
 from mt5api.config import API_TOKEN
 from mt5api.handlers import account, history, orders, positions, symbols, terminal
 from mt5api.logger import log
 
 app = Flask(__name__)
-Compress(app)
+
+
+def _client_ip():
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.remote_addr or "-"
 
 
 @app.before_request
-def _require_auth():
+def _start_request():
+    g.req_start = time.monotonic()
+    g.req_id = os.urandom(4).hex()
+    log.info(
+        "%s -> %s %s ip=%s ua=%r",
+        g.req_id, request.method, request.full_path,
+        _client_ip(), request.headers.get("User-Agent", "-"),
+    )
     if not API_TOKEN:
         return
     auth = request.headers.get("Authorization", "")
@@ -18,9 +34,25 @@ def _require_auth():
 
 
 @app.after_request
-def _log_request(response):
-    log.info("%s %s -> %s", request.method, request.full_path, response.status_code)
+def _end_request(response):
+    start = getattr(g, "req_start", None)
+    elapsed_ms = (time.monotonic() - start) * 1000 if start else -1
+    req_id = getattr(g, "req_id", "--------")
+    size = response.calculate_content_length()
+    if size is None:
+        size = response.headers.get("Content-Length", "-")
+    log.info(
+        "%s <- %s %s status=%s bytes=%s dur_ms=%.1f",
+        req_id, request.method, request.full_path,
+        response.status_code, size, elapsed_ms,
+    )
     return response
+
+
+# Compress registered AFTER our after_request so its hook runs first
+# (Flask invokes after_request hooks in reverse registration order),
+# letting us log post-compression Content-Length.
+Compress(app)
 
 
 # ── Health / System ──────────────────────────────────────────────

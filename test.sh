@@ -212,6 +212,49 @@ CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=W1&from=86400&count=
     && pass "GET rates backward from epoch doesn't crash (HTTP $CODE)" \
     || fail "GET rates backward from epoch" "got HTTP $CODE"
 
+# Range mode: from+to
+DAY_AGO=$((NOW - 86400))
+RATES=$(api GET "/symbols/${TEST_SYM}/rates?timeframe=H1&from=${DAY_AGO}&to=${NOW}")
+R_COUNT=$(echo "$RATES" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+[ "$R_COUNT" -gt 0 ] \
+    && pass "GET rates from+to range returns ${R_COUNT} bars" \
+    || fail "GET rates from+to" "empty"
+
+# Range mode: count+to is mutually exclusive
+CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=H1&from=${DAY_AGO}&to=${NOW}&count=10")
+[ "$CODE" = "400" ] \
+    && pass "GET rates count+to returns 400" \
+    || fail "GET rates count+to" "expected 400 got $CODE"
+
+# Range mode: to without from is invalid
+CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=H1&to=${NOW}")
+[ "$CODE" = "400" ] \
+    && pass "GET rates to-without-from returns 400" \
+    || fail "GET rates to-without-from" "expected 400 got $CODE"
+
+# Datetime string: YYYY_MM_DD_HH_MM_SS
+DT_FROM=$(date -u -d "@${DAY_AGO}" +%Y_%m_%d_%H_%M_%S)
+DT_TO=$(date -u -d "@${NOW}" +%Y_%m_%d_%H_%M_%S)
+RATES=$(api GET "/symbols/${TEST_SYM}/rates?timeframe=H1&from=${DT_FROM}&to=${DT_TO}")
+R_COUNT=$(echo "$RATES" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+[ "$R_COUNT" -gt 0 ] \
+    && pass "GET rates Y_M_D_H_M_S range returns ${R_COUNT} bars" \
+    || fail "GET rates Y_M_D_H_M_S range" "empty"
+
+# Date-only: YYYY_MM_DD (midnight UTC)
+D_FROM=$(date -u -d "@${DAY_AGO}" +%Y_%m_%d)
+RATES=$(api GET "/symbols/${TEST_SYM}/rates?timeframe=H1&from=${D_FROM}&count=10")
+R_COUNT=$(echo "$RATES" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+[ "$R_COUNT" -gt 0 ] \
+    && pass "GET rates Y_M_D date-only anchor returns ${R_COUNT} bars" \
+    || fail "GET rates Y_M_D anchor" "empty"
+
+# Bogus date string returns 400
+CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=H1&from=not_a_date&count=5")
+[ "$CODE" = "400" ] \
+    && pass "GET rates bogus date returns 400" \
+    || fail "GET rates bogus date" "expected 400 got $CODE"
+
 # Invalid timeframe
 CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=BOGUS")
 [ "$CODE" = "400" ] \
@@ -241,6 +284,26 @@ T_BK_COUNT=$(echo "$TICKS_BK" | python3 -c "import sys,json; print(len(json.load
 [ "$T_BK_COUNT" -gt 0 ] && [ "$T_BK_COUNT" -le 5 ] \
     && pass "GET ticks count=-5 returns ${T_BK_COUNT} ticks backward" \
     || fail "GET ticks count=-5" "got $T_BK_COUNT"
+
+# Range mode: from+to (small window so we don't drown in ticks)
+HOUR_AGO=$((NOW - 3600))
+TICKS=$(api GET "/symbols/${TEST_SYM}/ticks?from=${HOUR_AGO}&to=${NOW}")
+T_COUNT=$(echo "$TICKS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+[ "$T_COUNT" -ge 0 ] \
+    && pass "GET ticks from+to range returns ${T_COUNT} ticks" \
+    || fail "GET ticks from+to" "got $T_COUNT"
+
+# Range mode: count+to is mutually exclusive
+CODE=$(api_status GET "/symbols/${TEST_SYM}/ticks?from=${HOUR_AGO}&to=${NOW}&count=5")
+[ "$CODE" = "400" ] \
+    && pass "GET ticks count+to returns 400" \
+    || fail "GET ticks count+to" "expected 400 got $CODE"
+
+# Range mode: to without from is invalid
+CODE=$(api_status GET "/symbols/${TEST_SYM}/ticks?to=${NOW}")
+[ "$CODE" = "400" ] \
+    && pass "GET ticks to-without-from returns 400" \
+    || fail "GET ticks to-without-from" "expected 400 got $CODE"
 
 # ── Positions & Orders (read-only) ──────────────────────────────
 echo ""

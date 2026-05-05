@@ -10,6 +10,7 @@ config/api_token.txt
 .env
 docker-compose.yml
 run.log
+logs/
 __pycache__
 commit.sh
 git-update.sh

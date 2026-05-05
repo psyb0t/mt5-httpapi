@@ -3,11 +3,24 @@ import sys
 import threading
 import time
 
+from waitress import serve
+
 from mt5api.config import ACCOUNT, BROKER, HOST, PORT
 from mt5api.logger import log
 from mt5api.monitor import start_monitor
 from mt5api.mt5client import ensure_initialized, init_mt5
 from mt5api.server import app
+
+# MT5 Python SDK is not threadsafe — one connection per process and the
+# library does not serialize concurrent calls internally. We pin waitress
+# to a single worker thread so requests queue naturally instead of
+# racing into mt5.* and producing garbled results / crashes.
+WSGI_THREADS = 1
+# Cap concurrent TCP connections so a stuck terminal can't blow up file
+# descriptors. Excess clients get refused at accept().
+WSGI_CONNECTION_LIMIT = 50
+# Drop idle clients after this many seconds.
+WSGI_CHANNEL_TIMEOUT = 60
 
 RETRY_INTERVAL = 30
 
@@ -49,11 +62,22 @@ def main():
 
     start_monitor()
 
-    log.info("HTTP API listening on %s:%d", HOST, PORT)
+    log.info(
+        "HTTP API listening on %s:%d (waitress, threads=%d, conn_limit=%d)",
+        HOST, PORT, WSGI_THREADS, WSGI_CONNECTION_LIMIT,
+    )
     try:
-        app.run(host=HOST, port=PORT)
+        serve(
+            app,
+            host=HOST,
+            port=PORT,
+            threads=WSGI_THREADS,
+            connection_limit=WSGI_CONNECTION_LIMIT,
+            channel_timeout=WSGI_CHANNEL_TIMEOUT,
+            ident="mt5-httpapi",
+        )
     except Exception:
-        log.critical("Flask server crashed.", exc_info=True)
+        log.critical("WSGI server crashed.", exc_info=True)
         raise
     finally:
         log.critical(

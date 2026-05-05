@@ -19,12 +19,51 @@ TICK_FLAGS_MAP = {
     "TRADE": mt5.COPY_TICKS_TRADE,
 }
 
+# Retry-doubling budgets. The MT5 SDK has no native "N forward bars from
+# date" or "N backward ticks from date" call, so both branches fake it
+# with copy_*_range over a guessed window. Start tight, double on
+# shortfall, cap attempts so a pathological symbol doesn't loop forever.
+RATES_FORWARD_INITIAL_MULT = 1.5  # covers weekend/holiday gaps on intraday
+RATES_FORWARD_MAX_ATTEMPTS = 4    # final window: 1.5 * 2^3 = 12x
+TICKS_BACKWARD_INITIAL_SEC_PER_TICK = 0.1  # ~10 ticks/sec assumption
+TICKS_BACKWARD_FLOOR_WINDOW_SEC = 60       # min window for sparse symbols
+TICKS_BACKWARD_MAX_ATTEMPTS = 6   # final window: floor * 2^5
 
-def _parse_unix(s):
-    """Parse a real-UTC unix-seconds string to the broker-time datetime that
-    MT5 expects for copy_*_range / copy_*_from. Returns None on failure."""
+
+def _parse_anchor(s):
+    """Parse a `from`/`to` query value into real-UTC unix seconds.
+
+    Accepted forms:
+      - bare integer seconds (may be negative)
+      - 'YYYY_MM_DD_HH_MM_SS' — explicit datetime, interpreted as real UTC
+      - 'YYYY_MM_DD' — date only, time defaults to 00:00:00 UTC
+
+    Returns int unix seconds, or None on parse failure.
+    """
+    if s is None:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    # Bare integer (no underscores — Python's int() accepts '2024_01_15' as
+    # a numeric literal with digit separators, which would mis-parse our
+    # date format).
+    if "_" not in s:
+        try:
+            return int(s)
+        except ValueError:
+            pass
+    parts = s.split("_")
     try:
-        return utc_seconds_to_broker_dt(s)
+        if len(parts) == 6:
+            y, mo, d, h, mi, se = (int(p) for p in parts)
+            dt = datetime(y, mo, d, h, mi, se, tzinfo=timezone.utc)
+        elif len(parts) == 3:
+            y, mo, d = (int(p) for p in parts)
+            dt = datetime(y, mo, d, tzinfo=timezone.utc)
+        else:
+            return None
+        return int(dt.timestamp())
     except (TypeError, ValueError):
         return None
 
@@ -82,7 +121,33 @@ def get_rates(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
 
     date_from = request.args.get("from")
+    date_to = request.args.get("to")
     count_arg = request.args.get("count")
+
+    # Three modes: range (from+to), anchor+count (from+count or count alone),
+    # or default (count=100 from now). count and to are mutually exclusive.
+    if date_to is not None and count_arg is not None:
+        return jsonify({"error": "use either 'count' or 'to', not both"}), 400
+    if date_to is not None and date_from is None:
+        return jsonify({"error": "'to' requires 'from'"}), 400
+
+    if date_to is not None:
+        from_utc = _parse_anchor(date_from)
+        to_utc = _parse_anchor(date_to)
+        if from_utc is None or to_utc is None:
+            return jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+        df = utc_seconds_to_broker_dt(from_utc)
+        dt = utc_seconds_to_broker_dt(to_utc)
+        rates = mt5.copy_rates_range(symbol, timeframe, df, dt)
+        if rates is None or len(rates) == 0:
+            return jsonify([])
+        return jsonify([{
+            "time": broker_to_utc_seconds(r[0]),
+            "open": float(r[1]), "high": float(r[2]),
+            "low": float(r[3]), "close": float(r[4]), "tick_volume": int(r[5]),
+            "spread": int(r[6]), "real_volume": int(r[7]),
+        } for r in rates])
+
     count = int(count_arg) if count_arg else 100
 
     # count > 0: N bars forward from `from` (inclusive)
@@ -94,23 +159,30 @@ def get_rates(symbol):
     abs_count = abs(count)
 
     if date_from:
-        anchor_utc = int(date_from)
-        df = _parse_unix(date_from)
-        if df is None:
-            return jsonify({"error": "'from' must be a unix timestamp"}), 400
+        anchor_utc = _parse_anchor(date_from)
+        if anchor_utc is None:
+            return jsonify({"error": "'from' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+        df = utc_seconds_to_broker_dt(anchor_utc)
         if count > 0:
             # Forward from anchor (inclusive): MT5's copy_rates_from goes
-            # BACKWARD from a date, so we use copy_rates_range with a window
-            # padded for weekends/holidays and trim to first abs_count.
+            # BACKWARD from a date. Fake forward-by-count with a windowed
+            # range query, starting tight and doubling on shortfall.
             tf_secs = TIMEFRAME_SECONDS.get(tf_str, 60)
-            end_utc = anchor_utc + abs_count * tf_secs * 3
-            end_dt = utc_seconds_to_broker_dt(end_utc)
-            rates = mt5.copy_rates_range(symbol, timeframe, df, end_dt)
-            if rates is not None and len(rates) > 0:
-                rates = [r for r in rates
+            mult = RATES_FORWARD_INITIAL_MULT
+            rates = []
+            for _ in range(RATES_FORWARD_MAX_ATTEMPTS):
+                end_utc = anchor_utc + int(abs_count * tf_secs * mult) + tf_secs
+                end_dt = utc_seconds_to_broker_dt(end_utc)
+                got = mt5.copy_rates_range(symbol, timeframe, df, end_dt)
+                if got is None:
+                    rates = []
+                    break
+                rates = [r for r in got
                          if broker_to_utc_seconds(r[0]) >= anchor_utc]
-                if len(rates) > abs_count:
+                if len(rates) >= abs_count:
                     rates = rates[:abs_count]
+                    break
+                mult *= 2
         else:
             # Backward ending at anchor (inclusive): copy_rates_from natively
             # returns abs_count bars whose time is at-or-before anchor.
@@ -143,7 +215,34 @@ def get_ticks(symbol):
         return jsonify({"error": f"Invalid flags: {flags_str}. Use: {list(TICK_FLAGS_MAP.keys())}"}), 400
 
     date_from = request.args.get("from")
+    date_to = request.args.get("to")
     count_arg = request.args.get("count")
+
+    # Three modes: range (from+to), anchor+count (from+count or count alone),
+    # or default (count=100 from now). count and to are mutually exclusive.
+    if date_to is not None and count_arg is not None:
+        return jsonify({"error": "use either 'count' or 'to', not both"}), 400
+    if date_to is not None and date_from is None:
+        return jsonify({"error": "'to' requires 'from'"}), 400
+
+    if date_to is not None:
+        from_utc = _parse_anchor(date_from)
+        to_utc = _parse_anchor(date_to)
+        if from_utc is None or to_utc is None:
+            return jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+        df = utc_seconds_to_broker_dt(from_utc)
+        dt = utc_seconds_to_broker_dt(to_utc)
+        ticks = mt5.copy_ticks_range(symbol, df, dt, flags)
+        if ticks is None or len(ticks) == 0:
+            return jsonify([])
+        return jsonify([{
+            "time": broker_to_utc_seconds(t[0]),
+            "bid": float(t[1]), "ask": float(t[2]),
+            "last": float(t[3]), "volume": int(t[4]),
+            "time_msc": broker_to_utc_ms(t[5]),
+            "flags": int(t[6]), "volume_real": float(t[7]),
+        } for t in ticks])
+
     count = int(count_arg) if count_arg else 100
 
     # count > 0: N ticks forward from `from` (inclusive)
@@ -155,26 +254,38 @@ def get_ticks(symbol):
     abs_count = abs(count)
 
     if date_from:
-        df = _parse_unix(date_from)
-        if df is None:
-            return jsonify({"error": "'from' must be a unix timestamp"}), 400
-        anchor_utc = int(date_from)
+        anchor_utc = _parse_anchor(date_from)
+        if anchor_utc is None:
+            return jsonify({"error": "'from' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+        df = utc_seconds_to_broker_dt(anchor_utc)
         if count > 0:
             # Forward from anchor (inclusive). Unlike copy_rates_from,
             # copy_ticks_from natively goes FORWARD: returns abs_count ticks
             # whose time is at-or-after the anchor.
             ticks = mt5.copy_ticks_from(symbol, df, abs_count, flags)
         else:
-            # Backward ending at anchor: walk back generously and take last abs_count.
-            # Use 1h-per-tick budget as a safety margin for sparse symbols.
-            start_utc = max(0, anchor_utc - abs_count * 3600)
-            df_start = _parse_unix(str(start_utc))
-            ticks = mt5.copy_ticks_range(symbol, df_start, df, flags)
-            if ticks is not None and len(ticks) > 0:
-                ticks = [t for t in ticks
+            # Backward ending at anchor: copy_ticks_from natively goes
+            # FORWARD, no native backward-by-count. Fake it with a range
+            # query, starting tight (~0.1s per tick floor) and doubling
+            # the window on shortfall.
+            window = max(
+                TICKS_BACKWARD_FLOOR_WINDOW_SEC,
+                int(abs_count * TICKS_BACKWARD_INITIAL_SEC_PER_TICK),
+            )
+            ticks = []
+            for _ in range(TICKS_BACKWARD_MAX_ATTEMPTS):
+                start_utc = max(0, anchor_utc - window)
+                df_start = utc_seconds_to_broker_dt(start_utc)
+                got = mt5.copy_ticks_range(symbol, df_start, df, flags)
+                if got is None:
+                    ticks = []
+                    break
+                ticks = [t for t in got
                          if broker_to_utc_seconds(t[0]) <= anchor_utc]
-                if len(ticks) > abs_count:
+                if len(ticks) >= abs_count:
                     ticks = ticks[-abs_count:]
+                    break
+                window *= 2
     else:
         ticks = mt5.copy_ticks_from(
             symbol, datetime(2000, 1, 1, tzinfo=timezone.utc),
