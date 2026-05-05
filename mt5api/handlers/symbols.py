@@ -95,28 +95,26 @@ def get_rates(symbol):
 
     if date_from:
         anchor_utc = int(date_from)
+        df = _parse_unix(date_from)
+        if df is None:
+            return jsonify({"error": "'from' must be a unix timestamp"}), 400
         if count > 0:
-            df = _parse_unix(date_from)
-            if df is None:
-                return jsonify({"error": "'from' must be a unix timestamp"}), 400
-            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count)
-        else:
-            # Walk backward: calculate a start point far enough back,
-            # clamp to epoch 0, fetch forward, then take last abs_count.
+            # Forward from anchor (inclusive): MT5's copy_rates_from goes
+            # BACKWARD from a date, so we use copy_rates_range with a window
+            # padded for weekends/holidays and trim to first abs_count.
             tf_secs = TIMEFRAME_SECONDS.get(tf_str, 60)
-            start_utc = max(0, anchor_utc - abs_count * tf_secs)
-            df = _parse_unix(str(start_utc))
-            if df is None:
-                return jsonify({"error": "'from' must be a unix timestamp"}), 400
-            # Fetch enough bars from the calculated start to cover the window.
-            # Ask for 2x to handle gaps (weekends, holidays).
-            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count * 2)
+            end_utc = anchor_utc + abs_count * tf_secs * 3
+            end_dt = utc_seconds_to_broker_dt(end_utc)
+            rates = mt5.copy_rates_range(symbol, timeframe, df, end_dt)
             if rates is not None and len(rates) > 0:
-                # Keep only bars at or before the anchor, then last abs_count.
                 rates = [r for r in rates
-                         if broker_to_utc_seconds(r[0]) <= anchor_utc]
+                         if broker_to_utc_seconds(r[0]) >= anchor_utc]
                 if len(rates) > abs_count:
-                    rates = rates[-abs_count:]
+                    rates = rates[:abs_count]
+        else:
+            # Backward ending at anchor (inclusive): copy_rates_from natively
+            # returns abs_count bars whose time is at-or-before anchor.
+            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count)
     else:
         # No `from` — last N bars from current bar
         rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, abs_count)
@@ -162,10 +160,13 @@ def get_ticks(symbol):
             return jsonify({"error": "'from' must be a unix timestamp"}), 400
         anchor_utc = int(date_from)
         if count > 0:
+            # Forward from anchor (inclusive). Unlike copy_rates_from,
+            # copy_ticks_from natively goes FORWARD: returns abs_count ticks
+            # whose time is at-or-after the anchor.
             ticks = mt5.copy_ticks_from(symbol, df, abs_count, flags)
         else:
-            # Walk backward: fetch a range ending at anchor, take last abs_count.
-            # Use a generous window (1h per tick) to handle weekends/gaps.
+            # Backward ending at anchor: walk back generously and take last abs_count.
+            # Use 1h-per-tick budget as a safety margin for sparse symbols.
             start_utc = max(0, anchor_utc - abs_count * 3600)
             df_start = _parse_unix(str(start_utc))
             ticks = mt5.copy_ticks_range(symbol, df_start, df, flags)
