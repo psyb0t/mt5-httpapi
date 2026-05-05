@@ -276,8 +276,8 @@ If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps throug
 | GET    | `/symbols`               | List symbols (`?group=*USD*`)             |
 | GET    | `/symbols/:symbol`       | Symbol details                            |
 | GET    | `/symbols/:symbol/tick`  | Latest tick                               |
-| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100` or `?timeframe=H1&from=...&to=...`) |
-| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100` or `?from=...&to=...`)                               |
+| GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100` or `?timeframe=H1&from=<unix>&count=-100`) |
+| GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100` or `?from=<unix>&count=-100`)                               |
 
 **GET `/symbols`** — array of symbol names:
 
@@ -403,10 +403,16 @@ Query params (rates):
 
 | Param | Behavior |
 | --- | --- |
-| `timeframe` | Required-ish (defaults `M1`) |
-| `count` only | Last N candles from the current bar (default 100) |
-| `from` only | N candles starting from `from` forward (use `count` to control N) |
-| `from` + `to` | All candles in `[from, to]` — **inclusive both ends**, ascending by time, unix seconds UTC |
+| `timeframe` | Defaults `M1` |
+| `count` | Signed integer (default `100`). Positive = N forward from `from` (or last N if no `from`). Negative = `\|N\|` ending at `from`. Zero = empty result. |
+| `from` | Anchor unix-seconds (real UTC). Omitted = anchor is now. |
+
+Examples:
+- `?timeframe=H1&count=100` — last 100 H1 candles up to current bar
+- `?timeframe=H1&from=1700000000&count=100` — 100 candles forward from anchor
+- `?timeframe=H1&from=1700000000&count=-100` — 100 candles ending at anchor
+
+Backward fetches (negative `count`) walk back `\|count\| * timeframe_seconds` from the anchor (with weekend/holiday padding) and trim to the last `\|count\|` bars at or before the anchor — no client-side range math needed.
 
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
@@ -427,7 +433,7 @@ Symbols are auto-selected into MarketWatch on first access — backfilling rarel
 }
 ```
 
-Query params (ticks): same modes as rates (`count`, `from`+`count`, `from`+`to`), inclusive bounds, ascending order. Plus:
+Query params (ticks): same `count` / `from` model as rates (positive = forward, negative = backward, omitted `from` = now). Plus:
 
 | Param | Values | Default | Meaning |
 | --- | --- | --- | --- |

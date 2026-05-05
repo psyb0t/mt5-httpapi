@@ -315,15 +315,13 @@ type ClosePositionRequest struct {
 
 type RatesQuery struct {
 	Timeframe string
-	Count     int
-	From      int64 // unix seconds, 0 = unset
-	To        int64 // unix seconds, 0 = unset
+	Count     int   // positive = forward, negative = backward from From
+	From      int64 // unix seconds, 0 = unset (defaults to now)
 }
 
 type TicksQuery struct {
-	Count int
-	From  int64    // unix seconds, 0 = unset
-	To    int64    // unix seconds, 0 = unset
+	Count int      // positive = forward, negative = backward from From
+	From  int64    // unix seconds, 0 = unset (defaults to now)
 	Flags TickFlag // empty = ALL
 }
 

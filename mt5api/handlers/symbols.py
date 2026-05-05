@@ -4,7 +4,7 @@ from flask import jsonify, request
 
 import MetaTrader5 as mt5
 
-from mt5api.config import TIMEFRAME_MAP
+from mt5api.config import TIMEFRAME_MAP, TIMEFRAME_SECONDS
 from mt5api.mt5client import (
     broker_to_utc_ms,
     broker_to_utc_seconds,
@@ -82,43 +82,47 @@ def get_rates(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
 
     date_from = request.args.get("from")
-    date_to = request.args.get("to")
     count_arg = request.args.get("count")
+    count = int(count_arg) if count_arg else 100
 
-    # Mode resolution:
-    # - from + to       -> copy_rates_range
-    # - from + count    -> copy_rates_from
-    # - count only (or nothing) -> copy_rates_from_pos (last N from current bar)
-    if date_from and date_to:
-        df = _parse_unix(date_from)
-        dt = _parse_unix(date_to)
-        if df is None or dt is None:
-            return jsonify({"error": "'from' and 'to' must be unix timestamps"}), 400
-        if df > dt:
-            return jsonify({"error": "'from' must be <= 'to'"}), 400
-        rates = mt5.copy_rates_range(symbol, timeframe, df, dt)
-    elif date_from:
-        df = _parse_unix(date_from)
-        if df is None:
-            return jsonify({"error": "'from' must be a unix timestamp"}), 400
-        count = int(count_arg) if count_arg else 100
-        rates = mt5.copy_rates_from(symbol, timeframe, df, count)
+    # count > 0: N bars forward from `from` (inclusive)
+    # count < 0: |N| bars backward ending at `from` (inclusive)
+    # from omitted: anchor is now
+    if count == 0:
+        return jsonify([])
+
+    abs_count = abs(count)
+
+    if date_from:
+        anchor_utc = int(date_from)
+        if count > 0:
+            df = _parse_unix(date_from)
+            if df is None:
+                return jsonify({"error": "'from' must be a unix timestamp"}), 400
+            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count)
+        else:
+            # Walk backward: calculate a start point far enough back,
+            # clamp to epoch 0, fetch forward, then take last abs_count.
+            tf_secs = TIMEFRAME_SECONDS.get(tf_str, 60)
+            start_utc = max(0, anchor_utc - abs_count * tf_secs)
+            df = _parse_unix(str(start_utc))
+            if df is None:
+                return jsonify({"error": "'from' must be a unix timestamp"}), 400
+            # Fetch enough bars from the calculated start to cover the window.
+            # Ask for 2x to handle gaps (weekends, holidays).
+            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count * 2)
+            if rates is not None and len(rates) > 0:
+                # Keep only bars at or before the anchor, then last abs_count.
+                rates = [r for r in rates
+                         if broker_to_utc_seconds(r[0]) <= anchor_utc]
+                if len(rates) > abs_count:
+                    rates = rates[-abs_count:]
     else:
-        count = int(count_arg) if count_arg else 100
-        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+        # No `from` — last N bars from current bar
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, abs_count)
 
     if rates is None or len(rates) == 0:
         return jsonify([])
-
-    # Filter out bars outside the requested range.  Brokers sometimes return
-    # their oldest bar even when the requested window is entirely before it.
-    if date_from and date_to:
-        req_from = int(date_from)
-        req_to = int(date_to)
-        rates = [r for r in rates
-                 if req_from <= broker_to_utc_seconds(r[0]) <= req_to]
-        if not rates:
-            return jsonify([])
 
     return jsonify([{
         "time": broker_to_utc_seconds(r[0]),
@@ -141,40 +145,43 @@ def get_ticks(symbol):
         return jsonify({"error": f"Invalid flags: {flags_str}. Use: {list(TICK_FLAGS_MAP.keys())}"}), 400
 
     date_from = request.args.get("from")
-    date_to = request.args.get("to")
     count_arg = request.args.get("count")
+    count = int(count_arg) if count_arg else 100
 
-    if date_from and date_to:
-        df = _parse_unix(date_from)
-        dt = _parse_unix(date_to)
-        if df is None or dt is None:
-            return jsonify({"error": "'from' and 'to' must be unix timestamps"}), 400
-        if df > dt:
-            return jsonify({"error": "'from' must be <= 'to'"}), 400
-        ticks = mt5.copy_ticks_range(symbol, df, dt, flags)
-    elif date_from:
+    # count > 0: N ticks forward from `from` (inclusive)
+    # count < 0: |N| ticks backward ending at `from` (inclusive)
+    # from omitted: anchor is now
+    if count == 0:
+        return jsonify([])
+
+    abs_count = abs(count)
+
+    if date_from:
         df = _parse_unix(date_from)
         if df is None:
             return jsonify({"error": "'from' must be a unix timestamp"}), 400
-        count = int(count_arg) if count_arg else 100
-        ticks = mt5.copy_ticks_from(symbol, df, count, flags)
+        anchor_utc = int(date_from)
+        if count > 0:
+            ticks = mt5.copy_ticks_from(symbol, df, abs_count, flags)
+        else:
+            # Walk backward: fetch a range ending at anchor, take last abs_count.
+            # Use a generous window (1h per tick) to handle weekends/gaps.
+            start_utc = max(0, anchor_utc - abs_count * 3600)
+            df_start = _parse_unix(str(start_utc))
+            ticks = mt5.copy_ticks_range(symbol, df_start, df, flags)
+            if ticks is not None and len(ticks) > 0:
+                ticks = [t for t in ticks
+                         if broker_to_utc_seconds(t[0]) <= anchor_utc]
+                if len(ticks) > abs_count:
+                    ticks = ticks[-abs_count:]
     else:
-        count = int(count_arg) if count_arg else 100
         ticks = mt5.copy_ticks_from(
             symbol, datetime(2000, 1, 1, tzinfo=timezone.utc),
-            count, flags,
+            abs_count, flags,
         )
 
     if ticks is None or len(ticks) == 0:
         return jsonify([])
-
-    if date_from and date_to:
-        req_from = int(date_from)
-        req_to = int(date_to)
-        ticks = [t for t in ticks
-                 if req_from <= broker_to_utc_seconds(t[0]) <= req_to]
-        if not ticks:
-            return jsonify([])
 
     return jsonify([{
         "time": broker_to_utc_seconds(t[0]),
