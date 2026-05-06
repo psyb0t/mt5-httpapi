@@ -2,26 +2,29 @@ from flask import jsonify, request
 
 import MetaTrader5 as mt5
 
-from mt5api.mt5client import ensure_initialized, to_dict
+from mt5api.mt5client import ensure_initialized, m, to_dict, with_mt5
 
 
+@with_mt5
 def list_positions():
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     symbol = request.args.get("symbol")
-    positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+    positions = m(mt5.positions_get, symbol=symbol) if symbol else m(mt5.positions_get)
     return jsonify([to_dict(p) for p in positions] if positions else [])
 
 
+@with_mt5
 def get_position(ticket):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
-    positions = mt5.positions_get(ticket=ticket)
+    positions = m(mt5.positions_get, ticket=ticket)
     if not positions:
         return jsonify({"error": f"Position {ticket} not found"}), 404
     return jsonify(to_dict(positions[0]))
 
 
+@with_mt5
 def update_position(ticket):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
@@ -29,7 +32,7 @@ def update_position(ticket):
     if not body:
         return jsonify({"error": "Request body required"}), 400
 
-    positions = mt5.positions_get(ticket=ticket)
+    positions = m(mt5.positions_get, ticket=ticket)
     if not positions:
         return jsonify({"error": f"Position {ticket} not found"}), 404
     pos = positions[0]
@@ -42,18 +45,19 @@ def update_position(ticket):
         "tp": float(body.get("tp", pos.tp)),
     }
 
-    result = mt5.order_send(req)
+    result = m(mt5.order_send, req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        err = result.comment if result else str(mt5.last_error())
+        err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to update position: {err}"}), 500
     return jsonify(to_dict(result))
 
 
+@with_mt5
 def close_position(ticket):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
 
-    positions = mt5.positions_get(ticket=ticket)
+    positions = m(mt5.positions_get, ticket=ticket)
     if not positions:
         return jsonify({"error": f"Position {ticket} not found"}), 404
     pos = positions[0]
@@ -62,7 +66,7 @@ def close_position(ticket):
     volume = float(body.get("volume", pos.volume)) if body else pos.volume
 
     close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-    tick = mt5.symbol_info_tick(pos.symbol)
+    tick = m(mt5.symbol_info_tick, pos.symbol)
     price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
 
     req = {
@@ -76,8 +80,8 @@ def close_position(ticket):
         "deviation": int(body.get("deviation", 20)) if body else 20,
     }
 
-    result = mt5.order_send(req)
+    result = m(mt5.order_send, req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        err = result.comment if result else str(mt5.last_error())
+        err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to close position: {err}"}), 500
     return jsonify(to_dict(result))

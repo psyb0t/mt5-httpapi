@@ -4,8 +4,10 @@ import MetaTrader5 as mt5
 
 from mt5api.mt5client import (
     ensure_initialized,
+    m,
     to_dict,
     utc_seconds_to_broker_dt,
+    with_mt5,
 )
 
 
@@ -28,21 +30,23 @@ def _parse_range():
     return df, dt, None
 
 
+@with_mt5
 def get_orders():
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     df, dt, err = _parse_range()
     if err is not None:
         return err
-    orders = mt5.history_orders_get(df, dt)
+    orders = m(mt5.history_orders_get, df, dt)
     return jsonify([to_dict(o) for o in orders] if orders else [])
 
 
+@with_mt5
 def get_deals():
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     df, dt, err = _parse_range()
     if err is not None:
         return err
-    deals = mt5.history_deals_get(df, dt)
+    deals = m(mt5.history_deals_get, df, dt)
     return jsonify([to_dict(d) for d in deals] if deals else [])

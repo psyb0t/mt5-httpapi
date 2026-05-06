@@ -9,8 +9,10 @@ from mt5api.mt5client import (
     broker_to_utc_ms,
     broker_to_utc_seconds,
     ensure_initialized,
+    m,
     to_dict,
     utc_seconds_to_broker_dt,
+    with_mt5,
 )
 
 TICK_FLAGS_MAP = {
@@ -70,44 +72,48 @@ def _parse_anchor(s):
 
 def _ensure_symbol(symbol):
     """Make sure symbol is selected in MarketWatch. Returns True if known."""
-    info = mt5.symbol_info(symbol)
+    info = m(mt5.symbol_info, symbol)
     if info is None:
         return False
     if not info.visible:
-        mt5.symbol_select(symbol, True)
+        m(mt5.symbol_select, symbol, True)
     return True
 
 
+@with_mt5
 def list_symbols():
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     group = request.args.get("group")
-    syms = mt5.symbols_get(group=group) if group else mt5.symbols_get()
+    syms = m(mt5.symbols_get, group=group) if group else m(mt5.symbols_get)
     return jsonify([s.name for s in syms] if syms else [])
 
 
+@with_mt5
 def get_symbol(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     if not _ensure_symbol(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
-    info = mt5.symbol_info(symbol)
+    info = m(mt5.symbol_info, symbol)
     if info is None:
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
     return jsonify(to_dict(info))
 
 
+@with_mt5
 def get_tick(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
     if not _ensure_symbol(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
-    tick = mt5.symbol_info_tick(symbol)
+    tick = m(mt5.symbol_info_tick, symbol)
     if tick is None:
         return jsonify({"error": f"No tick for {symbol}"}), 404
     return jsonify(to_dict(tick))
 
 
+@with_mt5
 def get_rates(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
@@ -138,7 +144,7 @@ def get_rates(symbol):
             return jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
         df = utc_seconds_to_broker_dt(from_utc)
         dt = utc_seconds_to_broker_dt(to_utc)
-        rates = mt5.copy_rates_range(symbol, timeframe, df, dt)
+        rates = m(mt5.copy_rates_range, symbol, timeframe, df, dt)
         if rates is None or len(rates) == 0:
             return jsonify([])
         return jsonify([{
@@ -173,7 +179,7 @@ def get_rates(symbol):
             for _ in range(RATES_FORWARD_MAX_ATTEMPTS):
                 end_utc = anchor_utc + int(abs_count * tf_secs * mult) + tf_secs
                 end_dt = utc_seconds_to_broker_dt(end_utc)
-                got = mt5.copy_rates_range(symbol, timeframe, df, end_dt)
+                got = m(mt5.copy_rates_range, symbol, timeframe, df, end_dt)
                 if got is None:
                     rates = []
                     break
@@ -186,10 +192,10 @@ def get_rates(symbol):
         else:
             # Backward ending at anchor (inclusive): copy_rates_from natively
             # returns abs_count bars whose time is at-or-before anchor.
-            rates = mt5.copy_rates_from(symbol, timeframe, df, abs_count)
+            rates = m(mt5.copy_rates_from, symbol, timeframe, df, abs_count)
     else:
         # No `from` — last N bars from current bar
-        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, abs_count)
+        rates = m(mt5.copy_rates_from_pos, symbol, timeframe, 0, abs_count)
 
     if rates is None or len(rates) == 0:
         return jsonify([])
@@ -202,6 +208,7 @@ def get_rates(symbol):
     } for r in rates])
 
 
+@with_mt5
 def get_ticks(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
@@ -232,7 +239,7 @@ def get_ticks(symbol):
             return jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
         df = utc_seconds_to_broker_dt(from_utc)
         dt = utc_seconds_to_broker_dt(to_utc)
-        ticks = mt5.copy_ticks_range(symbol, df, dt, flags)
+        ticks = m(mt5.copy_ticks_range, symbol, df, dt, flags)
         if ticks is None or len(ticks) == 0:
             return jsonify([])
         return jsonify([{
@@ -262,7 +269,7 @@ def get_ticks(symbol):
             # Forward from anchor (inclusive). Unlike copy_rates_from,
             # copy_ticks_from natively goes FORWARD: returns abs_count ticks
             # whose time is at-or-after the anchor.
-            ticks = mt5.copy_ticks_from(symbol, df, abs_count, flags)
+            ticks = m(mt5.copy_ticks_from, symbol, df, abs_count, flags)
         else:
             # Backward ending at anchor: copy_ticks_from natively goes
             # FORWARD, no native backward-by-count. Fake it with a range
@@ -276,7 +283,7 @@ def get_ticks(symbol):
             for _ in range(TICKS_BACKWARD_MAX_ATTEMPTS):
                 start_utc = max(0, anchor_utc - window)
                 df_start = utc_seconds_to_broker_dt(start_utc)
-                got = mt5.copy_ticks_range(symbol, df_start, df, flags)
+                got = m(mt5.copy_ticks_range, symbol, df_start, df, flags)
                 if got is None:
                     ticks = []
                     break
@@ -287,7 +294,8 @@ def get_ticks(symbol):
                     break
                 window *= 2
     else:
-        ticks = mt5.copy_ticks_from(
+        ticks = m(
+            mt5.copy_ticks_from,
             symbol, datetime(2000, 1, 1, tzinfo=timezone.utc),
             abs_count, flags,
         )

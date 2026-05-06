@@ -3,10 +3,13 @@ import os
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
+from functools import wraps
 
 import MetaTrader5 as mt5
 import psutil
+from flask import has_request_context, g, jsonify
 from mt5api.config import (
     ACCOUNT,
     ACCOUNT_FILE,
@@ -65,7 +68,68 @@ def utc_seconds_to_broker_dt(utc_unix):
     """
     return datetime.fromtimestamp(int(utc_unix) + UTC_OFFSET_SECONDS, tz=timezone.utc)
 
+
 INIT_TIMEOUT = 60
+
+# Hard cap on any single MT5 SDK call. The SDK can wedge in C code on a
+# stalled terminal pipe and there's no way to interrupt a Python thread
+# that's blocked inside a C extension — we just stop waiting and let the
+# orphaned worker thread die when the process is restarted by the monitor.
+MT5_CALL_TIMEOUT = 30
+
+# Backpressure: if more than this many requests are queued / in-flight on
+# the MT5 lock, fast-503 new ones instead of letting them pile up. With 1
+# physical worker (the SDK is single-connection, single-process) the queue
+# is the *only* thing growing under load — capping it keeps p99 bounded
+# and stops nginx/clients from hanging on a stuck terminal.
+MAX_QUEUE_DEPTH = int(os.environ.get("MT5_MAX_QUEUE_DEPTH", "20"))
+
+# How long session() will wait for the lock before giving up with 503.
+# Picks up wedges that exceed the per-call timeout (e.g. handler hung
+# between calls — shouldn't happen, but be defensive).
+SESSION_ACQUIRE_TIMEOUT = MT5_CALL_TIMEOUT + 30
+
+
+class MT5Timeout(Exception):
+    """A single mt5.* call exceeded MT5_CALL_TIMEOUT."""
+
+
+class QueueFull(Exception):
+    """Too many requests queued on the MT5 lock — fast-fail to client."""
+
+
+# Single mutex serializing every mt5.* call across handlers, monitor, and
+# background init. The MT5 SDK is one connection per process and is not
+# threadsafe — concurrent calls corrupt internal state (notably last_error,
+# which is read implicitly by many code paths).
+_mt5_lock = threading.Lock()
+
+_queue_depth = 0
+_queue_depth_lock = threading.Lock()
+
+
+def _bump_depth():
+    global _queue_depth
+    with _queue_depth_lock:
+        _queue_depth += 1
+        return _queue_depth
+
+
+def _drop_depth():
+    global _queue_depth
+    with _queue_depth_lock:
+        _queue_depth -= 1
+
+
+def current_queue_depth():
+    with _queue_depth_lock:
+        return _queue_depth
+
+
+def _req_id():
+    if has_request_context():
+        return getattr(g, "req_id", "-")
+    return "-"
 
 
 def load_accounts():
@@ -92,23 +156,117 @@ def get_first_account():
 
 
 def _run_with_timeout(fn, timeout=INIT_TIMEOUT):
-    """Run fn() in a thread with a timeout. Returns fn's result or None if timed out."""
-    result = [None]
+    """Run fn() in a thread with a timeout.
+
+    Returns fn's result. Raises MT5Timeout if fn didn't complete in time.
+    Re-raises any exception fn raised. Distinguishing timeout from a None
+    return is critical — many mt5.* calls return None as a legitimate
+    "no data" answer.
+    """
+    box: list = [None]
+    err_box: list = [None]
+    done = threading.Event()
 
     def _worker():
-        result[0] = fn()
+        try:
+            box[0] = fn()
+        except BaseException as e:
+            err_box[0] = e
+        finally:
+            done.set()
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-    t.join(timeout=timeout)
-
-    if t.is_alive():
+    if not done.wait(timeout=timeout):
         log.warning("MT5 call timed out after %ds", timeout)
-        return None
-    return result[0]
+        raise MT5Timeout(f"call timed out after {timeout}s")
+    if err_box[0] is not None:
+        raise err_box[0]
+    return box[0]
+
+
+def m(fn, *args, _timeout=MT5_CALL_TIMEOUT, **kwargs):
+    """Call an mt5.* function with a hard timeout and per-call timing log.
+
+    Caller must already hold the MT5 lock (via session() or @with_mt5()).
+    On wedge: raises MT5Timeout — handler returns 504, lock is released,
+    monitor will eventually detect and restart the terminal.
+    """
+    name = getattr(fn, "__name__", "?")
+    rid = _req_id()
+    t0 = time.monotonic()
+    timed_out = False
+    try:
+        return _run_with_timeout(lambda: fn(*args, **kwargs), timeout=_timeout)
+    except MT5Timeout:
+        timed_out = True
+        raise
+    finally:
+        dur = (time.monotonic() - t0) * 1000
+        if timed_out:
+            log.error("%s mt5.%s TIMEOUT after %.1fms", rid, name, dur)
+        else:
+            log.info("%s mt5.%s dur_ms=%.1f", rid, name, dur)
+
+
+@contextmanager
+def session():
+    """Acquire the MT5 lock for the duration of the block.
+
+    Bumps queue depth on entry; fast-fails with QueueFull if too many
+    requests are already piled up. Releases lock + decrements depth on
+    exit, regardless of how the block exits.
+    """
+    depth = _bump_depth()
+    try:
+        if depth > MAX_QUEUE_DEPTH:
+            log.warning(
+                "%s queue depth %d exceeds max %d — rejecting",
+                _req_id(), depth, MAX_QUEUE_DEPTH,
+            )
+            raise QueueFull(f"queue depth {depth} exceeds max {MAX_QUEUE_DEPTH}")
+        log.info("%s session acquire (depth=%d)", _req_id(), depth)
+        if not _mt5_lock.acquire(timeout=SESSION_ACQUIRE_TIMEOUT):
+            log.error(
+                "%s session lock acquire timeout after %ds",
+                _req_id(), SESSION_ACQUIRE_TIMEOUT,
+            )
+            raise QueueFull("could not acquire MT5 lock")
+        try:
+            yield
+        finally:
+            _mt5_lock.release()
+    finally:
+        _drop_depth()
+
+
+def with_mt5(handler):
+    """Decorator for Flask handlers that touch MT5.
+
+    Holds the MT5 lock for the entire handler body so multi-call handlers
+    (order placement, get_rates retry loops) are atomic vs. other handlers.
+    Maps backpressure / wedge exceptions to HTTP error responses.
+    """
+    @wraps(handler)
+    def wrapper(*args, **kwargs):
+        try:
+            with session():
+                return handler(*args, **kwargs)
+        except QueueFull as e:
+            return jsonify({"error": str(e)}), 503
+        except MT5Timeout as e:
+            return jsonify({"error": f"mt5 call timed out: {e}"}), 504
+    return wrapper
 
 
 def init_mt5(login=None, password=None, server=None):
+    """Initialize the MT5 connection.
+
+    Caller must hold the MT5 lock (via session() or be in a @with_mt5()
+    handler). Returns True/False based on SDK result. Returns False on
+    timeout rather than raising, since callers (startup, monitor,
+    ensure_initialized) all want to retry rather than surface to clients.
+    """
     kwargs = {"path": TERMINAL_PATH}
     if login:
         kwargs["login"] = int(login)
@@ -117,7 +275,11 @@ def init_mt5(login=None, password=None, server=None):
     if server:
         kwargs["server"] = server
     log.info("Initializing MT5 (login=%s, server=%s)...", login, server)
-    result = _run_with_timeout(lambda: mt5.initialize(**kwargs))
+    try:
+        result = m(mt5.initialize, _timeout=INIT_TIMEOUT, **kwargs)
+    except MT5Timeout:
+        log.error("MT5 initialization timed out.")
+        return False
     if result:
         log.info("MT5 initialized successfully.")
     else:
@@ -126,7 +288,11 @@ def init_mt5(login=None, password=None, server=None):
 
 
 def ensure_initialized():
-    info = _run_with_timeout(mt5.terminal_info, timeout=15)
+    """Probe + reconnect helper. Caller must hold the MT5 lock."""
+    try:
+        info = m(mt5.terminal_info, _timeout=15)
+    except MT5Timeout:
+        info = None
     if info is None:
         log.warning("Terminal not responding, attempting full init...")
         account = get_first_account()
@@ -135,7 +301,10 @@ def ensure_initialized():
         return init_mt5()
 
     # Terminal is running — check if actually logged in
-    acc = _run_with_timeout(mt5.account_info, timeout=15)
+    try:
+        acc = m(mt5.account_info, _timeout=15)
+    except MT5Timeout:
+        acc = None
     if acc is not None and acc.login != 0:
         return True
 
@@ -144,14 +313,16 @@ def ensure_initialized():
     account = get_first_account()
     if not account:
         return True
-    return _run_with_timeout(
-        lambda: mt5.login(
+    try:
+        return m(
+            mt5.login,
             login=int(account["login"]),
             password=account["password"],
             server=account["server"],
-        ),
-        timeout=INIT_TIMEOUT,
-    )
+            _timeout=INIT_TIMEOUT,
+        )
+    except MT5Timeout:
+        return False
 
 
 def _kill_terminal():
@@ -219,9 +390,18 @@ def _wait_for_journal(journal_log, offset, max_attempts=60):
 
 
 def restart_terminal():
-    """Kill terminal, relaunch, wait for journal 'started for', reconnect."""
+    """Kill terminal, relaunch, wait for journal 'started for', reconnect.
+
+    Caller must hold the MT5 lock — this blocks the lock for ~minutes
+    while waiting for the terminal to come back up, which is intentional:
+    handler requests during a restart get fast-503'd via the queue-depth
+    backpressure rather than piling up against a dead terminal.
+    """
     log.info("Restarting terminal...")
-    mt5.shutdown()
+    try:
+        m(mt5.shutdown, _timeout=15)
+    except MT5Timeout:
+        log.warning("mt5.shutdown timed out — proceeding to kill anyway.")
 
     killed = _kill_terminal()
     if not killed:

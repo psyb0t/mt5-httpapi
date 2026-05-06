@@ -1003,6 +1003,19 @@ data/                        Generated/volatile data (gitignored)
   oem/                       First-boot scripts
 ```
 
+## Concurrency & Backpressure
+
+The MT5 Python SDK is single-connection-per-process and not threadsafe — concurrent calls into `mt5.*` corrupt internal state (notably `last_error`, which several flows read implicitly). The API enforces a process-wide mutex around all SDK calls, held for the **entire** duration of a request handler so multi-call handlers (`POST /orders`, the `get_rates` retry loop, etc.) are atomic against everything else.
+
+Knock-on effects you'll observe:
+
+- **`/ping`** is the only handler that doesn't take the lock. Use it for liveness probes — it stays responsive even when the SDK is wedged.
+- Every `mt5.*` call has a hard 30s timeout. A wedged call returns **`504 mt5 call timed out`** and releases the lock. The orphaned C-thread is still spinning inside the SDK; the health monitor will detect a dead terminal and run `restart_terminal` to free it.
+- When too many requests pile up on the lock, new ones get **`503 queue depth N exceeds max M`** instead of waiting. Default cap is 20; tune with `MT5_MAX_QUEUE_DEPTH=...` in the environment.
+- Per-call timing logs (`<req_id> mt5.<fn> dur_ms=...`) are emitted for every SDK call so wedge investigations have data to chew on.
+
+If you see persistent 503/504 from a single terminal, check `data/shared/logs/api-<broker>-<account>.log` for `mt5.* TIMEOUT` lines — that's the SDK call that wedged.
+
 ## Logs
 
 Inside the VM's shared folder (`data/shared/logs/`):
