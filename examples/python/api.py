@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import requests
 
-API_URL = os.environ.get("MT5_API_URL", "http://localhost:6542")
+API_URL = os.environ.get("MT5_API_URL", "http://localhost:8888/roboforex/main")
 
 
 def get_candles(symbol, timeframe="H4", count=200):

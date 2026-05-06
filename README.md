@@ -2,7 +2,7 @@
 
 MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with a REST API slapped on top for programmatic trading. No Wine bullshit, no janky workarounds - a legit Windows environment running the full MT5 terminal in portable mode.
 
-Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process on its own port. Run two FTMO challenges at once, or mix brokers - whatever you need.
+Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process inside the VM, and an always-on nginx sidecar fronts them all behind a single host port at `http://localhost:8888/<broker>/<account>/...`. Run two FTMO challenges at once, or mix brokers - whatever you need.
 
 ## ⚠️ Disclaimer
 
@@ -108,7 +108,7 @@ Defines which terminals to run. Each entry gets its own MT5 terminal instance an
 
 - `broker` — matches the installer name (`mt5setup-<broker>.exe`) and `accounts.json` key
 - `account` — matches the account name in `accounts.json` under that broker
-- `port` — unique port for this terminal's HTTP API
+- `port` — container-internal port for this terminal's HTTP API (only nginx and the mt5 container talk to it; not exposed to the host)
 - `utc_offset` — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0` (no normalization). Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
@@ -135,13 +135,19 @@ Dump your broker MT5 installers here. Name them `mt5setup-<broker>.exe` and each
 
 ## API
 
-Each terminal's API runs on its configured port (from `terminals.json`). Default: `http://localhost:6542`
+All terminals are served behind a single host port via nginx. Default entry point: `http://localhost:8888` (loopback-only). Each terminal lives at its own path prefix:
+
+```
+http://localhost:8888/<broker>/<account>/...
+```
+
+Example: with a `roboforex/main` terminal in `terminals.json`, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM.
 
 If `config/api_token.txt` is set, include the token on every request:
 
 ```bash
 export MT5_API_TOKEN=$(cat config/api_token.txt)
-curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6542/ping
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/main/ping
 ```
 
 ### Health
@@ -686,7 +692,7 @@ What comes back from POST/PUT/DELETE on orders and positions:
 ## Examples
 
 ```bash
-export MT5_API_URL=http://localhost:6542
+export MT5_API_URL=http://localhost:8888/roboforex/main
 export MT5_API_TOKEN=$(cat config/api_token.txt)  # omit if no auth configured
 
 # Check your balance
@@ -719,8 +725,8 @@ curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/
 curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/12345
 
 # Hit different terminals when running multi-terminal
-curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6542/account   # terminal 1
-curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:6543/account   # terminal 2
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/main/account
+curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/ftmo/challenge1/account
 
 # Get deal history for the last 24h
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
@@ -843,7 +849,7 @@ python ta.py BTCUSD H1 100
 python ta.py ADAUSD D1 200
 
 # Custom API URL
-MT5_API_URL=http://10.0.0.5:6542 python ta.py EURUSD D1
+MT5_API_URL=http://10.0.0.5:8888/roboforex/main python ta.py EURUSD D1
 
 # Candlestick chart with TA overlays (1920x1080 PNG)
 python chart.py ADAUSD
@@ -866,18 +872,18 @@ make distclean   Nuke everything including ISO
 
 ## Ports
 
-| Port  | Service                 | Override                       |
-| ----- | ----------------------- | ------------------------------ |
-| 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`      |
-| 6542+ | HTTP API (per terminal) | Set in `config/terminals.json` |
+| Port  | Service                 | Override                          |
+| ----- | ----------------------- | --------------------------------- |
+| 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`         |
+| 8888  | HTTP API (nginx, all terminals) | `API_HOST_PORT=9999 make up` |
 
-API ports are determined by `config/terminals.json`. The `run.sh` script reads all configured ports, generates an `.env` file with `API_PORT_RANGE`, and docker-compose maps the range automatically. Each terminal's API process listens on its own port.
+Only two ports leave the docker network. Per-terminal ports from `config/terminals.json` stay container-internal — nginx (always-on, generated from `terminals.json`) routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards from there into the Windows VM. The host bind is loopback-only (`127.0.0.1:8888`) by default; change the bind in `docker-compose.yml` if you want LAN exposure, or use the Tailscale sidecar below for tailnet exposure.
 
 ## Tailscale (optional)
 
-Expose the API over your tailnet using bare MagicDNS hostname — `http://mt5-httpapi/<broker>/<account>/...` — works with both stock Tailscale and self-hosted Headscale. Plain HTTP (no TLS) by design: bare hostnames don't have matching certs, and the wireguard layer already encrypts everything inside the tailnet.
+Expose the API over your tailnet using a bare MagicDNS hostname — `http://mt5-httpapi/<broker>/<account>/...` — works with both stock Tailscale and self-hosted Headscale. Plain HTTP (no TLS) by design: bare hostnames don't have matching certs, and the wireguard layer already encrypts everything inside the tailnet.
 
-How it works: a `tailscale` sidecar (host network) exposes the node on the tailnet, runs Tailscale Serve on port 80, and forwards to a small `nginx` sidecar that strips `/<broker>/<account>/` and proxies to the per-terminal API port. Both configs (`serve.json` and `nginx.conf`) are auto-generated from `config/terminals.json` on every `make up`.
+How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity — ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays clean. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `serve.json` and `nginx.conf` are auto-generated from `config/terminals.json` on every `make up`.
 
 **Setup**:
 
@@ -890,9 +896,9 @@ How it works: a `tailscale` sidecar (host network) exposes the node on the tailn
    echo "https://headscale.your.domain" > config/ts_login_server.txt
    ```
 
-2. Uncomment the `nginx` and `tailscale` blocks in `docker-compose.yml`.
+2. Uncomment the `tailscale` block in `docker-compose.yml`. (nginx is always on — no need to uncomment anything for it.)
 
-3. `make up`. `run.sh` reads the config files, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, generates `.data/tailscale/serve.json` + `.data/nginx/nginx.conf` from `config/terminals.json`, and prints the per-terminal URLs.
+3. `make up`. `run.sh` reads the config files, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, generates `.data/tailscale/serve.json`, and prints the tailnet URL.
 
 **State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login — `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
 

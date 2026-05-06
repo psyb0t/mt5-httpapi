@@ -16,20 +16,25 @@ if [ ! -f "${DIR}/config/terminals.json" ]; then
     exit 1
 fi
 
-API_PORTS=$(python3 -c "
+# Pick the first terminal's broker/account as test target. nginx (on
+# API_HOST_PORT, default 8888) routes /<broker>/<account>/... to the
+# right terminal — per-terminal ports are container-internal now.
+FIRST_PREFIX=$(python3 -c "
 import json
-ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
-print(' '.join(str(p) for p in ports))
+terms = json.load(open('${DIR}/config/terminals.json'))
+if not terms:
+    raise SystemExit(1)
+t = terms[0]
+print(f\"{t['broker']}/{t['account']}\")
 " 2>/dev/null)
 
-if [ -z "$API_PORTS" ]; then
-    echo "ERROR: no ports found in terminals.json"
+if [ -z "$FIRST_PREFIX" ]; then
+    echo "ERROR: no terminals found in terminals.json"
     exit 1
 fi
 
-# Pick first port as test target
-PORT=$(echo "$API_PORTS" | awk '{print $1}')
-BASE="http://localhost:${PORT}"
+API_HOST_PORT="${API_HOST_PORT:-8888}"
+BASE="http://localhost:${API_HOST_PORT}/${FIRST_PREFIX}"
 
 # Detect auth
 AUTH=""
@@ -69,7 +74,7 @@ echo "--- Connectivity ---"
 
 RESP=$(api GET /ping 2>/dev/null || true)
 if [ -z "$RESP" ]; then
-    echo "FATAL: API not reachable on port ${PORT}. Is the VM running?"
+    echo "FATAL: API not reachable at ${BASE}. Is the VM running?"
     exit 1
 fi
 echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('status')=='ok'" 2>/dev/null \
@@ -84,21 +89,27 @@ if [ -n "$TOKEN" ]; then
         || fail "/ping no-auth" "expected 401 got $CODE"
 fi
 
-# All ports alive
+# All terminals reachable through nginx
 echo ""
-echo "--- All Ports ---"
-for P in $API_PORTS; do
+echo "--- All Terminals ---"
+TERM_PREFIXES=$(python3 -c "
+import json
+for t in json.load(open('${DIR}/config/terminals.json')):
+    print(f\"{t['broker']}/{t['account']}\")
+")
+for PREFIX in $TERM_PREFIXES; do
+    URL="http://localhost:${API_HOST_PORT}/${PREFIX}/ping"
     if [ -n "$TOKEN" ]; then
         CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
             -H "Authorization: Bearer ${TOKEN}" \
-            "http://localhost:${P}/ping" 2>/dev/null || echo "000")
+            "$URL" 2>/dev/null || echo "000")
     else
         CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-            "http://localhost:${P}/ping" 2>/dev/null || echo "000")
+            "$URL" 2>/dev/null || echo "000")
     fi
     [ "$CODE" = "200" ] \
-        && pass "port ${P} up" \
-        || fail "port ${P}" "got $CODE"
+        && pass "${PREFIX} up" \
+        || fail "${PREFIX}" "got $CODE"
 done
 
 # ── Terminal / Account ──────────────────────────────────────────

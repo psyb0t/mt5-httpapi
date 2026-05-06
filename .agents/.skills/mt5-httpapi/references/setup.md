@@ -48,7 +48,7 @@ Broker credentials organized by broker, then account name:
 
 ### `config/terminals.json`
 
-Required. Defines which terminals to run — each gets its own MT5 instance and API port:
+Required. Defines which terminals to run — each gets its own MT5 instance and a container-internal API port (only nginx and the mt5 container talk to it):
 
 ```json
 [
@@ -79,12 +79,12 @@ openssl rand -hex 32 > config/api_token.txt
 
 ## Ports
 
-| Port  | Service            |
-| ----- | ------------------ |
-| 8006  | noVNC (VM desktop) |
-| 6542+ | HTTP API per terminal (set in terminals.json) |
+| Port | Service |
+| ---- | ------- |
+| 8006 | noVNC (VM desktop) — override with `NOVNC_PORT` |
+| 8888 | HTTP API entry (nginx, all terminals) — override with `API_HOST_PORT`, bound to `127.0.0.1` |
 
-noVNC is mainly useful for watching the install progress. After that, just use the REST API.
+Per-terminal ports from `terminals.json` stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
 
 ## Management
 
@@ -136,11 +136,11 @@ tunnel: <tunnel-id>
 credentials-file: /etc/cloudflared/creds.json
 
 ingress:
-  - hostname: mt5-roboforex-main.yourdomain.com
-    service: http://localhost:6542
+  - hostname: mt5-api.yourdomain.com
+    service: http://nginx:80
   - service: http_status:404
 ```
 
-Then uncomment the `cloudflared` service in `docker-compose.yml` and run `make up`.
+cloudflared points at the always-on nginx sidecar (`http://nginx:80`) — a single backend covers every terminal. Hit `https://mt5-api.yourdomain.com/<broker>/<account>/...` from the public side. Then uncomment the `cloudflared` service in `docker-compose.yml` and run `make up`.
 
 Note: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper subdomains like `*.mt5.yourdomain.com`. Use subdomains directly under your root domain.

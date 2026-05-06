@@ -12,7 +12,6 @@ services:
       - NET_ADMIN
     ports:
       - "${NOVNC_PORT:-8006}:8006"
-      - "${API_PORT_RANGE:-6542}:${API_PORT_RANGE:-6542}"
     volumes:
       - ./data/storage:/storage
       - ./data/oem:/oem
@@ -32,44 +31,53 @@ services:
     restart: unless-stopped
     stop_grace_period: 2m
 
+  # nginx is the single entry point for all terminal APIs. Routes
+  # /<broker>/<account>/... to mt5:<terminal_port> (per-terminal Python
+  # API process inside the Windows VM, reachable via mt5 container's
+  # iptables DNAT). Auto-generated from config/terminals.json by run.sh.
+  # Bound to 127.0.0.1:8888 so it's loopback-only by default — LAN
+  # exposure is opt-in (change the host bind), tailnet exposure is via
+  # the optional tailscale sidecar below.
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8888}:80"
+    volumes:
+      - ./.data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - mt5
+
   # ── Cloudflare Tunnel (uncomment to expose API publicly) ──────────
+  # Point your cloudflared ingress to http://nginx:80 (single backend,
+  # nginx routes per-terminal paths). Drop creds + config in
+  # ./.data/cloudflared/.
   # cloudflared:
   #   image: cloudflare/cloudflared:latest
   #   restart: unless-stopped
-  #   network_mode: host
   #   command: tunnel --config /etc/cloudflared/config.yml run
   #   volumes:
   #     - ./.data/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
   #     - ./.data/cloudflared/creds.json:/etc/cloudflared/creds.json:ro
   #   depends_on:
-  #     - mt5
+  #     - nginx
 
-  # ── Tailscale + nginx (uncomment to expose API over tailnet HTTP) ──
+  # ── Tailscale (uncomment to expose API over tailnet HTTP) ─────────
   # Drop your auth key in config/ts_authkey.txt; for Headscale, also drop
   # the login server URL in config/ts_login_server.txt. run.sh syncs both
-  # to .env and generates .data/tailscale/serve.json + .data/nginx/nginx.conf
-  # from config/terminals.json. URL scheme:
+  # to .env and generates .data/tailscale/serve.json. URL scheme:
   #   http://mt5-httpapi/<broker>/<account>/...
-  # Plain HTTP (no TLS) — MagicDNS short names work on both Tailscale and
-  # Headscale; HTTPS would require FQDN-pinned certs which break bare-name
-  # access and are inconsistent across Headscale builds.
-  #
-  # nginx:
-  #   image: nginx:alpine
-  #   restart: unless-stopped
-  #   network_mode: host
-  #   volumes:
-  #     - ./.data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-  #   depends_on:
-  #     - mt5
-  #
+  # Plain HTTP — bare MagicDNS hostnames don't have matching certs, and
+  # the wireguard layer already encrypts everything inside the tailnet.
+  # The sidecar runs in its OWN netns (bridge mode, not host) so it gets
+  # its own tailnet identity — host's tailscale (if any) stays clean and
+  # ACLs scope to the container's node only.
   # tailscale:
   #   image: tailscale/tailscale:latest
   #   restart: unless-stopped
-  #   network_mode: host
   #   environment:
-  #     - TS_AUTHKEY=${TS_AUTHKEY}
-  #     - TS_HOSTNAME=mt5-httpapi
+  #     - TS_AUTHKEY=${TS_AUTHKEY:-}
+  #     - TS_HOSTNAME=${TS_HOSTNAME:-mt5-httpapi}
   #     - TS_STATE_DIR=/var/lib/tailscale
   #     - TS_SERVE_CONFIG=/config/serve.json
   #     - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---accept-dns=false}

@@ -90,31 +90,26 @@ if [ ! -f "${DIR}/data/storage/data.img" ]; then
     rm -f "${DIR}/data/shared/"*.done
 fi
 
-# Generate .env with port range from terminals.json for docker-compose
-if [ -f "${DIR}/config/terminals.json" ]; then
-    PORTS=$(python3 -c "
-import json
-ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
-print(min(ports), max(ports))
-" 2>/dev/null)
-    read -r PORT_MIN PORT_MAX <<< "$PORTS"
-    if [ "$PORT_MIN" = "$PORT_MAX" ]; then
-        echo "API_PORT_RANGE=${PORT_MIN}" > "${DIR}/.env"
-    else
-        echo "API_PORT_RANGE=${PORT_MIN}-${PORT_MAX}" > "${DIR}/.env"
-    fi
-    API_PORTS=$(python3 -c "
+# terminals.json drives the per-terminal nginx upstreams (and the iptables
+# DNAT inside the mt5 container that forwards to the VM). Required.
+if [ ! -f "${DIR}/config/terminals.json" ]; then
+    echo "ERROR: config/terminals.json not found."
+    echo "  Copy config/terminals.example.json and edit."
+    exit 1
+fi
+
+API_PORTS=$(python3 -c "
 import json
 ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
 print(' '.join(str(p) for p in ports))
-" 2>/dev/null)
-    echo "Configured API ports: ${API_PORTS}"
-else
-    echo "API_PORT_RANGE=6542" > "${DIR}/.env"
-    API_PORTS="6542"
-fi
+")
+echo "Configured terminal ports (container-internal): ${API_PORTS}"
 
-# Append API_TOKEN to .env from config/api_token.txt
+# Generate fresh .env each run. Vars below are docker-compose interpolation
+# inputs; user-managed secrets flow in via config/*.txt files.
+: > "${DIR}/.env"
+
+# API_TOKEN flows config/api_token.txt → .env → docker-compose env
 if [ -f "${DIR}/config/api_token.txt" ]; then
     API_TOKEN=$(tr -d '[:space:]' < "${DIR}/config/api_token.txt")
     echo "API_TOKEN=${API_TOKEN}" >> "${DIR}/.env"
@@ -124,9 +119,8 @@ else
     echo "  Create it: openssl rand -hex 32 > config/api_token.txt"
 fi
 
-# Append Tailscale vars to .env from config files (matches api_token.txt
-# pattern). config/ts_authkey.txt is required to enable; ts_login_server.txt
-# is optional (only needed for Headscale).
+# Tailscale vars (optional). config/ts_authkey.txt enables the tailscale
+# sidecar; config/ts_login_server.txt switches to a Headscale control plane.
 TS_AUTHKEY=""
 if [ -f "${DIR}/config/ts_authkey.txt" ]; then
     TS_AUTHKEY=$(tr -d '[:space:]' < "${DIR}/config/ts_authkey.txt")
@@ -139,38 +133,21 @@ if [ -f "${DIR}/config/ts_login_server.txt" ]; then
     echo "Headscale login server: ${TS_LOGIN_SERVER}"
 fi
 
-# If TS_AUTHKEY is set, generate serve.json + nginx.conf from terminals.json.
-# URL scheme: http://mt5-httpapi/<broker>/<account>/...
-# Serve listens on :80 HTTP (no TLS — bare MagicDNS hostnames don't have
-# matching certs, and headscale's cert flow varies by build). Tailscale
-# Serve forwards :80 → nginx:8080, nginx strips /<broker>/<account>/ and
-# proxies to the per-terminal port. Compatible with both Tailscale stock
-# and Headscale.
-if [ -n "${TS_AUTHKEY}" ] && [ -f "${DIR}/config/terminals.json" ]; then
-    mkdir -p "${DIR}/.data/tailscale/state" "${DIR}/.data/nginx"
-    python3 - "${DIR}/config/terminals.json" \
-            "${DIR}/.data/tailscale/serve.json" \
-            "${DIR}/.data/nginx/nginx.conf" <<'PYEOF'
+# Always generate nginx.conf from terminals.json. nginx is the single
+# entry point — routes /<broker>/<account>/... to mt5:<terminal_port>
+# (docker DNS), where the mt5 container's iptables DNATs into the VM.
+mkdir -p "${DIR}/.data/nginx"
+python3 - "${DIR}/config/terminals.json" "${DIR}/.data/nginx/nginx.conf" <<'PYEOF'
 import json, sys
-terms_path, serve_path, nginx_path = sys.argv[1:4]
+terms_path, nginx_path = sys.argv[1:3]
 terms = json.load(open(terms_path))
-# Web key uses port-only ":80" — matches any hostname the node responds
-# to (MagicDNS short name on Tailscale, configured DNS name on Headscale).
-serve = {
-    "TCP": {"80": {"HTTPS": False}},
-    "Web": {":80": {
-        "Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}
-    }},
-}
-with open(serve_path, "w") as f:
-    json.dump(serve, f, indent=2)
 locs = []
 for t in terms:
     p = f"/{t['broker']}/{t['account']}/"
     locs.append(
         f"        location {p} {{\n"
         f"            rewrite ^{p}(.*)$ /$1 break;\n"
-        f"            proxy_pass http://127.0.0.1:{t['port']};\n"
+        f"            proxy_pass http://mt5:{t['port']};\n"
         f"            proxy_set_header Host $host;\n"
         f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
         f"        }}"
@@ -179,7 +156,7 @@ nginx_conf = (
     "events {}\n"
     "http {\n"
     "    server {\n"
-    "        listen 8080;\n"
+    "        listen 80;\n"
     + "\n".join(locs) + "\n"
     "        location / { return 404 \"no route\\n\"; }\n"
     "    }\n"
@@ -188,12 +165,29 @@ nginx_conf = (
 with open(nginx_path, "w") as f:
     f.write(nginx_conf)
 PYEOF
-    echo "Tailscale + nginx config generated"
-    python3 -c "
-import json
-for t in json.load(open('${DIR}/config/terminals.json')):
-    print(f\"  http://mt5-httpapi/{t['broker']}/{t['account']}/\")
-"
+echo "nginx config generated from terminals.json"
+
+# If TS_AUTHKEY is set, generate tailscale serve.json. Tailscale Serve
+# terminates :80 in its own netns and proxies to nginx:80 over docker DNS.
+# Plain HTTP — bare MagicDNS hostnames don't have matching certs, and
+# tailnet traffic is already wireguard-encrypted.
+if [ -n "${TS_AUTHKEY}" ]; then
+    mkdir -p "${DIR}/.data/tailscale/state"
+    python3 - "${DIR}/.data/tailscale/serve.json" <<'PYEOF'
+import json, sys
+serve_path = sys.argv[1]
+# ":80" is a port-only Web key — matches any hostname the node responds to
+# (MagicDNS short name on Tailscale, configured DNS name on Headscale).
+serve = {
+    "TCP": {"80": {"HTTPS": False}},
+    "Web": {":80": {
+        "Handlers": {"/": {"Proxy": "http://nginx:80"}}
+    }},
+}
+with open(serve_path, "w") as f:
+    json.dump(serve, f, indent=2)
+PYEOF
+    echo "Tailscale serve.json generated (proxy → nginx:80)"
 fi
 
 # Stop existing container if running
@@ -211,20 +205,30 @@ fi
 echo "Starting MT5 Windows VM..."
 docker compose -f "${DIR}/docker-compose.yml" up -d
 
+API_HOST_PORT="${API_HOST_PORT:-8888}"
 echo ""
 echo "Container starting. Windows will install on first run (~10-15 min)."
 echo ""
 echo "  noVNC: http://localhost:${NOVNC_PORT:-8006}"
-for PORT in ${API_PORTS}; do
-    echo "  API:   http://localhost:${PORT}/ping"
-done
+echo "  API entry: http://localhost:${API_HOST_PORT} (nginx, loopback-only)"
+python3 -c "
+import json
+for t in json.load(open('${DIR}/config/terminals.json')):
+    print(f\"    http://localhost:${API_HOST_PORT}/{t['broker']}/{t['account']}/\")
+"
+if [ -n "${TS_AUTHKEY}" ]; then
+    echo "  Tailnet: http://mt5-httpapi/<broker>/<account>/"
+fi
 echo ""
 echo "Logs: docker compose -f ${DIR}/docker-compose.yml logs -f"
 
-# Set up port forwarding from container to Windows VM for the HTTP API
+# Set up DNAT inside the mt5 container so traffic arriving on per-terminal
+# ports gets forwarded to the VM. Source is now nginx (or any container on
+# the default network) hitting mt5:<port> — PREROUTING fires regardless of
+# source since it hooks per-packet on mt5's eth0.
 echo ""
 echo "Waiting for VM to get an IP (for API port forwarding)..."
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
     VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T mt5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
     if [ -n "${VM_IP}" ]; then
         echo "VM IP: ${VM_IP}"
@@ -237,7 +241,7 @@ for i in $(seq 1 60); do
                 iptables -C FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT 2>/dev/null || \
                 iptables -A FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT
             "
-            echo "Port forwarding: host:${PORT} -> container:${PORT} -> VM:${PORT}"
+            echo "Port forwarding: nginx -> mt5:${PORT} -> VM:${PORT}"
         done
         break
     fi

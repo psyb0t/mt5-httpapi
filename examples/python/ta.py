@@ -5,7 +5,7 @@ Technical analysis — pulls candles, calculates indicators, detects signals.
 Usage:
     python ta.py
     python ta.py BTCUSD H1 100
-    MT5_API_URL=http://10.0.0.5:6542 python ta.py EURUSD D1 200
+    MT5_API_URL=http://10.0.0.5:8888/roboforex/main python ta.py EURUSD D1 200
 
 Requirements:
     pip install -r requirements.txt

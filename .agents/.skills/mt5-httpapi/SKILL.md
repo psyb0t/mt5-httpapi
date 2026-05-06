@@ -18,11 +18,11 @@ For installation and setup, see [references/setup.md](references/setup.md).
 The API should already be running. Set the base URL and token:
 
 ```bash
-export MT5_API_URL=http://localhost:6542
+export MT5_API_URL=http://localhost:8888/roboforex/main
 export MT5_API_TOKEN=your_token_here
 ```
 
-Each terminal has its own port (configured in `terminals.json`). If running multiple terminals, set `MT5_API_URL` to the port for the terminal you want to talk to.
+A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `terminals.json`) selects which terminal you talk to — set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=...` at compose time.
 
 **Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok"}`. If not, the API isn't up yet (may still be initializing — it retries in the background).
 
@@ -77,6 +77,8 @@ MT5 returns timestamps in the **broker server's wall-clock time** disguised as u
 ```json
 { "broker": "roboforex", "account": "main", "port": 6542, "utc_offset": "3h" }
 ```
+
+(`port` is container-internal — only nginx and the mt5 container talk to it.)
 
 Forms accepted: `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
 
