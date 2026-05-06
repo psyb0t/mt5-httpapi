@@ -873,6 +873,38 @@ make distclean   Nuke everything including ISO
 
 API ports are determined by `config/terminals.json`. The `run.sh` script reads all configured ports, generates an `.env` file with `API_PORT_RANGE`, and docker-compose maps the range automatically. Each terminal's API process listens on its own port.
 
+## Tailscale (optional)
+
+Expose the API over your tailnet using bare MagicDNS hostname — `http://mt5-httpapi/<broker>/<account>/...` — works with both stock Tailscale and self-hosted Headscale. Plain HTTP (no TLS) by design: bare hostnames don't have matching certs, and the wireguard layer already encrypts everything inside the tailnet.
+
+How it works: a `tailscale` sidecar (host network) exposes the node on the tailnet, runs Tailscale Serve on port 80, and forwards to a small `nginx` sidecar that strips `/<broker>/<account>/` and proxies to the per-terminal API port. Both configs (`serve.json` and `nginx.conf`) are auto-generated from `config/terminals.json` on every `make up`.
+
+**Setup**:
+
+1. Drop your auth key in `config/ts_authkey.txt` (gitignored):
+   ```bash
+   echo "tskey-auth-..." > config/ts_authkey.txt
+   ```
+   For Headscale, also drop the login server URL in `config/ts_login_server.txt`:
+   ```bash
+   echo "https://headscale.your.domain" > config/ts_login_server.txt
+   ```
+
+2. Uncomment the `nginx` and `tailscale` blocks in `docker-compose.yml`.
+
+3. `make up`. `run.sh` reads the config files, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, generates `.data/tailscale/serve.json` + `.data/nginx/nginx.conf` from `config/terminals.json`, and prints the per-terminal URLs.
+
+**State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login — `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
+
+**Multi-terminal URL scheme**:
+```
+http://mt5-httpapi/roboforex/main/account
+http://mt5-httpapi/roboforex/main/symbols/EURUSD/rates?count=100
+http://mt5-httpapi/ftmo/challenge1/positions
+```
+
+The API token (if set in `config/api_token.txt`) still applies — Tailscale handles network-level access, the token handles application-level auth.
+
 ## Project Structure
 
 ```

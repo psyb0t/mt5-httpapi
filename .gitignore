@@ -7,6 +7,8 @@ mt5installers/*
 config/accounts.json
 config/terminals.json
 config/api_token.txt
+config/ts_authkey.txt
+config/ts_login_server.txt
 .env
 docker-compose.yml
 run.log

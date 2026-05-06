@@ -43,3 +43,42 @@ services:
   #     - ./.data/cloudflared/creds.json:/etc/cloudflared/creds.json:ro
   #   depends_on:
   #     - mt5
+
+  # ── Tailscale + nginx (uncomment to expose API over tailnet HTTP) ──
+  # Drop your auth key in config/ts_authkey.txt; for Headscale, also drop
+  # the login server URL in config/ts_login_server.txt. run.sh syncs both
+  # to .env and generates .data/tailscale/serve.json + .data/nginx/nginx.conf
+  # from config/terminals.json. URL scheme:
+  #   http://mt5-httpapi/<broker>/<account>/...
+  # Plain HTTP (no TLS) — MagicDNS short names work on both Tailscale and
+  # Headscale; HTTPS would require FQDN-pinned certs which break bare-name
+  # access and are inconsistent across Headscale builds.
+  #
+  # nginx:
+  #   image: nginx:alpine
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   volumes:
+  #     - ./.data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - mt5
+  #
+  # tailscale:
+  #   image: tailscale/tailscale:latest
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   environment:
+  #     - TS_AUTHKEY=${TS_AUTHKEY}
+  #     - TS_HOSTNAME=mt5-httpapi
+  #     - TS_STATE_DIR=/var/lib/tailscale
+  #     - TS_SERVE_CONFIG=/config/serve.json
+  #     - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---accept-dns=false}
+  #   volumes:
+  #     - ./.data/tailscale/state:/var/lib/tailscale
+  #     - ./.data/tailscale/serve.json:/config/serve.json:ro
+  #     - /dev/net/tun:/dev/net/tun
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - NET_RAW
+  #   depends_on:
+  #     - nginx

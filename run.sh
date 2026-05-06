@@ -124,6 +124,78 @@ else
     echo "  Create it: openssl rand -hex 32 > config/api_token.txt"
 fi
 
+# Append Tailscale vars to .env from config files (matches api_token.txt
+# pattern). config/ts_authkey.txt is required to enable; ts_login_server.txt
+# is optional (only needed for Headscale).
+TS_AUTHKEY=""
+if [ -f "${DIR}/config/ts_authkey.txt" ]; then
+    TS_AUTHKEY=$(tr -d '[:space:]' < "${DIR}/config/ts_authkey.txt")
+    echo "TS_AUTHKEY=${TS_AUTHKEY}" >> "${DIR}/.env"
+    echo "Tailscale auth key loaded from config/ts_authkey.txt"
+fi
+if [ -f "${DIR}/config/ts_login_server.txt" ]; then
+    TS_LOGIN_SERVER=$(tr -d '[:space:]' < "${DIR}/config/ts_login_server.txt")
+    echo "TS_EXTRA_ARGS=--accept-dns=false --login-server=${TS_LOGIN_SERVER}" >> "${DIR}/.env"
+    echo "Headscale login server: ${TS_LOGIN_SERVER}"
+fi
+
+# If TS_AUTHKEY is set, generate serve.json + nginx.conf from terminals.json.
+# URL scheme: http://mt5-httpapi/<broker>/<account>/...
+# Serve listens on :80 HTTP (no TLS — bare MagicDNS hostnames don't have
+# matching certs, and headscale's cert flow varies by build). Tailscale
+# Serve forwards :80 → nginx:8080, nginx strips /<broker>/<account>/ and
+# proxies to the per-terminal port. Compatible with both Tailscale stock
+# and Headscale.
+if [ -n "${TS_AUTHKEY}" ] && [ -f "${DIR}/config/terminals.json" ]; then
+    mkdir -p "${DIR}/.data/tailscale/state" "${DIR}/.data/nginx"
+    python3 - "${DIR}/config/terminals.json" \
+            "${DIR}/.data/tailscale/serve.json" \
+            "${DIR}/.data/nginx/nginx.conf" <<'PYEOF'
+import json, sys
+terms_path, serve_path, nginx_path = sys.argv[1:4]
+terms = json.load(open(terms_path))
+# Web key uses port-only ":80" — matches any hostname the node responds
+# to (MagicDNS short name on Tailscale, configured DNS name on Headscale).
+serve = {
+    "TCP": {"80": {"HTTPS": False}},
+    "Web": {":80": {
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}
+    }},
+}
+with open(serve_path, "w") as f:
+    json.dump(serve, f, indent=2)
+locs = []
+for t in terms:
+    p = f"/{t['broker']}/{t['account']}/"
+    locs.append(
+        f"        location {p} {{\n"
+        f"            rewrite ^{p}(.*)$ /$1 break;\n"
+        f"            proxy_pass http://127.0.0.1:{t['port']};\n"
+        f"            proxy_set_header Host $host;\n"
+        f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
+        f"        }}"
+    )
+nginx_conf = (
+    "events {}\n"
+    "http {\n"
+    "    server {\n"
+    "        listen 8080;\n"
+    + "\n".join(locs) + "\n"
+    "        location / { return 404 \"no route\\n\"; }\n"
+    "    }\n"
+    "}\n"
+)
+with open(nginx_path, "w") as f:
+    f.write(nginx_conf)
+PYEOF
+    echo "Tailscale + nginx config generated"
+    python3 -c "
+import json
+for t in json.load(open('${DIR}/config/terminals.json')):
+    print(f\"  http://mt5-httpapi/{t['broker']}/{t['account']}/\")
+"
+fi
+
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
     echo "Container is already running."
