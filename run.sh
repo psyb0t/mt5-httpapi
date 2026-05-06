@@ -167,33 +167,21 @@ with open(nginx_path, "w") as f:
 PYEOF
 echo "nginx config generated from terminals.json"
 
-# If TS_AUTHKEY is set, generate tailscale serve.json. Tailscale Serve
-# terminates :80 in its own netns and proxies to nginx:80 over docker DNS.
-# Plain HTTP — bare MagicDNS hostnames don't have matching certs, and
-# tailnet traffic is already wireguard-encrypted.
-if [ -n "${TS_AUTHKEY}" ]; then
-    mkdir -p "${DIR}/.data/tailscale/state"
-    python3 - "${DIR}/.data/tailscale/serve.json" <<'PYEOF'
-import json, sys
-serve_path = sys.argv[1]
-# Mirrors what `tailscale serve --bg --http=80 http://nginx:80` writes.
-# - TCP[80].HTTP=true tells tailscaled "terminate plain HTTP on :80"
-#   (HTTPS=false on its own does NOT enable HTTP — that was the v3.0.0 bug).
-# - Web key "${TS_CERT_DOMAIN}:80" is a literal — tailscaled substitutes
-#   the node's cert domain (MagicDNS FQDN on Tailscale, configured
-#   server name on Headscale). Bare-hostname requests still hit it
-#   because tailscaled routes by port when the host matches the node.
-serve = {
-    "TCP": {"80": {"HTTP": True}},
-    "Web": {"${TS_CERT_DOMAIN}:80": {
-        "Handlers": {"/": {"Proxy": "http://nginx:80"}}
-    }},
-}
-with open(serve_path, "w") as f:
-    json.dump(serve, f, indent=2)
-PYEOF
-    echo "Tailscale serve.json generated (proxy → nginx:80)"
-fi
+# Tailscale Serve config used to be generated as a static serve.json
+# loaded via TS_SERVE_CONFIG. That doesn't work reliably across both
+# stock Tailscale and Headscale because the Web handler key has to be
+# the node's actual FQDN — which we don't know until tailscaled has
+# authenticated. ${TS_CERT_DOMAIN} substitution doesn't happen on
+# Headscale (it resolves to literal "no-https"), and a port-only ":80"
+# key gets ignored on tailscaled's HTTP dispatch path.
+#
+# Fix: don't write serve.json at all. After `docker compose up -d`,
+# wait for the tailscale sidecar to be authenticated, then run
+# `tailscale serve --bg --http=80 http://nginx:80` inside it. The CLI
+# fills in the FQDN from local tailscaled state and persists the
+# config to /var/lib/tailscale (mounted at .data/tailscale/state),
+# so it survives container restarts without us touching it again.
+mkdir -p "${DIR}/.data/tailscale/state"
 
 # Stop existing container if running
 if docker compose -f "${DIR}/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
@@ -256,4 +244,35 @@ done
 if [ -z "${VM_IP}" ]; then
     echo "WARNING: Could not detect VM IP. Port forwarding not set up."
     echo "Re-run this script after the VM boots."
+fi
+
+# Wire Tailscale Serve via the CLI inside the sidecar. We do this here
+# (not via TS_SERVE_CONFIG) because the Web handler needs the node's
+# actual FQDN as a key, and the CLI is the only thing that knows it
+# both on stock Tailscale and Headscale. The result persists in
+# /var/lib/tailscale state, so it stays wired across restarts.
+if [ -n "${TS_AUTHKEY}" ] && docker compose -f "${DIR}/docker-compose.yml" ps --services --filter status=running 2>/dev/null | grep -qx tailscale; then
+    echo ""
+    echo "Waiting for Tailscale to authenticate..."
+    TS_READY=0
+    for _ in $(seq 1 30); do
+        if docker compose -f "${DIR}/docker-compose.yml" exec -T tailscale tailscale status >/dev/null 2>&1; then
+            TS_READY=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "${TS_READY}" = "1" ]; then
+        # Idempotent: reset to clear any stale config from a previous
+        # serve.json era, then install the single Web handler.
+        docker compose -f "${DIR}/docker-compose.yml" exec -T tailscale sh -c '
+            tailscale serve reset >/dev/null 2>&1 || true
+            tailscale serve --bg --http=80 http://nginx:80
+        ' >/dev/null && echo "Tailscale Serve wired: tailnet :80 → nginx:80" \
+                     || echo "WARNING: tailscale serve setup failed; check 'docker compose logs tailscale'"
+    else
+        echo "WARNING: Tailscale didn't authenticate in time; serve not wired."
+        echo "  After it comes up, run:"
+        echo "    docker compose exec tailscale tailscale serve --bg --http=80 http://nginx:80"
+    fi
 fi
