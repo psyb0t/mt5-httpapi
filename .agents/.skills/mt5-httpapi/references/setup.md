@@ -120,9 +120,8 @@ sudo install /tmp/cloudflared /usr/local/bin/cloudflared
 cloudflared tunnel login
 cloudflared tunnel create mt5-httpapi
 
-# Register a subdomain per terminal (must be under a zone you control)
-cloudflared tunnel route dns mt5-httpapi mt5-roboforex-main.yourdomain.com
-# repeat for each terminal
+# Register one subdomain — nginx routes per-terminal paths internally
+cloudflared tunnel route dns mt5-httpapi mt5-api.yourdomain.com
 
 # Put creds in .data/cloudflared/
 mkdir -p .data/cloudflared

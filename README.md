@@ -911,6 +911,56 @@ http://mt5-httpapi/ftmo/challenge1/positions
 
 The API token (if set in `config/api_token.txt`) still applies — Tailscale handles network-level access, the token handles application-level auth.
 
+## Cloudflare Tunnel (optional)
+
+Expose the API publicly without opening firewall ports. cloudflared dials out to Cloudflare's edge and proxies to the always-on `nginx` sidecar — one tunnel, one hostname, every terminal reachable behind `/<broker>/<account>/`.
+
+**Setup**:
+
+1. Install cloudflared on the host (one-off, only needed to create the tunnel):
+   ```bash
+   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+   sudo install /tmp/cloudflared /usr/local/bin/cloudflared
+   ```
+
+2. Authenticate, create a tunnel, and route a single hostname to it (must be a zone you control on Cloudflare):
+   ```bash
+   cloudflared tunnel login
+   cloudflared tunnel create mt5-httpapi
+   cloudflared tunnel route dns mt5-httpapi mt5-api.yourdomain.com
+   ```
+
+3. Drop the credentials and config into `.data/cloudflared/`:
+   ```bash
+   mkdir -p .data/cloudflared
+   cp ~/.cloudflared/<tunnel-id>.json .data/cloudflared/creds.json
+   ```
+
+   Create `.data/cloudflared/config.yml`:
+   ```yaml
+   tunnel: <tunnel-id>
+   credentials-file: /etc/cloudflared/creds.json
+
+   ingress:
+     - hostname: mt5-api.yourdomain.com
+       service: http://nginx:80
+     - service: http_status:404
+   ```
+
+4. Uncomment the `cloudflared` block in `docker-compose.yml` and `make up`.
+
+**Public URL scheme**:
+```
+https://mt5-api.yourdomain.com/roboforex/main/account
+https://mt5-api.yourdomain.com/ftmo/challenge1/positions
+```
+
+Cloudflare terminates TLS at the edge — you get HTTPS for free without managing certs. The connection from cloudflared to `nginx:80` is plain HTTP over the docker bridge, but it never leaves the host.
+
+**Subdomain depth**: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper levels like `*.mt5.yourdomain.com`. Use a single subdomain directly under the root domain.
+
+The API token still applies on top — Cloudflare gates the public reachability, the bearer token gates the application. Treat the public hostname as hostile and **always set `config/api_token.txt`** when using this.
+
 ## Project Structure
 
 ```

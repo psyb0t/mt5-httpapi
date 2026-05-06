@@ -176,11 +176,16 @@ if [ -n "${TS_AUTHKEY}" ]; then
     python3 - "${DIR}/.data/tailscale/serve.json" <<'PYEOF'
 import json, sys
 serve_path = sys.argv[1]
-# ":80" is a port-only Web key — matches any hostname the node responds to
-# (MagicDNS short name on Tailscale, configured DNS name on Headscale).
+# Mirrors what `tailscale serve --bg --http=80 http://nginx:80` writes.
+# - TCP[80].HTTP=true tells tailscaled "terminate plain HTTP on :80"
+#   (HTTPS=false on its own does NOT enable HTTP — that was the v3.0.0 bug).
+# - Web key "${TS_CERT_DOMAIN}:80" is a literal — tailscaled substitutes
+#   the node's cert domain (MagicDNS FQDN on Tailscale, configured
+#   server name on Headscale). Bare-hostname requests still hit it
+#   because tailscaled routes by port when the host matches the node.
 serve = {
-    "TCP": {"80": {"HTTPS": False}},
-    "Web": {":80": {
+    "TCP": {"80": {"HTTP": True}},
+    "Web": {"${TS_CERT_DOMAIN}:80": {
         "Handlers": {"/": {"Proxy": "http://nginx:80"}}
     }},
 }
