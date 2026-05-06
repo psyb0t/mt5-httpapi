@@ -79,6 +79,7 @@ services:
   #     - TS_AUTHKEY=${TS_AUTHKEY:-}
   #     - TS_HOSTNAME=${TS_HOSTNAME:-mt5-httpapi}
   #     - TS_STATE_DIR=/var/lib/tailscale
+  #     - TS_USERSPACE=false   # real tailscale0 in this netns — outbound to 100.64.x goes via SIDECAR's identity, not the host's. Requires /dev/net/tun + NET_ADMIN + NET_RAW (all set below).
   #     - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---accept-dns=false}
   #   volumes:
   #     - ./.data/tailscale/state:/var/lib/tailscale
