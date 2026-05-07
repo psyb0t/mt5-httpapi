@@ -44,14 +44,22 @@ if !errorlevel! neq 0 (
 call :log "%START_LOG%" "install.bat done."
 
 :: ── Pip install ──────────────────────────────────────────────────
+:: Install base deps first (pyyaml required for config_helper.py below).
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
-"%PYDIR%\python.exe" -m pip install --quiet -r "%CONFIG%\requirements.txt" >> "%PIP_LOG%" 2>&1
+"%PYDIR%\python.exe" -m pip install --quiet pyyaml MetaTrader5 flask waitress flask-compress >> "%PIP_LOG%" 2>&1
 if !errorlevel! neq 0 (
-    call :log "%START_LOG%" "ERROR: pip install failed (exit code !errorlevel!), aborting."
-    call :log "%PIP_LOG%" "ERROR: pip install failed (exit code !errorlevel!)"
+    call :log "%START_LOG%" "ERROR: pip install (base) failed (exit code !errorlevel!), aborting."
+    call :log "%PIP_LOG%" "ERROR: pip install (base) failed"
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
+)
+:: Extra packages from config.yaml requirements list.
+:: NOTE: no `usebackq` — with usebackq, single-quoted strings are LITERAL,
+:: not commands. Without usebackq, ('cmd') executes the command. This is
+:: the same pattern install.bat uses for the `ports` lookup.
+for /f "delims=" %%R in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" requirements 2^>nul') do (
+    "%PYDIR%\python.exe" -m pip install --quiet "%%R" >> "%PIP_LOG%" 2>&1
 )
 call :log "%START_LOG%" "pip done."
 call :log "%PIP_LOG%" "pip done."
@@ -71,22 +79,43 @@ tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul
     timeout /t 2 /nobreak >nul
 )
 
-:: ── Verify terminals.json exists ────────────────────────────────
-if not exist "%CONFIG%\terminals.json" (
-    call :log "%START_LOG%" "ERROR: terminals.json not found! Create config/terminals.json and re-run."
+:: ── Verify config.yaml exists ───────────────────────────────────
+if not exist "%CONFIG%\config.yaml" (
+    call :log "%START_LOG%" "ERROR: config.yaml not found! Copy config/config.yaml.example and re-run."
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
 )
 
-:: ── Parse terminals.json once ───────────────────────────────────
+:: ── Parse config.yaml terminals once ────────────────────────────
 set "TERM_LIST=%TEMP%\mt5_terminals.txt"
-"%PYDIR%\python.exe" -c "import json;[print(t['broker'],t['account'],t['port'],str(t.get('utc_offset','0')).replace(' ','')) for t in json.load(open(r'%CONFIG%\terminals.json'))]" > "%TERM_LIST%" 2>"%TEMP%\mt5_parse_err.txt"
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" terminals > "%TERM_LIST%" 2>"%TEMP%\mt5_parse_err.txt"
 if !errorlevel! neq 0 (
-    call :log "%START_LOG%" "ERROR: Failed to parse terminals.json:"
+    call :log "%START_LOG%" "ERROR: Failed to parse config.yaml:"
     type "%TEMP%\mt5_parse_err.txt" >> "%START_LOG%"
     del "%TERM_LIST%" 2>nul
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
+)
+
+:: ── Periodic auto-reboot scheduled task ─────────────────────────
+:: MT5 terminals share a desktop with DWM, and DWM/VirtIO-GPU crashes
+:: under sustained load wedge the SDK pipe (terminal64.exe stops
+:: responding to GDI/IPC). Cheapest mitigation: hard-reboot every N
+:: minutes to flush GPU/desktop state before it rots.
+:: Configured via config.yaml reboot_interval (minutes). 0 = disabled.
+:: Default: 30. /f on schtasks is idempotent -- overwrites existing task.
+set "REBOOT_INTERVAL=30"
+for /f "delims=" %%V in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_interval 2^>nul') do set "REBOOT_INTERVAL=%%V"
+if "!REBOOT_INTERVAL!"=="0" (
+    schtasks /delete /tn "MT5AutoReboot" /f >nul 2>&1
+    call :log "%START_LOG%" "Auto-reboot disabled (reboot_interval=0)."
+) else (
+    schtasks /create /tn "MT5AutoReboot" /tr "shutdown /r /t 0 /f /d p:0:0" /sc minute /mo !REBOOT_INTERVAL! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
+    if !errorlevel! equ 0 (
+        call :log "%START_LOG%" "MT5AutoReboot task ensured (every !REBOOT_INTERVAL! min)."
+    ) else (
+        call :log "%START_LOG%" "WARN: failed to create MT5AutoReboot task (errorlevel !errorlevel!)."
+    )
 )
 
 :: ── Launch MT5 terminals ─────────────────────────────────────────
@@ -104,7 +133,7 @@ for /f "usebackq delims=" %%L in ("%TERM_LIST%") do (
 )
 
 if !TERM_COUNT! equ 0 (
-    call :log "%START_LOG%" "ERROR: No terminals configured in terminals.json"
+    call :log "%START_LOG%" "ERROR: No terminals configured in config.yaml"
     del "%TERM_LIST%" 2>nul
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
@@ -113,15 +142,14 @@ if !TERM_COUNT! equ 0 (
 call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 30s to initialize..."
 timeout /t 30 /nobreak >nul
 
-:: ── Load API token (optional) ─────────────────────────────────────
+:: ── Load API token from config.yaml (optional) ──────────────────
+:: NOTE: no `usebackq` — see requirements loop above for the same caveat.
 set "API_TOKEN="
-if exist "%CONFIG%\api_token.txt" (
-    set /p API_TOKEN=<"%CONFIG%\api_token.txt"
-)
+for /f "delims=" %%T in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" api_token 2^>nul') do set "API_TOKEN=%%T"
 if defined API_TOKEN (
     call :log "%START_LOG%" "API token loaded."
 ) else (
-    call :log "%START_LOG%" "WARNING: No api_token.txt found, API running without auth."
+    call :log "%START_LOG%" "WARNING: api_token empty in config.yaml, API running without auth."
 )
 
 :: ── Launch API processes (all background) ────────────────────────
@@ -223,7 +251,7 @@ set "WI_DIR=%~1"
 set "WI_BROKER=%~2"
 set "WI_ACCOUNT=%~3"
 set "WI_CFG=!WI_DIR!\mt5start.ini"
-"%PYDIR%\python.exe" -c "import json,os;d=json.load(open(os.path.join(r'%CONFIG%','accounts.json')));b=d.get('!WI_BROKER!',{});a='!WI_ACCOUNT!';c=b.get(a) if a else next(iter(b.values()),None) if b else None;f=open(r'!WI_CFG!','w');f.write('[Common]\nLogin='+str(c['login'])+'\nServer='+c['server']+'\nPassword='+c['password']+'\nKeepPrivate=0\nAutoTrading=1\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n') if c else f.write('[Common]\nKeepPrivate=0\nAutoTrading=1\nNewsEnable=0\n[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n[Email]\nEnable=0\n');f.close()" >> "%START_LOG%" 2>&1
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" write_ini "!WI_BROKER!" "!WI_ACCOUNT!" "!WI_CFG!" >> "%START_LOG%" 2>&1
 if errorlevel 1 (
     call :log "%START_LOG%" "WARNING: Could not write ini for !WI_BROKER!/!WI_ACCOUNT!, using defaults"
     echo [Common]> "!WI_CFG!"

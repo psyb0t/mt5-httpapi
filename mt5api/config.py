@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import re
 
@@ -9,9 +8,28 @@ HOST = "0.0.0.0"
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
-ACCOUNT_FILE = os.path.join(BASE_DIR, "config", "accounts.json")
-TERMINAL_FILE = os.path.join(BASE_DIR, "config", "terminal.json")
+CONFIG_YAML = os.path.join(BASE_DIR, "config", "config.yaml")
 BROKERS_DIR = os.path.join(BASE_DIR, "terminals")
+
+
+def load_yaml_config():
+    """Read config.yaml. Returns {} if missing or unparseable.
+
+    yaml import is deferred so module import doesn't blow up in
+    environments where pyyaml isn't installed yet (start.bat installs
+    it before launching the API process).
+    """
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    if not os.path.exists(CONFIG_YAML):
+        return {}
+    try:
+        with open(CONFIG_YAML, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
 
 
 def _parse_args():
@@ -77,9 +95,22 @@ def parse_duration_to_seconds(value):
 
 
 def load_terminal_config():
-    if os.path.exists(TERMINAL_FILE):
-        with open(TERMINAL_FILE) as f:
-            return json.load(f)
+    """Default broker/account when CLI args aren't supplied.
+
+    start.bat always passes --broker/--account/--port/--utc-offset, so
+    this is only hit when running the API directly for testing. Falls
+    back to the first entry in config.yaml's terminals list.
+    """
+    cfg = load_yaml_config()
+    terms = cfg.get("terminals") or []
+    if terms:
+        t = terms[0]
+        return {
+            "broker": t.get("broker", "default"),
+            "account": t.get("account", ""),
+            "port": t.get("port"),
+            "utc_offset": t.get("utc_offset", "0"),
+        }
     return {"broker": "default", "account": ""}
 
 
@@ -88,7 +119,7 @@ _terminal_config = load_terminal_config()
 
 BROKER = _args.broker or _terminal_config.get("broker", "default")
 ACCOUNT = _args.account or _terminal_config.get("account", "")
-PORT = _args.port or 6542
+PORT = _args.port or _terminal_config.get("port") or 6542
 API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
 UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
 UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)

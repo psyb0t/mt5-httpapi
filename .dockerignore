@@ -4,6 +4,7 @@
 CLAUDE.md
 data/
 mt5installers/
+config/config.yaml
 config/accounts.json
 config/terminals.json
 run.log

@@ -1,5 +1,0 @@
-MetaTrader5
-flask
-flask-compress
-psutil
-waitress

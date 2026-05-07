@@ -50,6 +50,7 @@ cp "${DIR}/scripts/install.bat" "${DIR}/data/shared/scripts/install.bat"
 cp "${DIR}/scripts/start.bat" "${DIR}/data/shared/scripts/start.bat"
 cp "${DIR}/scripts/api_runner.bat" "${DIR}/data/shared/scripts/api_runner.bat"
 cp "${DIR}/scripts/check_health.py" "${DIR}/data/shared/scripts/check_health.py"
+cp "${DIR}/scripts/config_helper.py" "${DIR}/data/shared/scripts/config_helper.py"
 cp "${DIR}/scripts/event-log-tailer.ps1" "${DIR}/data/shared/scripts/event-log-tailer.ps1"
 cp "${DIR}/scripts/healthcheck.sh" "${DIR}/data/shared/scripts/healthcheck.sh"
 chmod +x "${DIR}/data/shared/scripts/healthcheck.sh"
@@ -57,9 +58,19 @@ cp "${DIR}/scripts/debloat.bat" "${DIR}/data/shared/scripts/debloat.bat"
 rm -rf "${DIR}/data/shared/scripts/defender-remover"
 cp -r "${DIR}/scripts/defender-remover" "${DIR}/data/shared/scripts/defender-remover"
 
-# Copy config files
-for f in "${DIR}"/config/*; do
-    [ -e "$f" ] || continue
+# config.yaml is the single config file — fail fast if missing.
+if [ ! -f "${DIR}/config/config.yaml" ]; then
+    echo "ERROR: config/config.yaml not found."
+    echo "  Copy config/config.yaml.example to config/config.yaml and edit."
+    exit 1
+fi
+
+# Copy config
+cp -a "${DIR}/config/config.yaml" "${DIR}/data/shared/config/config.yaml"
+echo "  copied config: config.yaml"
+# Copy optional extras (hosts, setup.bat) if present
+for f in "${DIR}/config/hosts" "${DIR}/config/setup.bat"; do
+    [ -f "$f" ] || continue
     cp -a "$f" "${DIR}/data/shared/config/"
     echo "  copied config: $(basename "$f")"
 done
@@ -91,82 +102,40 @@ if [ ! -f "${DIR}/data/storage/data.img" ]; then
     rm -f "${DIR}/data/shared/"*.done
 fi
 
-# terminals.json drives the per-terminal nginx upstreams (and the iptables
-# DNAT inside the mt5 container that forwards to the VM). Required.
-if [ ! -f "${DIR}/config/terminals.json" ]; then
-    echo "ERROR: config/terminals.json not found."
-    echo "  Copy config/terminals.example.json and edit."
-    exit 1
-fi
+CFG="${DIR}/scripts/config_helper.py"
+python3 -c "import yaml" 2>/dev/null || pip3 install --quiet pyyaml
 
-API_PORTS=$(python3 -c "
-import json
-ports = [t['port'] for t in json.load(open('${DIR}/config/terminals.json'))]
-print(' '.join(str(p) for p in ports))
-")
+API_PORTS=$(python3 "$CFG" ports)
 echo "Configured terminal ports (container-internal): ${API_PORTS}"
 
-# Generate fresh .env each run. Vars below are docker-compose interpolation
-# inputs; user-managed secrets flow in via config/*.txt files.
+# Generate fresh .env each run.
 : > "${DIR}/.env"
 
-# API_TOKEN flows config/api_token.txt → .env → docker-compose env
-if [ -f "${DIR}/config/api_token.txt" ]; then
-    API_TOKEN=$(tr -d '[:space:]' < "${DIR}/config/api_token.txt")
+API_TOKEN=$(python3 "$CFG" api_token)
+if [ -n "${API_TOKEN}" ]; then
     echo "API_TOKEN=${API_TOKEN}" >> "${DIR}/.env"
-    echo "API token loaded from config/api_token.txt"
+    echo "API token loaded from config.yaml"
 else
-    echo "WARNING: config/api_token.txt not found — API will run without auth"
-    echo "  Create it: openssl rand -hex 32 > config/api_token.txt"
+    echo "WARNING: api_token is empty in config.yaml — API will run without auth"
 fi
 
-# Tailscale vars (optional). config/ts_authkey.txt enables the tailscale
-# sidecar; config/ts_login_server.txt switches to a Headscale control plane.
-TS_AUTHKEY=""
-if [ -f "${DIR}/config/ts_authkey.txt" ]; then
-    TS_AUTHKEY=$(tr -d '[:space:]' < "${DIR}/config/ts_authkey.txt")
+TS_AUTHKEY=$(python3 "$CFG" ts_auth_key)
+TS_AUTHKEY="${TS_AUTHKEY//[$'\t\r\n ']}"
+if [ -n "${TS_AUTHKEY}" ]; then
     echo "TS_AUTHKEY=${TS_AUTHKEY}" >> "${DIR}/.env"
-    echo "Tailscale auth key loaded from config/ts_authkey.txt"
+    echo "Tailscale auth key loaded from config.yaml"
 fi
-if [ -f "${DIR}/config/ts_login_server.txt" ]; then
-    TS_LOGIN_SERVER=$(tr -d '[:space:]' < "${DIR}/config/ts_login_server.txt")
+TS_LOGIN_SERVER=$(python3 "$CFG" ts_login_server)
+TS_LOGIN_SERVER="${TS_LOGIN_SERVER//[$'\t\r\n ']}"
+if [ -n "${TS_LOGIN_SERVER}" ]; then
     echo "TS_EXTRA_ARGS=--accept-dns=false --login-server=${TS_LOGIN_SERVER}" >> "${DIR}/.env"
     echo "Headscale login server: ${TS_LOGIN_SERVER}"
 fi
 
-# Always generate nginx.conf from terminals.json. nginx is the single
-# entry point — routes /<broker>/<account>/... to mt5:<terminal_port>
-# (docker DNS), where the mt5 container's iptables DNATs into the VM.
+# Generate nginx.conf from config.yaml terminals.
 mkdir -p "${DIR}/.data/nginx"
-python3 - "${DIR}/config/terminals.json" "${DIR}/.data/nginx/nginx.conf" <<'PYEOF'
-import json, sys
-terms_path, nginx_path = sys.argv[1:3]
-terms = json.load(open(terms_path))
-locs = []
-for t in terms:
-    p = f"/{t['broker']}/{t['account']}/"
-    locs.append(
-        f"        location {p} {{\n"
-        f"            rewrite ^{p}(.*)$ /$1 break;\n"
-        f"            proxy_pass http://mt5:{t['port']};\n"
-        f"            proxy_set_header Host $host;\n"
-        f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
-        f"        }}"
-    )
-nginx_conf = (
-    "events {}\n"
-    "http {\n"
-    "    server {\n"
-    "        listen 80;\n"
-    + "\n".join(locs) + "\n"
-    "        location / { return 404 \"no route\\n\"; }\n"
-    "    }\n"
-    "}\n"
-)
-with open(nginx_path, "w") as f:
-    f.write(nginx_conf)
-PYEOF
-echo "nginx config generated from terminals.json"
+python3 "$CFG" nginx_conf "${DIR}/.data/nginx/nginx.conf"
+echo "nginx config generated from config.yaml"
 
 # Tailscale Serve config used to be generated as a static serve.json
 # loaded via TS_SERVE_CONFIG. That doesn't work reliably across both
@@ -205,11 +174,7 @@ echo "Container starting. Windows will install on first run (~10-15 min)."
 echo ""
 echo "  noVNC: http://localhost:${NOVNC_PORT:-8006}"
 echo "  API entry: http://localhost:${API_HOST_PORT} (nginx, loopback-only)"
-python3 -c "
-import json
-for t in json.load(open('${DIR}/config/terminals.json')):
-    print(f\"    http://localhost:${API_HOST_PORT}/{t['broker']}/{t['account']}/\")
-"
+python3 "$CFG" show_terminals | sed "s|  - /|    http://localhost:${API_HOST_PORT}/|"
 if [ -n "${TS_AUTHKEY}" ]; then
     echo "  Tailnet: http://mt5-httpapi/<broker>/<account>/"
 fi

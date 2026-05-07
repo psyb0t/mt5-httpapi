@@ -1,0 +1,46 @@
+# MT5 HTTP API — single config file.
+# Copy to config/config.yaml and fill in your values.
+# config.yaml is gitignored; this example is the committed template.
+
+# Bearer token for API auth. Empty string = no auth (open to anyone on the network).
+api_token: ""
+
+# Automatically reboot the VM every N minutes to flush DWM/VirtIO-GPU state
+# before sustained-load crashes wedge the MT5 SDK pipe. 0 = disabled.
+reboot_interval: 30
+
+tailscale:
+  auth_key: ""       # leave empty to disable the tailscale sidecar entirely
+  login_server: ""   # Headscale login server URL; empty = Tailscale cloud
+
+# Extra pip packages installed in the VM on every boot.
+# MetaTrader5, flask, waitress, and flask-compress are always installed.
+requirements: []
+
+# MT5 broker accounts. Structure: accounts.<broker>.<account_name>
+# broker must match the name used in terminals[] below and in mt5setup-<broker>.exe
+accounts:
+  ftmo:
+    tenkchallenge:
+      login: 12345678
+      server: "FTMO-Server2"
+      password: "change-me"
+  roboforex:
+    main:
+      login: 87654321
+      server: "RoboForex-Pro"
+      password: "change-me"
+
+# Terminal instances — one API process per entry.
+# utc_offset: broker wall-clock offset from real UTC.
+#   Accepts hours ("3"), duration strings ("3h30m", "-2h"), or "0".
+#   MT5 disguises broker local time as UTC; this corrects it on the wire.
+terminals:
+  - broker: ftmo
+    account: tenkchallenge
+    port: 5001
+    utc_offset: "0"
+  - broker: roboforex
+    account: main
+    port: 5002
+    utc_offset: "3"

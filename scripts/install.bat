@@ -130,13 +130,13 @@ if !errorlevel! neq 0 (
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
 )
-"%PYDIR%\python.exe" -m pip install MetaTrader5 >> "%INSTALL_LOG%" 2>&1
+"%PYDIR%\python.exe" -m pip install MetaTrader5 pyyaml >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
-    call :log "ERROR: Failed to install MetaTrader5"
+    call :log "ERROR: Failed to install MetaTrader5 / pyyaml"
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
 )
-call :log "  MetaTrader5 installed."
+call :log "  MetaTrader5 + pyyaml installed."
 call :log "[3/4] Done. Rebooting..."
 call :do_reboot
 exit /b 3
@@ -187,10 +187,8 @@ call :log "  Configuring firewall..."
 netsh advfirewall firewall delete rule name="MT5 HTTP API" >nul 2>&1
 netsh advfirewall firewall delete rule name="MT5 Python" >nul 2>&1
 set "FW_PORTS=6542"
-if exist "%CONFIG%\terminals.json" (
-    for /f "delims=" %%P in ('"%PYDIR%\python.exe" -c "import json;ports=[t['port'] for t in json.load(open(r'%CONFIG%\terminals.json'))];print(str(min(ports))+'-'+str(max(ports)) if min(ports)!=max(ports) else str(min(ports)))" 2^>nul') do (
-        set "FW_PORTS=%%P"
-    )
+for /f "delims=" %%P in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" ports 2^>nul') do (
+    set "FW_PORTS=%%P"
 )
 netsh advfirewall firewall add rule name="MT5 HTTP API" dir=in action=allow protocol=TCP localport=!FW_PORTS! >> "%INSTALL_LOG%" 2>&1
 netsh advfirewall firewall add rule name="MT5 Python" dir=in action=allow program="%PYDIR%\python.exe" enable=yes >> "%INSTALL_LOG%" 2>&1

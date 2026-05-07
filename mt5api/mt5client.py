@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import threading
@@ -12,7 +11,6 @@ import psutil
 from flask import has_request_context, g, jsonify
 from mt5api.config import (
     ACCOUNT,
-    ACCOUNT_FILE,
     BROKER,
     FILLING_MAP,
     INI_FILE,
@@ -21,6 +19,7 @@ from mt5api.config import (
     TERMINAL_PATH,
     TIME_MAP,
     UTC_OFFSET_SECONDS,
+    load_yaml_config,
 )
 from mt5api.logger import log
 
@@ -133,17 +132,9 @@ def _req_id():
 
 
 def load_accounts():
-    if not os.path.exists(ACCOUNT_FILE):
-        return {}
-    with open(ACCOUNT_FILE, "r") as f:
-        data = json.load(f)
-    # New format: {broker: {account_name: {login, password, server}}}
-    if BROKER in data:
-        return data[BROKER]
-    # Support old flat format: {login, password, server}
-    if "login" in data:
-        return {"default": data}
-    return data
+    cfg = load_yaml_config()
+    accounts = cfg.get("accounts") or {}
+    return accounts.get(BROKER, {}) or {}
 
 
 def get_first_account():

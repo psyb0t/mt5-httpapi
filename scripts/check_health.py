@@ -4,19 +4,25 @@ Prints UP/DOWN for each configured terminal port.
 Logs any DOWN ports to full.log with timestamp.
 """
 import datetime
-import json
 import os
 import socket
 
+try:
+    import yaml
+except ImportError:
+    print('  ERROR: pyyaml not installed')
+    raise SystemExit(1)
+
 SHARED = r'C:\Users\Docker\Desktop\Shared'
-CONFIG = os.path.join(SHARED, 'config', 'terminals.json')
+CONFIG = os.path.join(SHARED, 'config', 'config.yaml')
 FULL_LOG = os.path.join(SHARED, 'logs', 'full.log')
 
 try:
-    with open(CONFIG) as f:
-        terminals = json.load(f)
+    with open(CONFIG, encoding='utf-8') as f:
+        cfg = yaml.safe_load(f) or {}
+    terminals = cfg.get('terminals') or []
 except Exception as e:
-    print(f'  ERROR reading terminals.json: {e}')
+    print(f'  ERROR reading config.yaml: {e}')
     raise SystemExit(1)
 
 now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')

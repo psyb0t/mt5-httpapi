@@ -4,11 +4,14 @@ data/*
 !data/.gitkeep
 mt5installers/*
 !mt5installers/.gitkeep
+config/config.yaml
 config/accounts.json
 config/terminals.json
 config/api_token.txt
 config/ts_authkey.txt
 config/ts_login_server.txt
+config/reboot_interval.txt
+config/requirements.txt
 .env
 docker-compose.yml
 run.log

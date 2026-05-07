@@ -1,5 +1,5 @@
 #!/bin/sh
-# Probes every API port from terminals.json (or terminal.json fallback).
+# Probes every API port from config.yaml.
 # Healthy ONLY if every configured port answers HTTP.
 #
 # Resolves VM IP from dnsmasq leases because dockurr/windows uses iptables
@@ -9,11 +9,13 @@
 
 set -u
 
-CONFIG=/shared/config/terminals.json
-[ -f "$CONFIG" ] || CONFIG=/shared/config/terminal.json
-[ -f "$CONFIG" ] || { echo "no terminals config"; exit 1; }
+CONFIG=/shared/config/config.yaml
+[ -f "$CONFIG" ] || { echo "no config.yaml"; exit 1; }
 
-PORTS=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$CONFIG" | grep -oE '[0-9]+$')
+# YAML schema: only terminals[] entries have a `port:` key, so a plain grep
+# on indented `port: <int>` lines is sufficient and avoids needing python
+# / a yaml parser inside the alpine-based dockurr/windows container.
+PORTS=$(grep -E '^[[:space:]]+port:[[:space:]]*[0-9]+' "$CONFIG" | grep -oE '[0-9]+$')
 [ -n "$PORTS" ] || { echo "no ports parsed"; exit 1; }
 
 VM_IP=$(awk '{print $3}' /var/lib/misc/dnsmasq.leases 2>/dev/null | head -n1)

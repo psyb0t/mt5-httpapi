@@ -1,6 +1,6 @@
 services:
   mt5:
-    image: dockurr/windows
+    image: dockurr/windows:5.14
     environment:
       RAM_SIZE: "4G"
       RAM_CHECK: "N"
@@ -51,12 +51,12 @@ services:
   # nginx is the single entry point for all terminal APIs. Routes
   # /<broker>/<account>/... to mt5:<terminal_port> (per-terminal Python
   # API process inside the Windows VM, reachable via mt5 container's
-  # iptables DNAT). Auto-generated from config/terminals.json by run.sh.
+  # iptables DNAT). Auto-generated from config/config.yaml by run.sh.
   # Bound to 127.0.0.1:8888 so it's loopback-only by default — LAN
   # exposure is opt-in (change the host bind), tailnet exposure is via
   # the optional tailscale sidecar below.
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.0-alpine3.23
     restart: unless-stopped
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8888}:80"
@@ -70,7 +70,7 @@ services:
   # nginx routes per-terminal paths). Drop creds + config in
   # ./.data/cloudflared/.
   # cloudflared:
-  #   image: cloudflare/cloudflared:latest
+  #   image: cloudflare/cloudflared:2026.3.0
   #   restart: unless-stopped
   #   command: tunnel --config /etc/cloudflared/config.yml run
   #   volumes:
@@ -80,9 +80,9 @@ services:
   #     - nginx
 
   # ── Tailscale (uncomment to expose API over tailnet HTTP) ─────────
-  # Drop your auth key in config/ts_authkey.txt; for Headscale, also drop
-  # the login server URL in config/ts_login_server.txt. run.sh syncs both
-  # to .env and generates .data/tailscale/serve.json. URL scheme:
+  # Set tailscale.auth_key in config/config.yaml; for Headscale, also set
+  # tailscale.login_server. run.sh reads both and writes .env + wires
+  # tailscale serve via the CLI inside the sidecar. URL scheme:
   #   http://mt5-httpapi/<broker>/<account>/...
   # Plain HTTP — bare MagicDNS hostnames don't have matching certs, and
   # the wireguard layer already encrypts everything inside the tailnet.
@@ -90,7 +90,7 @@ services:
   # its own tailnet identity — host's tailscale (if any) stays clean and
   # ACLs scope to the container's node only.
   # tailscale:
-  #   image: tailscale/tailscale:latest
+  #   image: tailscale/tailscale:v1.96.5
   #   restart: unless-stopped
   #   environment:
   #     - TS_AUTHKEY=${TS_AUTHKEY:-}

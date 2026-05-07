@@ -44,19 +44,15 @@ Or just run MT5 on a dedicated box if you're hammering it.
 ## Quick Start
 
 ```bash
-# 1. Set up your broker account
-cp config/accounts.json.example config/accounts.json
-cp config/terminals.example.json config/terminals.json
-# Edit both files with your broker credentials
+# 1. Create your config from the template
+cp config/config.yaml.example config/config.yaml
+# Edit config/config.yaml: api_token, accounts, terminals (see below)
 
-# 2. Generate an API token (optional but recommended)
-openssl rand -hex 32 > config/api_token.txt
-
-# 3. Drop your broker's MT5 installer in mt5installers/
+# 2. Drop your broker's MT5 installer in mt5installers/
 #    Name it: mt5setup-<broker>.exe
 cp ~/Downloads/mt5setup.exe mt5installers/mt5setup-roboforex.exe
 
-# 4. Fire it up
+# 3. Fire it up
 make up
 ```
 
@@ -64,66 +60,59 @@ First run downloads [tiny11](https://archive.org/details/tiny-11-NTDEV) (strippe
 
 ## Configuration
 
-### `config/accounts.json`
+### `config/config.yaml`
 
-Your broker credentials. Organized by broker, then account name:
+Single source of truth — gitignored. Copy `config/config.yaml.example` and edit. Structure:
 
-```json
-{
-  "roboforex": {
-    "main": {
-      "login": 12345678,
-      "password": "your_password",
-      "server": "RoboForex-Pro"
-    },
-    "demo": {
-      "login": 87654321,
-      "password": "demo_password",
-      "server": "RoboForex-Demo"
-    }
-  }
-}
+```yaml
+# Bearer token for API auth. Empty = no auth.
+api_token: "paste-the-output-of-openssl-rand-hex-32-here"
+
+# VM auto-reboot every N minutes (flushes DWM/VirtIO-GPU state). 0 = disable.
+reboot_interval: 30
+
+tailscale:
+  auth_key: ""       # tskey-auth-... — empty disables the tailscale sidecar
+  login_server: ""   # Headscale URL; empty = Tailscale cloud
+
+# Extra pip packages for the VM. MetaTrader5/flask/waitress/flask-compress are always installed.
+requirements: []
+
+# Broker credentials, organized by broker → account_name.
+accounts:
+  roboforex:
+    main:
+      login: 12345678
+      server: "RoboForex-Pro"
+      password: "your_password"
+    demo:
+      login: 87654321
+      server: "RoboForex-Demo"
+      password: "demo_password"
+
+# Terminal instances — one MT5 process + one API process per entry.
+terminals:
+  - broker: roboforex
+    account: main
+    port: 6542
+    utc_offset: "3h"
+  - broker: roboforex
+    account: demo
+    port: 6543
+    utc_offset: "3h"
 ```
 
-### `config/terminals.json`
+Per-field notes:
 
-Defines which terminals to run. Each entry gets its own MT5 terminal instance and its own API process on a dedicated port:
-
-```json
-[
-  {
-    "broker": "roboforex",
-    "account": "main",
-    "port": 6542,
-    "utc_offset": "3h"
-  },
-  {
-    "broker": "roboforex",
-    "account": "demo",
-    "port": 6543,
-    "utc_offset": "3h"
-  }
-]
-```
-
-- `broker` — matches the installer name (`mt5setup-<broker>.exe`) and `accounts.json` key
-- `account` — matches the account name in `accounts.json` under that broker
-- `port` — container-internal port for this terminal's HTTP API (only nginx and the mt5 container talk to it; not exposed to the host)
-- `utc_offset` — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0` (no normalization). Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
+- **`api_token`** — if set, every endpoint requires `Authorization: Bearer <token>`. Empty = open. Generate with `openssl rand -hex 32`.
+- **`reboot_interval`** — minutes between scheduled VM reboots. `0` disables.
+- **`tailscale.auth_key`** / **`tailscale.login_server`** — see [Tailscale](#tailscale-optional). Empty `auth_key` skips the sidecar.
+- **`requirements`** — additional pip packages installed in the VM on every boot.
+- **`accounts.<broker>.<account>`** — `broker` must match the installer name (`mt5setup-<broker>.exe`) and the `broker` field in `terminals[]`. `account` must match the `account` field in `terminals[]`.
+- **`terminals[].port`** — container-internal port for this terminal's HTTP API. Only nginx and the mt5 container talk to it; not exposed to the host.
+- **`terminals[].utc_offset`** — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
-
-### `config/api_token.txt`
-
-Optional. If present, all API endpoints require `Authorization: Bearer <token>`. Without it, the API runs open with no auth.
-
-```bash
-openssl rand -hex 32 > config/api_token.txt
-```
-
-### `config/requirements.txt`
-
-Extra Python packages you want in the VM. `MetaTrader5` and `flask` are already in there.
 
 ### `config/setup.bat`
 
@@ -141,12 +130,12 @@ All terminals are served behind a single host port via nginx. Default entry poin
 http://localhost:8888/<broker>/<account>/...
 ```
 
-Example: with a `roboforex/main` terminal in `terminals.json`, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM.
+Example: with a `roboforex/main` terminal in `config.yaml`'s `terminals:` list, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM.
 
-If `config/api_token.txt` is set, include the token on every request:
+If `api_token` is set in `config.yaml`, include the token on every request:
 
 ```bash
-export MT5_API_TOKEN=$(cat config/api_token.txt)
+export MT5_API_TOKEN=$(grep ^api_token config/config.yaml | awk -F'"' '{print $2}')
 curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/main/ping
 ```
 
@@ -261,10 +250,14 @@ The API auto-initializes on first request. You almost never need to call these m
 
 MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2 — so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
 
-The MT5 Python SDK doesn't expose `TimeCurrent()` / `TimeGMT()`, so the API can't auto-detect this. Instead, set `utc_offset` per terminal in `terminals.json`:
+The MT5 Python SDK doesn't expose `TimeCurrent()` / `TimeGMT()`, so the API can't auto-detect this. Instead, set `utc_offset` per terminal in `config.yaml`:
 
-```json
-{ "broker": "roboforex", "account": "main", "port": 6542, "utc_offset": "3h" }
+```yaml
+terminals:
+  - broker: roboforex
+    account: main
+    port: 6542
+    utc_offset: "3h"
 ```
 
 When set, the API:
@@ -693,7 +686,7 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ```bash
 export MT5_API_URL=http://localhost:8888/roboforex/main
-export MT5_API_TOKEN=$(cat config/api_token.txt)  # omit if no auth configured
+export MT5_API_TOKEN=$(grep ^api_token config/config.yaml | awk -F'"' '{print $2}')  # omit if no auth configured
 
 # Check your balance
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/account
@@ -877,30 +870,28 @@ make distclean   Nuke everything including ISO
 | 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`         |
 | 8888  | HTTP API (nginx, all terminals) | `API_HOST_PORT=9999 make up` |
 
-Only two ports leave the docker network. Per-terminal ports from `config/terminals.json` stay container-internal — nginx (always-on, generated from `terminals.json`) routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards from there into the Windows VM. The host bind is loopback-only (`127.0.0.1:8888`) by default; change the bind in `docker-compose.yml` if you want LAN exposure, or use the Tailscale sidecar below for tailnet exposure.
+Only two ports leave the docker network. Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal — nginx (always-on, generated from the same list) routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards from there into the Windows VM. The host bind is loopback-only (`127.0.0.1:8888`) by default; change the bind in `docker-compose.yml` if you want LAN exposure, or use the Tailscale sidecar below for tailnet exposure.
 
 ## Tailscale (optional)
 
 Expose the API over your tailnet using a bare MagicDNS hostname — `http://mt5-httpapi/<broker>/<account>/...` — works with both stock Tailscale and self-hosted Headscale. Plain HTTP (no TLS) by design: bare hostnames don't have matching certs, and the wireguard layer already encrypts everything inside the tailnet.
 
-How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity — ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays out of the sidecar's inbound path. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `nginx.conf` is auto-generated from `config/terminals.json` on every `make up`; the Tailscale Serve config is wired in via the `tailscale serve` CLI from inside the sidecar (it needs the live FQDN, which only the CLI knows) and persisted in tailscaled state.
+How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity — ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays out of the sidecar's inbound path. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `nginx.conf` is auto-generated from `config.yaml`'s `terminals:` list on every `make up`; the Tailscale Serve config is wired in via the `tailscale serve` CLI from inside the sidecar (it needs the live FQDN, which only the CLI knows) and persisted in tailscaled state.
 
 The sidecar runs in TUN mode (`TS_USERSPACE=false`) so a real `tailscale0` interface exists inside its netns. That means any outbound to `100.64.0.0/10` from the sidecar is routed via the sidecar's own tunnel under its tailnet identity — not via the host's `tailscale0` (if the host has one on a different account). Note the scope: this only applies to traffic originating in the sidecar's netns. The other containers (`nginx`, `mt5`) are on the docker bridge, not in the sidecar's netns, so any tailnet-bound traffic from them would still fall through to the host's tunnel. We don't initiate tailnet outbound from those containers in the default setup, so it doesn't bite — but if you add a service that does, put it on `network_mode: service:tailscale`.
 
 **Setup**:
 
-1. Drop your auth key in `config/ts_authkey.txt` (gitignored):
-   ```bash
-   echo "tskey-auth-..." > config/ts_authkey.txt
-   ```
-   For Headscale, also drop the login server URL in `config/ts_login_server.txt`:
-   ```bash
-   echo "https://headscale.your.domain" > config/ts_login_server.txt
+1. Set your auth key in `config/config.yaml`:
+   ```yaml
+   tailscale:
+     auth_key: "tskey-auth-..."
+     login_server: ""   # for Headscale, set "https://headscale.your.domain"
    ```
 
 2. Uncomment the `tailscale` block in `docker-compose.yml`. (nginx is always on — no need to uncomment anything for it.)
 
-3. `make up`. `run.sh` reads the config files, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, brings the stack up, waits for tailscaled to authenticate, and runs `tailscale serve --bg --http=80 http://nginx:80` inside the sidecar to wire the tailnet :80 listener to nginx. The Serve config persists in `.data/tailscale/state`, so subsequent `make up` calls don't need to redo it.
+3. `make up`. `run.sh` reads `config.yaml`, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, brings the stack up, waits for tailscaled to authenticate, and runs `tailscale serve --bg --http=80 http://nginx:80` inside the sidecar to wire the tailnet :80 listener to nginx. The Serve config persists in `.data/tailscale/state`, so subsequent `make up` calls don't need to redo it.
 
 **State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login — `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
 
@@ -911,7 +902,7 @@ http://mt5-httpapi/roboforex/main/symbols/EURUSD/rates?count=100
 http://mt5-httpapi/ftmo/challenge1/positions
 ```
 
-The API token (if set in `config/api_token.txt`) still applies — Tailscale handles network-level access, the token handles application-level auth.
+The API token (if set in `config.yaml`) still applies — Tailscale handles network-level access, the token handles application-level auth.
 
 ## Cloudflare Tunnel (optional)
 
@@ -961,18 +952,16 @@ Cloudflare terminates TLS at the edge — you get HTTPS for free without managin
 
 **Subdomain depth**: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper levels like `*.mt5.yourdomain.com`. Use a single subdomain directly under the root domain.
 
-The API token still applies on top — Cloudflare gates the public reachability, the bearer token gates the application. Treat the public hostname as hostile and **always set `config/api_token.txt`** when using this.
+The API token still applies on top — Cloudflare gates the public reachability, the bearer token gates the application. Treat the public hostname as hostile and **always set `api_token` in `config.yaml`** when using this.
 
 ## Project Structure
 
 ```
 config/                      Your config shit
-  accounts.json              Broker credentials (gitignored)
-  terminals.json             Multi-terminal config (gitignored)
-  terminals.example.json     Example config
-  accounts.json.example      Example credentials
-  requirements.txt           Python packages for the VM
-  setup.bat                  Custom boot commands
+  config.yaml                Single source of truth (gitignored)
+  config.yaml.example        Committed template — copy to config.yaml
+  setup.bat                  Custom boot commands (optional)
+  hosts                      Extra entries for the VM's hosts file (optional)
 
 scripts/                     Scripts that run inside the Windows VM
   oem-install.bat            First-boot OEM script (creates startup entry)

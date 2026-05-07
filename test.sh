@@ -11,25 +11,20 @@ fail() { echo "  FAIL  $1 — $2"; FAIL=$((FAIL + 1)); }
 skip() { echo "  SKIP  $1 — $2"; SKIP=$((SKIP + 1)); }
 
 # ── Discover config ─────────────────────────────────────────────
-if [ ! -f "${DIR}/config/terminals.json" ]; then
-    echo "ERROR: config/terminals.json not found. Need at least one terminal configured."
+if [ ! -f "${DIR}/config/config.yaml" ]; then
+    echo "ERROR: config/config.yaml not found. Need at least one terminal configured."
     exit 1
 fi
+
+CFG="${DIR}/scripts/config_helper.py"
 
 # Pick the first terminal's broker/account as test target. nginx (on
 # API_HOST_PORT, default 8888) routes /<broker>/<account>/... to the
 # right terminal — per-terminal ports are container-internal now.
-FIRST_PREFIX=$(python3 -c "
-import json
-terms = json.load(open('${DIR}/config/terminals.json'))
-if not terms:
-    raise SystemExit(1)
-t = terms[0]
-print(f\"{t['broker']}/{t['account']}\")
-" 2>/dev/null)
+FIRST_PREFIX=$(python3 "$CFG" terminals 2>/dev/null | head -n1 | awk '{print $1"/"$2}')
 
-if [ -z "$FIRST_PREFIX" ]; then
-    echo "ERROR: no terminals found in terminals.json"
+if [ -z "$FIRST_PREFIX" ] || [ "$FIRST_PREFIX" = "/" ]; then
+    echo "ERROR: no terminals found in config.yaml"
     exit 1
 fi
 
@@ -38,11 +33,9 @@ BASE="http://localhost:${API_HOST_PORT}/${FIRST_PREFIX}"
 
 # Detect auth
 AUTH=""
-if [ -f "${DIR}/config/api_token.txt" ]; then
-    TOKEN=$(tr -d '[:space:]' < "${DIR}/config/api_token.txt")
-    if [ -n "$TOKEN" ]; then
-        AUTH="-H Authorization:\ Bearer\ ${TOKEN}"
-    fi
+TOKEN=$(python3 "$CFG" api_token 2>/dev/null | tr -d '[:space:]')
+if [ -n "$TOKEN" ]; then
+    AUTH="-H Authorization:\ Bearer\ ${TOKEN}"
 fi
 
 api() {
@@ -92,11 +85,7 @@ fi
 # All terminals reachable through nginx
 echo ""
 echo "--- All Terminals ---"
-TERM_PREFIXES=$(python3 -c "
-import json
-for t in json.load(open('${DIR}/config/terminals.json')):
-    print(f\"{t['broker']}/{t['account']}\")
-")
+TERM_PREFIXES=$(python3 "$CFG" terminals 2>/dev/null | awk '{print $1"/"$2}')
 for PREFIX in $TERM_PREFIXES; do
     URL="http://localhost:${API_HOST_PORT}/${PREFIX}/ping"
     if [ -n "$TOKEN" ]; then
