@@ -1025,6 +1025,18 @@ Inside the VM's shared folder (`data/shared/logs/`):
 - `pip.log` - Python package installation
 - `api-<broker>-<account>.log` - Per-terminal API logs
 - `windows-events.log` - Tailed Windows System + Application event logs (Warning/Error/Critical level only). Catches OOM kills (`Microsoft-Windows-Resource-Exhaustion-Detector`), terminal64.exe crashes (`Application Error`), BSODs (`BugCheck`), service failures, etc.
+- `full.log` - Single narrative of all of the above with `[start]` / `[install]` / `[api:<broker>/<account>]` / `[winevt]` tags. `tail -f full.log` is the one-stop diagnostic view.
+
+### Rotation
+
+A small alpine sidecar (`log-rotator`) rotates every `*.log` in `data/shared/logs/` daily and prunes archives older than 7 days. Naming: `full.log` → `full.log.YYYYMMDD` (yesterday's date) at the next post-midnight wakeup. Idempotent, hourly check loop, no cron daemon needed.
+
+Override defaults via `docker-compose.yml`:
+
+- `RETAIN_DAYS` (default `7`) - how many days of archives to keep
+- `INTERVAL` (default `3600`) - how often to check for the day boundary, in seconds
+
+Truncation is in-place (the archive is a copy, then the original is `:>`-truncated) so the Python API's open log handle keeps writing without reopening.
 
 When shit breaks, check these first.
 

@@ -31,6 +31,23 @@ services:
     restart: unless-stopped
     stop_grace_period: 2m
 
+  # Daily log rotator. Rotates data/shared/logs/*.log to *.log.YYYYMMDD
+  # at the day boundary and prunes archives older than RETAIN_DAYS.
+  # Truncate-in-place so the Python API's open log handles keep working
+  # without reopening. Hourly check, idempotent (keyed on yesterday's
+  # archive existing).
+  log-rotator:
+    image: alpine:3.20
+    restart: unless-stopped
+    environment:
+      LOG_DIR: /logs
+      RETAIN_DAYS: "7"
+      INTERVAL: "3600"
+    volumes:
+      - ./data/shared/logs:/logs
+      - ./scripts/rotate-logs.sh:/rotate.sh:ro
+    command: ["sh", "/rotate.sh"]
+
   # nginx is the single entry point for all terminal APIs. Routes
   # /<broker>/<account>/... to mt5:<terminal_port> (per-terminal Python
   # API process inside the Windows VM, reachable via mt5 container's
