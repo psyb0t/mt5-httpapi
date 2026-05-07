@@ -159,8 +159,26 @@ for /d %%D in ("%BROKERS%\*") do (
     )
 )
 
-:: Install any new mt5setup-*.exe installers
+:: Pre-check: if every mt5setup-X.exe already has its base\terminal64.exe,
+:: skip the install loop entirely. Without this, v4.0.0's loop spuriously
+:: re-installs one broker each boot (root cause unclear — install_one's
+:: skip path logs "already installed", but :wait_done still fires once per
+:: cycle, setting NEEDS_REBOOT=1 and triggering an infinite reboot loop).
+:: Genuine first-installs still hit the loop (any installer without a
+:: matching terminal64.exe makes ALL_INSTALLED=0).
 set NEEDS_REBOOT=0
+set ALL_INSTALLED=1
+for %%F in ("%BROKERS%\mt5setup-*.exe") do (
+    set "PFNAME=%%~nF"
+    set "PBNAME=!PFNAME:mt5setup-=!"
+    if not exist "%BROKERS%\!PBNAME!\base\terminal64.exe" set ALL_INSTALLED=0
+)
+
+if !ALL_INSTALLED! equ 1 (
+    call :log "  All terminals present, skipping install loop."
+    goto :install_loop_done
+)
+
 for %%F in ("%BROKERS%\mt5setup-*.exe") do (
     set "FNAME=%%~nF"
     set "BNAME=!FNAME:mt5setup-=!"
@@ -170,6 +188,7 @@ for %%F in ("%BROKERS%\mt5setup-*.exe") do (
         exit /b 1
     )
 )
+:install_loop_done
 
 :: Verify at least one terminal exists
 set HAS_TERMINALS=0

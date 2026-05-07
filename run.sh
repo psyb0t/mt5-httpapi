@@ -26,7 +26,7 @@ if [ ! -f "${DIR}/docker-compose.yml" ]; then
 fi
 
 # Check for KVM
-if [ ! -e /dev/kvm ]; then
+if [ ! -e /dev/kvm ] && [ -z "$SKIP_KVM_CHECK" ]; then
     echo "ERROR: /dev/kvm not found. Enable virtualization in BIOS."
     exit 1
 fi
@@ -105,7 +105,7 @@ fi
 CFG="${DIR}/scripts/config_helper.py"
 python3 -c "import yaml" 2>/dev/null || pip3 install --quiet pyyaml
 
-API_PORTS=$(python3 "$CFG" ports)
+API_PORTS=$(python3 "$CFG" port_list)
 echo "Configured terminal ports (container-internal): ${API_PORTS}"
 
 # Generate fresh .env each run.

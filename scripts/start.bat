@@ -143,9 +143,15 @@ call :log "%START_LOG%" "Launched !TERM_COUNT! terminal(s), waiting 30s to initi
 timeout /t 30 /nobreak >nul
 
 :: ── Load API token from config.yaml (optional) ──────────────────
-:: NOTE: no `usebackq` — see requirements loop above for the same caveat.
+:: Tempfile path is more robust than `for /f`'s subshell+quoting dance —
+:: any python crash, pyyaml fallback install, or stdout buffering quirk
+:: showed up as "API_TOKEN empty" through the for/f path.
 set "API_TOKEN="
-for /f "delims=" %%T in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" api_token 2^>nul') do set "API_TOKEN=%%T"
+set "TOKEN_TMP=%TEMP%\mt5_api_token.txt"
+del "%TOKEN_TMP%" 2>nul
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" api_token > "%TOKEN_TMP%" 2>nul
+if exist "%TOKEN_TMP%" set /p API_TOKEN=<"%TOKEN_TMP%"
+del "%TOKEN_TMP%" 2>nul
 if defined API_TOKEN (
     call :log "%START_LOG%" "API token loaded."
 ) else (

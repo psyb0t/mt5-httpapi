@@ -56,6 +56,10 @@ def main():
         else:
             print(f"{min(ports)}-{max(ports)}")
 
+    elif cmd == "port_list":
+        ports = [t["port"] for t in (cfg.get("terminals") or [])]
+        print(" ".join(str(p) for p in ports) if ports else "6542")
+
     elif cmd == "api_token":
         print(cfg.get("api_token") or "")
 
