@@ -1024,6 +1024,7 @@ Inside the VM's shared folder (`data/shared/logs/`):
 - `start-mt5.log` - Boot sequence log (start-mt5.bat)
 - `pip.log` - Python package installation
 - `api-<broker>-<account>.log` - Per-terminal API logs
+- `windows-events.log` - Tailed Windows System + Application event logs (Warning/Error/Critical level only). Catches OOM kills (`Microsoft-Windows-Resource-Exhaustion-Detector`), terminal64.exe crashes (`Application Error`), BSODs (`BugCheck`), service failures, etc.
 
 When shit breaks, check these first.
 

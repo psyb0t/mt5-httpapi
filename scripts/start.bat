@@ -56,6 +56,14 @@ if !errorlevel! neq 0 (
 call :log "%START_LOG%" "pip done."
 call :log "%PIP_LOG%" "pip done."
 
+:: ── Start Windows event log tailer (background) ────────────────
+:: Streams Warning/Error/Critical from System + Application logs into
+:: %LOGDIR%\windows-events.log so OOM kills, BSODs, terminal64 crashes,
+:: etc. show up alongside the API logs. Single-instance via lock file
+:: inside the script.
+call :log "%START_LOG%" "Starting Windows event log tailer..."
+start "Win Event Tailer" /B powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%SCRIPTS%\event-log-tailer.ps1"
+
 :: ── Kill lingering MT5 terminals ────────────────────────────────
 call :log "%START_LOG%" "Killing lingering MT5 terminals..."
 tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul && (
