@@ -72,6 +72,23 @@ wickworks:
 
 Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
 
+### Backtest assets (optional)
+
+The `/backtest` endpoint can pull experts and parameter files from a
+host-managed pool instead of every request having to upload them:
+
+```
+assets/
+  experts/   # *.ex5 files
+  sets/      # *.set files
+```
+
+`run.sh` creates these directories on first start and `docker-compose.yml`
+mounts the tree into the VM as `/shared/assets:ro`. Reference them by
+filename (basename only — path traversal is rejected) using the `expert_name`
+and `set_name` multipart fields. Inline uploads via `expert` / `set` always
+take precedence.
+
 ## Management
 
 ```bash

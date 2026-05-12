@@ -136,6 +136,11 @@ terminals:
     account: demo
     port: 6543
     utc_offset: "3h"
+  - broker: roboforex
+    account: tester
+    port: 6544
+    utc_offset: "3h"
+    mode: backtest    # don't auto-launch terminal64.exe; reserved for /backtest jobs
 ```
 
 Per-field notes:
@@ -147,6 +152,7 @@ Per-field notes:
 - **`accounts.<broker>.<account>`** — `broker` must match the installer name (`mt5setup-<broker>.exe`) and the `broker` field in `terminals[]`. `account` must match the `account` field in `terminals[]`.
 - **`terminals[].port`** — container-internal port for this terminal's HTTP API. Only nginx and the mt5 container talk to it; not exposed to the host.
 - **`terminals[].utc_offset`** — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
+- **`terminals[].mode`** — `live` (default) or `backtest`. `live` keeps `terminal64.exe` running so the MT5 SDK stays initialized for live trading endpoints. `backtest` prepares the same portable directory but does **not** launch `terminal64.exe`, leaving the data dir free for the Strategy Tester subprocess to grab — see [Backtest](#backtest). MT5 is single-instance per portable data dir, so a backtest cannot run against a `live` terminal.
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
 
@@ -747,6 +753,147 @@ What comes back from POST/PUT/DELETE on orders and positions:
 ```
 
 `type`: 0 = buy, 1 = sell. `entry`: 0 = opening, 1 = closing. `profit` is 0 for entries, actual realized P&L for exits.
+
+### Backtest
+
+Run MT5 Strategy Tester jobs over the HTTP API. Backtest endpoints are served
+by every terminal, but they only **run** successfully on a terminal whose
+config.yaml entry has `mode: backtest`. The reason is structural: MT5 is
+single-instance per portable data directory, so if `terminal64.exe` is already
+running to back the live SDK, a Strategy Tester subprocess against the same
+directory exits silently with code `0` and produces no report. `mode: backtest`
+skips the auto-launch and the live-mode SDK init, leaving the data dir free
+for the tester. Pick the broker/account namespace whose credentials you want
+injected into the run's `[Common]` section — e.g. a dedicated
+`darwinex/tester` entry next to your live `darwinex/main`.
+
+Two-stage flow:
+
+1. `POST /backtest/build-ini` — turns a small JSON spec into a fully formed
+   `tester.ini` (no credentials, no expert path resolution). Stateless helper;
+   you can also write the INI yourself.
+2. `POST /backtest` — multipart upload of the INI plus the `.ex5` expert and
+   optional `.set` parameter file. Returns a `jobId`; poll for status; fetch
+   the HTML report and terminal log when complete.
+
+Only one tester runs at a time per API process (serialized by an internal lock);
+additional submissions queue.
+
+#### Asset sources
+
+The expert and set file can be sent inline (preferred for ad-hoc runs) or
+referenced by name from a host-managed pool:
+
+```
+assets/
+  experts/   # *.ex5 — host-managed expert advisors (mounted read-only)
+  sets/      # *.set — host-managed parameter files
+```
+
+The `docker-compose.yml` mount `./assets:/shared/assets:ro` exposes them inside
+the VM so the API can read them. Path traversal in `expert_name` / `set_name`
+is rejected.
+
+#### `POST /backtest/build-ini`
+
+Body (JSON):
+
+| Field              | Required | Notes                                              |
+| ------------------ | -------- | -------------------------------------------------- |
+| `symbol`           | yes      | e.g. `NZDJPY`                                      |
+| `timeframe`        | yes      | `M1` `M5` `M15` `H1` `D1` … (21 standard values)   |
+| `expert`           | yes      | filename ending in `.ex5`                          |
+| `fromDate`+`toDate`| one of   | `YYYY-MM-DD`                                       |
+| `lastYears`        | one of   | integer; window ends today UTC                     |
+| `lastDays`         | one of   | integer                                            |
+| `modelling`        | no       | `every-tick` `1m-ohlc` `open-prices` `real-ticks`  |
+| `latencyMs`        | no       | integer milliseconds → `ExecutionMode`             |
+| `deposit`          | no       | default `10000`                                    |
+| `currency`         | no       | default `USD`                                      |
+| `leverage`         | no       | default `100`, written as `1:N`                    |
+| `expertParameters` | no       | `.set` filename                                    |
+| `reportName`       | no       | default `backtest-report.htm`                      |
+
+Returns `text/plain` with the generated INI.
+
+#### `POST /backtest`
+
+Multipart form fields:
+
+| Field          | Required | Notes                                                          |
+| -------------- | -------- | -------------------------------------------------------------- |
+| `ini`          | yes      | INI file (file upload)                                         |
+| `expert`       | one of   | `.ex5` upload                                                  |
+| `expert_name`  | one of   | filename in `assets/experts/`                                  |
+| `set`          | no       | `.set` upload                                                  |
+| `set_name`     | no       | filename in `assets/sets/`                                     |
+
+Responds `202 Accepted` with `Retry-After` header and the queued job payload:
+
+```json
+{
+  "jobId": "b3f7…",
+  "status": "queued",
+  "broker": "darwinex",
+  "account": "live",
+  "submittedAt": "2026-05-12T10:00:00Z",
+  "statusUrl": "/backtest/b3f7…",
+  "reportUrl": "/backtest/b3f7…/report",
+  "logUrl": "/backtest/b3f7…/log",
+  "pollAfterSeconds": 60,
+  "queuePosition": 1
+}
+```
+
+`[Common]` `Login` / `Password` / `Server` in the uploaded INI are always
+overwritten with the credentials from `config.yaml` for the request's
+broker/account. The expert path is rewritten to `Uploaded\<basename>` and the
+set file is namespaced per job to avoid collisions.
+
+#### `GET /backtest/<jobId>`
+
+Status payload. `status` ∈ `queued` `running` `completed` `failed`. When
+completed, includes a `summary` object parsed from the HTML report
+(`netProfit`, `profitFactor`, `recoveryFactor`, `expectedPayoff`, `sharpeRatio`,
+`maxDrawdown`, `totalTrades`, `profitTrades`, `lossTrades`, …).
+
+#### `GET /backtest/<jobId>/report` & `/log`
+
+Stream the raw HTML report and terminal log file. `404` until the job finishes.
+
+#### Worked example
+
+```bash
+export URL=http://127.0.0.1:8888/darwinex/live
+export TOK=changeme-mt5-httpapi-token
+
+# 1. Build INI for a 5-year NZDJPY M15 open-prices run with 5 ms latency.
+curl -sS -X POST "$URL/backtest/build-ini" \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"symbol":"NZDJPY","timeframe":"M15","expert":"EA Studio NZDJPY M15 1615044595.ex5","lastYears":5,"modelling":"open-prices","latencyMs":5,"expertParameters":"ea studio nzdjpy m15 1615044595.set"}' \
+  > tester.ini
+
+# 2. Submit using a host-managed expert + set already sitting in assets/.
+JOB=$(curl -sS -X POST "$URL/backtest" \
+  -H "Authorization: Bearer $TOK" \
+  -F "ini=@tester.ini" \
+  -F "expert_name=EA Studio NZDJPY M15 1615044595.ex5" \
+  -F "set_name=ea studio nzdjpy m15 1615044595.set" \
+  | jq -r .jobId)
+
+# 3. Poll until done.
+while :; do
+  STATUS=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB" | jq -r .status)
+  echo "$STATUS"; [[ "$STATUS" == completed || "$STATUS" == failed ]] && break
+  sleep 30
+done
+
+# 4. Fetch the report.
+curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB/report" -o report.htm
+```
+
+If the API is restarted while a backtest is running, the orphaned job is marked
+`failed` (`API restarted before completion`) on the next startup.
 
 ## Examples
 

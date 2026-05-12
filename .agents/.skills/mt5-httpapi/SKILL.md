@@ -274,6 +274,162 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=
 
 Deal fields: `type` (0=buy, 1=sell), `entry` (0=opening, 1=closing), `profit` (0 for entries, realized P&L for exits).
 
+### Backtest
+
+Run MT5 Strategy Tester via the API. Two-stage workflow: build the INI from a
+JSON spec, then submit it together with the `.ex5` (and optional `.set`) for
+async execution. Endpoints exist on every terminal but only run on a
+`mode: backtest` terminal in `config.yaml` — MT5 is single-instance per
+portable data dir, so a tester subprocess collides with a `mode: live`
+terminal that already owns the directory and exits silently. The broker/account
+in the URL determines which credentials are injected into the run's `[Common]`
+section. Only one tester runs at a time per API process; extra submissions
+queue.
+
+The expert and set file can be uploaded inline OR referenced by name from a
+host-managed pool mounted at `assets/experts/*.ex5` and `assets/sets/*.set`.
+
+```bash
+# 1. Build INI: NZDJPY M15, last 5 years, open prices only, 5 ms latency.
+curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  $MT5_API_URL/backtest/build-ini \
+  -d '{
+    "symbol": "NZDJPY",
+    "timeframe": "M15",
+    "expert": "EA Studio NZDJPY M15 1615044595.ex5",
+    "lastYears": 5,
+    "modelling": "open-prices",
+    "latencyMs": 5,
+    "expertParameters": "ea studio nzdjpy m15 1615044595.set"
+  }' > tester.ini
+
+# 2. Submit. Use uploads OR host-managed asset names — here, both are host-managed.
+JOB=$(curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  $MT5_API_URL/backtest \
+  -F "ini=@tester.ini" \
+  -F "expert_name=EA Studio NZDJPY M15 1615044595.ex5" \
+  -F "set_name=ea studio nzdjpy m15 1615044595.set" \
+  | jq -r .jobId)
+
+# 3. Poll. Status is queued → running → completed (or failed).
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB
+
+# 4. Fetch the report HTML and the terminal log.
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB/report -o report.htm
+curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB/log    -o run.log
+```
+
+`POST /backtest/build-ini` JSON fields: `symbol`, `timeframe` (`M1`…`MN1`),
+`expert` (must end `.ex5`), and exactly one of `fromDate`+`toDate`,
+`lastYears`, or `lastDays`. Optional: `modelling` (`every-tick` `1m-ohlc`
+`open-prices` `real-ticks`), `latencyMs`, `deposit` (10000), `currency`
+(`USD`), `leverage` (100, written as `1:N`), `expertParameters` (`.set`),
+`reportName` (`backtest-report.htm`).
+
+`POST /backtest` multipart fields: `ini` (required), one of `expert` or
+`expert_name`, optional `set` or `set_name`. Returns `202` with `jobId`,
+`statusUrl`, `reportUrl`, `logUrl`, `pollAfterSeconds`, `queuePosition`. The
+INI's `[Common]` `Login`/`Password`/`Server` are always overwritten with the
+URL-selected account's credentials. Path traversal in `*_name` is rejected.
+
+`GET /backtest/<jobId>` returns the job state. When `status: completed`, the
+payload includes a `summary` parsed from the HTML (`netProfit`, `profitFactor`,
+`recoveryFactor`, `expectedPayoff`, `sharpeRatio`, `maxDrawdown`,
+`totalTrades`, `profitTrades`, `lossTrades`, …). Jobs left running when the
+API restarts are marked `failed` on the next startup.
+
+### Real Backtest Runbook For Agents
+
+When the user asks for a real backtest run, do not stop at a built INI or a
+`202 Accepted` submit response. The task is only complete after one of these is
+true:
+
+- the job reaches `completed`, the report/log are downloaded, and the requested
+  summary fields are returned
+- a request fails and you report the exact endpoint, HTTP status, and response
+  body
+- the job reaches `failed` and you report the final status payload exactly
+
+Before submitting a backtest that references host-managed files:
+
+1. Verify the requested filenames exist on disk exactly as named under
+   `assets/experts/` and `assets/sets/`.
+2. Verify `GET $MT5_API_URL/ping` returns backtest mode on the target terminal.
+   For a real tester run, expect `{"status":"ok","mode":"backtest"}`.
+3. If the user specifies a concrete date window, prefer explicit UTC
+   `fromDate`/`toDate` and do not also send `lastYears` or `lastDays`.
+4. If auth is needed and the repo owns the token, read it from `config/config.yaml`
+   instead of guessing or waiting for an env var to appear.
+
+Execution guidance:
+
+- Prefer one shell script or one tightly scoped command sequence that performs
+  verify -> ping -> build INI -> submit -> poll -> download artifacts. This
+  reduces uncertainty from partially completed attempts.
+- Persist the local artifacts in a dedicated output directory:
+  `tester.ini`, `status.json`, `report.html` (or `.htm`), and `run.log`.
+- Treat `queued` and `running` as normal intermediate states. Report the job ID
+  and latest status while polling.
+- If no `jobId` has been captured yet, there is no confirmed backtest in
+  progress. Do not claim the server is still working without that evidence.
+- Poll `GET /backtest/<jobId>` using `pollAfterSeconds` from the submit/status
+  payload when available. If the user explicitly requests a cadence, follow it.
+- On any non-2xx HTTP response, stop immediately and show:
+  endpoint, HTTP status, and raw response body.
+- On `status: failed`, stop immediately and show the full final status payload.
+
+Completion guidance:
+
+- Download both `reportUrl` and `logUrl` before declaring success.
+- Return the requested summary fields directly from the final status payload's
+  `summary` object.
+- Include the local artifact paths so the user can inspect the exact report and
+  terminal log.
+
+Example agent-oriented flow:
+
+```bash
+# 0. Verify host-managed assets exactly as named.
+test -f "assets/experts/EA.ex5"
+test -f "assets/sets/EA.set"
+
+# 1. Health check the target backtest terminal.
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  "$MT5_API_URL/ping"
+
+# 2. Build the INI from an explicit UTC window.
+curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$MT5_API_URL/backtest/build-ini" \
+  -d '{
+    "symbol": "GBPCAD",
+    "timeframe": "M15",
+    "expert": "EA.ex5",
+    "fromDate": "2021-05-11",
+    "toDate": "2026-05-11",
+    "modelling": "open-prices",
+    "latencyMs": 5,
+    "deposit": 1000,
+    "currency": "USD"
+  }' > tester.ini
+
+# 3. Submit and capture the job ID.
+JOB=$(curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  "$MT5_API_URL/backtest" \
+  -F "ini=@tester.ini" \
+  -F "expert_name=EA.ex5" \
+  -F "set_name=EA.set" | jq -r .jobId)
+
+# 4. Poll until completed or failed, then download artifacts.
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  "$MT5_API_URL/backtest/$JOB"
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  "$MT5_API_URL/backtest/$JOB/report" -o report.html
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  "$MT5_API_URL/backtest/$JOB/log" -o run.log
+```
+
 ## Position Sizing
 
 ```
