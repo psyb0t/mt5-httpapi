@@ -47,7 +47,7 @@ call :log "%START_LOG%" "install.bat done."
 :: Install base deps first (pyyaml required for config_helper.py below).
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
-"%PYDIR%\python.exe" -m pip install --quiet pyyaml MetaTrader5 flask waitress flask-compress >> "%PIP_LOG%" 2>&1
+"%PYDIR%\python.exe" -m pip install --quiet pyyaml MetaTrader5 flask waitress flask-compress psutil >> "%PIP_LOG%" 2>&1
 if !errorlevel! neq 0 (
     call :log "%START_LOG%" "ERROR: pip install (base) failed (exit code !errorlevel!), aborting."
     call :log "%PIP_LOG%" "ERROR: pip install (base) failed"
@@ -182,10 +182,12 @@ goto status_loop
 
 :: ══════════════════════════════════════════════════════════════════
 :launch_terminal
-:: %1=broker %2=account %3=port %4=utc_offset (ignored here)
+:: %1=broker %2=account %3=port %4=utc_offset %5=mode (live|backtest)
 set "LT_BROKER=%~1"
 set "LT_ACCOUNT=%~2"
 set "LT_PORT=%~3"
+set "LT_MODE=%~5"
+if "!LT_MODE!"=="" set "LT_MODE=live"
 set "LT_BASEDIR=%BROKERS%\!LT_BROKER!\base"
 set "LT_DIR=%BROKERS%\!LT_BROKER!\!LT_ACCOUNT!"
 
@@ -214,6 +216,11 @@ set "LT_LOGFILE=!LT_DIR!\logs\!LT_LOGDATE!.log"
 set LT_LOGSIZE=0
 if exist "!LT_LOGFILE!" (
     for %%A in ("!LT_LOGFILE!") do set LT_LOGSIZE=%%~zA
+)
+
+if /i "!LT_MODE!"=="backtest" (
+    call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT! mode=backtest -- portable dir prepared, terminal NOT launched (tester will spawn it on demand)."
+    exit /b 0
 )
 
 call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!) [log offset !LT_LOGSIZE!]"
@@ -245,10 +252,12 @@ set "LA_BROKER=%~1"
 set "LA_ACCOUNT=%~2"
 set "LA_PORT=%~3"
 set "LA_OFFSET=%~4"
+set "LA_MODE=%~5"
 if "!LA_OFFSET!"=="" set "LA_OFFSET=0"
+if "!LA_MODE!"=="" set "LA_MODE=live"
 
-call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT! (utc_offset=!LA_OFFSET!)"
-start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN! !LA_OFFSET!"
+call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT! (utc_offset=!LA_OFFSET! mode=!LA_MODE!)"
+start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

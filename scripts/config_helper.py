@@ -45,7 +45,10 @@ def main():
         for t in cfg.get("terminals") or []:
             utc = t.get("utc_offset")
             utc = "0" if utc is None else str(utc).replace(" ", "")
-            print(t["broker"], t["account"], t["port"], utc)
+            mode = (t.get("mode") or "live").strip().lower() or "live"
+            if mode not in ("live", "backtest"):
+                mode = "live"
+            print(t["broker"], t["account"], t["port"], utc, mode)
 
     elif cmd == "ports":
         ports = [t["port"] for t in (cfg.get("terminals") or [])]

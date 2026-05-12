@@ -10,6 +10,7 @@ PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
 CONFIG_YAML = os.path.join(BASE_DIR, "config", "config.yaml")
 BROKERS_DIR = os.path.join(BASE_DIR, "terminals")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 
 def load_yaml_config():
@@ -47,6 +48,15 @@ def _parse_args():
              "time disguised as unix UTC; this offset normalizes them to real "
              "UTC on the wire. Negative values are allowed for west-of-UTC "
              "brokers.",
+    )
+    parser.add_argument(
+        "--mode",
+        default=None,
+        choices=["live", "backtest"],
+        help="Terminal role. 'live' (default) initializes the MT5 SDK and "
+             "runs the monitor; 'backtest' skips both so this process can "
+             "spawn terminal64.exe /portable subprocesses against the same "
+             "data dir without hitting MT5's single-instance lock.",
     )
     args, _ = parser.parse_known_args()
     return args
@@ -110,8 +120,9 @@ def load_terminal_config():
             "account": t.get("account", ""),
             "port": t.get("port"),
             "utc_offset": t.get("utc_offset", "0"),
+            "mode": (t.get("mode") or "live"),
         }
-    return {"broker": "default", "account": ""}
+    return {"broker": "default", "account": "", "mode": "live"}
 
 
 _args = _parse_args()
@@ -124,6 +135,10 @@ API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
 UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
 UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)
 UTC_OFFSET_HOURS = UTC_OFFSET_SECONDS / 3600.0
+_MODE_RAW = (_args.mode or _terminal_config.get("mode") or os.environ.get("MT5_MODE") or "live")
+MODE = str(_MODE_RAW).strip().lower() or "live"
+if MODE not in ("live", "backtest"):
+    MODE = "live"
 
 # Wickworks TA sidecar — reachable only from the mt5 container's net namespace
 # (compose: network_mode: "service:mt5", no published ports). From inside the
@@ -156,6 +171,7 @@ INI_FILE = os.path.join(TERMINAL_DIR, "mt5start.ini")
 IDENTITY = f"{BROKER}/{ACCOUNT}" if ACCOUNT else BROKER
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FULL_LOG = os.path.join(LOG_DIR, "full.log")
+BACKTEST_JOB_DIR = os.path.join(LOG_DIR, "backtest-jobs")
 
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,

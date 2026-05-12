@@ -16,6 +16,7 @@ services:
       - ./data/storage:/storage
       - ./data/oem:/oem
       - ./data/shared:/shared
+      - ./assets:/shared/assets:ro
       - ./data/win.iso:/boot.iso
     deploy:
       resources:

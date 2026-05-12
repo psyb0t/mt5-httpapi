@@ -5,7 +5,8 @@ import time
 
 from waitress import serve
 
-from mt5api.config import ACCOUNT, BROKER, HOST, PORT
+from mt5api.backtest import jobs as backtest_jobs
+from mt5api.config import ACCOUNT, BROKER, HOST, MODE, PORT
 from mt5api.logger import log
 from mt5api.monitor import start_monitor
 from mt5api.mt5client import (
@@ -64,29 +65,40 @@ def _handle_signal(sig, _frame):
 
 
 def main():
-    log.info("Starting — broker=%s account=%s port=%d", BROKER, ACCOUNT, PORT)
+    log.info("Starting — broker=%s account=%s port=%d mode=%s", BROKER, ACCOUNT, PORT, MODE)
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    try:
-        with session():
-            connected = init_mt5()
-    except Exception as e:
-        log.warning("Startup init session failed: %s", e)
-        connected = False
-
-    if connected:
-        log.info("MT5 connected.")
-    else:
-        log.warning(
-            "MT5 not ready yet, retrying every %ds in background...",
-            RETRY_INTERVAL,
+    if MODE == "backtest":
+        log.info(
+            "mode=backtest — skipping MT5 SDK init and live health monitor "
+            "so terminal64.exe /portable can be spawned by the tester "
+            "without hitting MT5's single-instance lock on this data dir."
         )
-        t = threading.Thread(target=_background_init, daemon=True)
-        t.start()
+    else:
+        try:
+            with session():
+                connected = init_mt5()
+        except Exception as e:
+            log.warning("Startup init session failed: %s", e)
+            connected = False
 
-    start_monitor()
+        if connected:
+            log.info("MT5 connected.")
+        else:
+            log.warning(
+                "MT5 not ready yet, retrying every %ds in background...",
+                RETRY_INTERVAL,
+            )
+            t = threading.Thread(target=_background_init, daemon=True)
+            t.start()
+
+        start_monitor()
+
+    swept = backtest_jobs.sweep_orphans()
+    if swept:
+        log.warning("Backtest sweep marked %d orphaned job(s) as failed.", swept)
 
     log.info(
         "HTTP API listening on %s:%d (waitress, threads=%d, conn_limit=%d, max_queue_depth=%d)",

@@ -43,12 +43,19 @@ accounts:
 # utc_offset: broker wall-clock offset from real UTC.
 #   Accepts hours ("3"), duration strings ("3h30m", "-2h"), or "0".
 #   MT5 disguises broker local time as UTC; this corrects it on the wire.
+# mode: "live" (default) keeps terminal64.exe running for live SDK use.
+#   "backtest" prepares the portable dir but does NOT launch terminal64.exe,
+#   freeing the data dir so the tester can spawn it via /portable /config:.
+#   (MT5 is single-instance per portable data dir — a live terminal locks
+#   the dir and any second terminal64.exe exits silently with code 0.)
 terminals:
   - broker: ftmo
     account: tenkchallenge
     port: 5001
     utc_offset: "0"
+    mode: live
   - broker: roboforex
     account: main
     port: 5002
     utc_offset: "3"
+    mode: backtest

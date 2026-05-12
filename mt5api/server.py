@@ -3,6 +3,7 @@ import time
 
 from flask import Flask, abort, g, request
 from flask_compress import Compress
+from mt5api.backtest import handler as backtest_handler
 from mt5api.config import API_TOKEN
 from mt5api.handlers import account, history, orders, positions, symbols, terminal
 from mt5api.logger import log
@@ -92,3 +93,10 @@ app.delete("/orders/<int:ticket>")(orders.cancel_order)
 # ── History ──────────────────────────────────────────────────────
 app.get("/history/orders")(history.get_orders)
 app.get("/history/deals")(history.get_deals)
+
+# ── Backtest ─────────────────────────────────────────────────────
+app.post("/backtest/build-ini")(backtest_handler.build_ini_route)
+app.post("/backtest")(backtest_handler.run_backtest)
+app.get("/backtest/<job_id>")(backtest_handler.get_status)
+app.get("/backtest/<job_id>/report")(backtest_handler.get_report)
+app.get("/backtest/<job_id>/log")(backtest_handler.get_log)
