@@ -158,6 +158,9 @@ def sweep_orphans() -> int:
 _NUM_RE = re.compile(r"-?\d[\d\s,.]*")
 
 _LABEL_TO_KEY = {
+    "Bars": "bars",
+    "Ticks": "ticks",
+    "Symbols": "symbols",
     "Total Net Profit": "netProfit",
     "Gross Profit": "grossProfit",
     "Gross Loss": "grossLoss",
@@ -214,3 +217,16 @@ def parse_report_summary(html: str) -> dict:
         if m:
             summary[key] = _to_number(m.group(0))
     return summary
+
+
+def is_empty_backtest_summary(summary: dict) -> bool:
+    """Return True when MT5 produced a semantically empty report.
+
+    A valid no-trade backtest can still have non-zero Bars/Ticks/Symbols, so only
+    treat the report as empty when MT5 reports zero market data across all three.
+    """
+    return (
+        summary.get("bars") == 0
+        and summary.get("ticks") == 0
+        and summary.get("symbols") == 0
+    )

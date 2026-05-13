@@ -121,6 +121,8 @@ def main():
             "http {\n"
             "    server {\n"
             "        listen 80;\n"
+            "        client_max_body_size 25m;\n"
+            "        client_body_timeout 120s;\n"
             + "\n".join(locs) + "\n"
             "        location / { return 404 \"no route\\n\"; }\n"
             "    }\n"

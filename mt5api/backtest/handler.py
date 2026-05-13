@@ -29,18 +29,21 @@ from flask import Response, abort, jsonify, request, send_file
 from mt5api.backtest import ini_builder, jobs
 from mt5api.config import (
     ACCOUNT,
-    ASSETS_DIR,
-    BACKTEST_JOB_DIR,
     BROKER,
     LOG_DIR,
     TERMINAL_DIR,
     TERMINAL_PATH,
+    SYMBOL_SUFFIX,
+    SYMBOL_SUFFIX_CONFIGURED,
+    ASSETS_DIR,
+    BACKTEST_TIMEOUT_SECONDS,
+    BACKTEST_JOB_DIR,
     load_yaml_config,
+    parse_duration_to_seconds,
 )
 from mt5api.logger import log
 
 RUN_LOCK = threading.Lock()
-BACKTEST_TIMEOUT_SECONDS = 60 * 60 * 6  # 6 hours
 DIAGNOSTIC_TAIL_CHARS = 4000
 
 
@@ -148,6 +151,30 @@ def _normalize_set(parser, set_filename):
         parser["Tester"].pop("ExpertParameters", None)
 
 
+def _normalize_symbol(parser):
+    tester = parser["Tester"]
+    symbol = tester.get("Symbol", "").strip()
+    if not symbol:
+        return
+
+    suffix = SYMBOL_SUFFIX if SYMBOL_SUFFIX_CONFIGURED else ""
+    if not suffix:
+        return
+
+    if symbol.endswith(suffix):
+        return
+
+    remapped = f"{symbol}{suffix}"
+    tester["Symbol"] = remapped
+    log.info(
+        "backtest symbol remap broker=%s account=%s %s -> %s",
+        BROKER,
+        ACCOUNT,
+        symbol,
+        remapped,
+    )
+
+
 def _serialize_ini(parser):
     buffer = io.StringIO()
     parser.write(buffer, space_around_delimiters=False)
@@ -178,6 +205,34 @@ def _tail(text, limit=DIAGNOSTIC_TAIL_CHARS):
     return text if len(text) <= limit else text[-limit:]
 
 
+def _tail_terminal_log(lines=20):
+    log_dir = os.path.join(TERMINAL_DIR, "logs")
+    if not os.path.isdir(log_dir):
+        return ""
+
+    try:
+        candidates = sorted(
+            file_name for file_name in os.listdir(log_dir) if file_name.endswith(".log")
+        )
+    except OSError:
+        return ""
+
+    if not candidates:
+        return ""
+
+    latest_path = os.path.join(log_dir, candidates[-1])
+    try:
+        with open(latest_path, "r", encoding="utf-16-le", errors="replace") as handle:
+            content = handle.read()
+    except OSError:
+        return ""
+
+    tail_lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if not tail_lines:
+        return ""
+    return "\n".join(tail_lines[-lines:])
+
+
 # ── Submit route ────────────────────────────────────────────────────
 
 
@@ -195,6 +250,12 @@ def run_backtest():
         return jsonify({"error": "INI must be UTF-8 text"}), 400
 
     try:
+        timeout_value = (request.form.get("timeout") or "").strip()
+        timeout_seconds = (
+            parse_duration_to_seconds(timeout_value)
+            if timeout_value
+            else BACKTEST_TIMEOUT_SECONDS
+        )
         expert_filename, expert_bytes = _read_submission(
             request.files.get("expert"),
             request.form.get("expert_name", ""),
@@ -214,6 +275,7 @@ def run_backtest():
         parser = _parse_ini(ini_text)
         creds = _load_account_config()
         _override_credentials(parser, creds)
+        _normalize_symbol(parser)
         _normalize_expert(parser, expert_filename)
         report_name = _ensure_report_path(parser)
     except ValueError as exc:
@@ -268,6 +330,7 @@ def run_backtest():
         "exitCode": None,
         "error": None,
         "summary": None,
+        "timeoutSeconds": timeout_seconds,
     }
     jobs.store_job(job)
 
@@ -340,7 +403,7 @@ def _execute_job(job_id):
                         cwd=TERMINAL_DIR,
                         stdout=log_handle,
                         stderr=subprocess.STDOUT,
-                        timeout=BACKTEST_TIMEOUT_SECONDS,
+                        timeout=job["timeoutSeconds"],
                         check=False,
                     )
                 except subprocess.TimeoutExpired:
@@ -348,7 +411,7 @@ def _execute_job(job_id):
                     jobs.update_job(
                         job_id,
                         status="failed",
-                        error=f"Backtest timed out after {BACKTEST_TIMEOUT_SECONDS}s",
+                        error=f"Backtest timed out after {job['timeoutSeconds']}s",
                         durationSeconds=duration,
                         finishedAt=jobs.now_iso(),
                     )
@@ -374,10 +437,14 @@ def _execute_job(job_id):
 
     duration = round(time.time() - start_time, 3)
     if result.returncode != 0:
+        terminal_tail = _tail(_tail_terminal_log())
+        error = f"terminal64.exe exited with code {result.returncode}"
+        if terminal_tail:
+            error = f"{error} | terminal log tail: {terminal_tail}"
         jobs.update_job(
             job_id,
             status="failed",
-            error=f"terminal64.exe exited with code {result.returncode}",
+            error=error,
             exitCode=result.returncode,
             durationSeconds=duration,
             finishedAt=jobs.now_iso(),
@@ -397,6 +464,21 @@ def _execute_job(job_id):
 
     report_html = _read_text_best_effort(job["reportPath"])
     summary = jobs.parse_report_summary(report_html)
+    if jobs.is_empty_backtest_summary(summary):
+        terminal_tail = _tail(_tail_terminal_log())
+        error = "Backtest produced empty report (Bars=0, Ticks=0, Symbols=0)"
+        if terminal_tail:
+            error = f"{error} | terminal log tail: {terminal_tail}"
+        jobs.update_job(
+            job_id,
+            status="failed",
+            error=error,
+            exitCode=result.returncode,
+            durationSeconds=duration,
+            finishedAt=jobs.now_iso(),
+            summary=summary,
+        )
+        return
     jobs.update_job(
         job_id,
         status="completed",

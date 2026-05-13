@@ -11,6 +11,7 @@ BASE_DIR = os.path.dirname(PACKAGE_DIR)
 CONFIG_YAML = os.path.join(BASE_DIR, "config", "config.yaml")
 BROKERS_DIR = os.path.join(BASE_DIR, "terminals")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+DEFAULT_BACKTEST_TIMEOUT = "6h"
 
 
 def load_yaml_config():
@@ -113,6 +114,20 @@ def load_terminal_config():
     """
     cfg = load_yaml_config()
     terms = cfg.get("terminals") or []
+    if _args.broker or _args.account:
+        for t in terms:
+            if t.get("broker") != (_args.broker or t.get("broker")):
+                continue
+            if t.get("account", "") != (_args.account or t.get("account", "")):
+                continue
+            return {
+                "broker": t.get("broker", "default"),
+                "account": t.get("account", ""),
+                "port": t.get("port"),
+                "utc_offset": t.get("utc_offset", "0"),
+                "mode": (t.get("mode") or "live"),
+                "symbol_suffix": t.get("symbol_suffix"),
+            }
     if terms:
         t = terms[0]
         return {
@@ -121,6 +136,7 @@ def load_terminal_config():
             "port": t.get("port"),
             "utc_offset": t.get("utc_offset", "0"),
             "mode": (t.get("mode") or "live"),
+            "symbol_suffix": t.get("symbol_suffix"),
         }
     return {"broker": "default", "account": "", "mode": "live"}
 
@@ -135,10 +151,22 @@ API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
 UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
 UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)
 UTC_OFFSET_HOURS = UTC_OFFSET_SECONDS / 3600.0
+_BACKTEST_TIMEOUT_ENV = os.environ.get("BACKTEST_TIMEOUT")
+_BACKTEST_TIMEOUT_CONFIG = load_yaml_config().get("backtest_timeout")
+BACKTEST_TIMEOUT_RAW = (
+    _BACKTEST_TIMEOUT_ENV
+    if _BACKTEST_TIMEOUT_ENV not in (None, "")
+    else (_BACKTEST_TIMEOUT_CONFIG if _BACKTEST_TIMEOUT_CONFIG not in (None, "") else DEFAULT_BACKTEST_TIMEOUT)
+)
+BACKTEST_TIMEOUT = BACKTEST_TIMEOUT_RAW
+BACKTEST_TIMEOUT_SECONDS = parse_duration_to_seconds(BACKTEST_TIMEOUT)
 _MODE_RAW = (_args.mode or _terminal_config.get("mode") or os.environ.get("MT5_MODE") or "live")
 MODE = str(_MODE_RAW).strip().lower() or "live"
 if MODE not in ("live", "backtest"):
     MODE = "live"
+SYMBOL_SUFFIX_CONFIGURED = "symbol_suffix" in _terminal_config
+_SYMBOL_SUFFIX_RAW = _terminal_config.get("symbol_suffix")
+SYMBOL_SUFFIX = "" if _SYMBOL_SUFFIX_RAW is None else str(_SYMBOL_SUFFIX_RAW)
 
 # Wickworks TA sidecar — reachable only from the mt5 container's net namespace
 # (compose: network_mode: "service:mt5", no published ports). From inside the

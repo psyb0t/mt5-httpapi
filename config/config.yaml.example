@@ -9,6 +9,10 @@ api_token: ""
 # before sustained-load crashes wedge the MT5 SDK pipe. 0 = disabled.
 reboot_interval: 30
 
+# Default Strategy Tester timeout. Accepts the same duration strings as
+# utc_offset ("6h", "30m", "3h30m"). POST /backtest can override per job.
+backtest_timeout: "6h"
+
 # Wickworks TA sidecar — used by POST /symbols/<symbol>/rates/ta.
 # Default URL points at the dockurr gateway IP so the Windows VM can reach
 # the wickworks container that shares mt5's net namespace. Override only
@@ -48,14 +52,18 @@ accounts:
 #   freeing the data dir so the tester can spawn it via /portable /config:.
 #   (MT5 is single-instance per portable data dir — a live terminal locks
 #   the dir and any second terminal64.exe exits silently with code 0.)
+# symbol_suffix: optional broker-specific suffix appended to [Tester].Symbol
+#   when missing. Examples: "p", ".p", "-mini". Use "" for no suffix.
 terminals:
   - broker: ftmo
     account: tenkchallenge
     port: 5001
     utc_offset: "0"
     mode: live
+    symbol_suffix: ""
   - broker: roboforex
     account: main
     port: 5002
     utc_offset: "3"
     mode: backtest
+    symbol_suffix: ".r"

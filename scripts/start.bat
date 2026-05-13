@@ -105,7 +105,9 @@ if !errorlevel! neq 0 (
 :: Configured via config.yaml reboot_interval (minutes). 0 = disabled.
 :: Default: 30. /f on schtasks is idempotent -- overwrites existing task.
 set "REBOOT_INTERVAL=30"
-for /f "delims=" %%V in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_interval 2^>nul') do set "REBOOT_INTERVAL=%%V"
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_interval > "%SHARED%\mt5_ri.tmp" 2>nul
+for /f "usebackq delims=" %%V in ("%SHARED%\mt5_ri.tmp") do set "REBOOT_INTERVAL=%%V"
+del "%SHARED%\mt5_ri.tmp" 2>nul
 if "!REBOOT_INTERVAL!"=="0" (
     schtasks /delete /tn "MT5AutoReboot" /f >nul 2>&1
     call :log "%START_LOG%" "Auto-reboot disabled (reboot_interval=0)."

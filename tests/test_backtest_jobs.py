@@ -62,6 +62,7 @@ def test_summary_parser_returns_all_keys_for_empty_html():
         "recoveryFactor", "expectedPayoff", "sharpeRatio",
         "maxDrawdown", "maxDrawdownAbsolute", "maxEquityDrawdown",
         "totalTrades", "totalDeals", "profitTrades", "lossTrades",
+        "bars", "ticks", "symbols",
     }
     assert set(summary.keys()) == expected_keys
     assert all(v is None for v in summary.values())
