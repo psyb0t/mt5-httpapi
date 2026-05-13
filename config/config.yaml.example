@@ -9,6 +9,14 @@ api_token: ""
 # before sustained-load crashes wedge the MT5 SDK pipe. 0 = disabled.
 reboot_interval: 30
 
+# Wickworks TA sidecar — used by POST /symbols/<symbol>/rates/ta.
+# Default URL points at the dockurr gateway IP so the Windows VM can reach
+# the wickworks container that shares mt5's net namespace. Override only
+# if you change the docker-compose networking.
+wickworks:
+  url: "http://20.20.20.1:8000/"
+  timeout: "30s"
+
 tailscale:
   auth_key: ""       # leave empty to disable the tailscale sidecar entirely
   login_server: ""   # Headscale login server URL; empty = Tailscale cloud

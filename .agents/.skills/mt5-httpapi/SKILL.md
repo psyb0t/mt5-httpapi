@@ -72,10 +72,14 @@ Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`, `br
 
 ### Broker time vs real UTC
 
-MT5 returns timestamps in the **broker server's wall-clock time** disguised as unix integers (RoboForex/FTMO = UTC+3, TeleTrade = UTC+2, etc.). The API normalizes this when `utc_offset` is set per terminal in `terminals.json`:
+MT5 returns timestamps in the **broker server's wall-clock time** disguised as unix integers (RoboForex/FTMO = UTC+3, TeleTrade = UTC+2, etc.). The API normalizes this when `utc_offset` is set per terminal in `config/config.yaml`:
 
-```json
-{ "broker": "roboforex", "account": "main", "port": 6542, "utc_offset": "3h" }
+```yaml
+terminals:
+  - broker: roboforex
+    account: main
+    port: 6542
+    utc_offset: "3h"
 ```
 
 (`port` is container-internal — only nginx and the mt5 container talk to it.)
@@ -116,6 +120,14 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD/tick
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date +%s)&count=-100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
+
+# Rates + technical analysis (wickworks sidecar). Same query params as /rates;
+# JSON body is the wickworks indicator spec. Returns {symbol, timeframe, bars, ta}.
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"indicators":{"rsi":true,"macd":true,"bbands":{"type":"bbands","params":{"length":20}}},"recentBars":50}' \
+  "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
+
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&count=500"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&to=$(date +%s)"

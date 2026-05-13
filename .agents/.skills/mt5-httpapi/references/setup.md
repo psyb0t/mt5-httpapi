@@ -12,12 +12,8 @@
 ```bash
 git clone https://github.com/psyb0t/mt5-httpapi
 cd mt5-httpapi
-cp config/accounts.json.example config/accounts.json
-cp config/terminals.json.example config/terminals.json
-# Edit both files with your broker credentials
-
-# Generate an API token
-openssl rand -hex 32 > config/api_token.txt
+cp config/config.yaml.example config/config.yaml
+# Edit config.yaml with your broker credentials, api_token, terminals
 ```
 
 Drop your broker's MT5 installer in `mt5installers/`, named `mt5setup-<broker>.exe`, then:
@@ -30,52 +26,42 @@ First run downloads tiny11 (~4 GB), installs Windows (~10 min), then sets up Pyt
 
 ## Configuration
 
-### `config/accounts.json`
+### `config/config.yaml`
 
-Broker credentials organized by broker, then account name:
+Single file for everything: bearer token, broker credentials, terminals, and optional sidecar settings (tailscale, wickworks). Copy from `config.yaml.example` and fill in.
 
-```json
-{
-  "roboforex": {
-    "main": {
-      "login": 12345678,
-      "password": "your_password",
-      "server": "RoboForex-Pro"
-    }
-  }
-}
+```yaml
+# Bearer token for API auth. Empty string = no auth.
+api_token: "your-token-here"   # or: $(openssl rand -hex 32)
+
+# Broker credentials — accounts.<broker>.<account_name>
+accounts:
+  roboforex:
+    main:
+      login: 12345678
+      server: "RoboForex-Pro"
+      password: "your_password"
+
+# Terminal instances — one API process per entry.
+# port is container-internal (only nginx and the mt5 container talk to it).
+# utc_offset normalizes broker wall-clock timestamps to real UTC on the wire.
+terminals:
+  - broker: roboforex
+    account: main
+    port: 6542
+    utc_offset: "3h"
+
+# Optional: wickworks TA sidecar (used by POST /symbols/<symbol>/rates/ta)
+# Default URL is the dockurr gateway IP — leave as-is unless you change
+# the docker-compose networking.
+wickworks:
+  url: "http://20.20.20.1:8000/"
+  timeout: "30s"
 ```
 
-### `config/terminals.json`
+`broker` matches both the `mt5setup-<broker>.exe` installer name and the key in `accounts`. Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't conflict.
 
-Required. Defines which terminals to run — each gets its own MT5 instance and a container-internal API port (only nginx and the mt5 container talk to it):
-
-```json
-[
-  {
-    "broker": "roboforex",
-    "account": "main",
-    "port": 6542
-  },
-  {
-    "broker": "roboforex",
-    "account": "demo",
-    "port": 6543
-  }
-]
-```
-
-`broker` matches both the `mt5setup-<broker>.exe` installer name and the key in `accounts.json`. Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't conflict.
-
-### `config/api_token.txt`
-
-Plain text file containing the bearer token used to authenticate all API requests. Generate one:
-
-```bash
-openssl rand -hex 32 > config/api_token.txt
-```
-
-`run.sh` reads this file and writes `API_TOKEN` to `.env` for docker-compose. The Windows VM reads it from the shared folder and passes it to each API process via `--token`. If the file is missing, the API runs without auth (not recommended).
+`api_token` empty = open to anyone on the network. If set, all requests require `Authorization: Bearer <token>` and return `401` without it.
 
 ## Ports
 
@@ -84,7 +70,7 @@ openssl rand -hex 32 > config/api_token.txt
 | 8006 | noVNC (VM desktop) — override with `NOVNC_PORT` |
 | 8888 | HTTP API entry (nginx, all terminals) — override with `API_HOST_PORT`, bound to `127.0.0.1` |
 
-Per-terminal ports from `terminals.json` stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
+Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
 
 ## Management
 

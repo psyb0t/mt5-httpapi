@@ -1,10 +1,19 @@
+import json
 from datetime import datetime, timezone
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from flask import jsonify, request
 
 import MetaTrader5 as mt5
 
-from mt5api.config import TIMEFRAME_MAP, TIMEFRAME_SECONDS
+from mt5api.config import (
+    TIMEFRAME_MAP,
+    TIMEFRAME_SECONDS,
+    WICKWORKS_TIMEOUT_SECONDS,
+    WICKWORKS_URL,
+)
+from mt5api.logger import log
 from mt5api.mt5client import (
     broker_to_utc_ms,
     broker_to_utc_seconds,
@@ -113,18 +122,35 @@ def get_tick(symbol):
     return jsonify(to_dict(tick))
 
 
-@with_mt5
-def get_rates(symbol):
-    if not ensure_initialized():
-        return jsonify({"error": "MT5 not initialized"}), 503
+def _rates_to_dicts(rates):
+    return [{
+        "time": broker_to_utc_seconds(r[0]),
+        "open": float(r[1]), "high": float(r[2]),
+        "low": float(r[3]), "close": float(r[4]), "tick_volume": int(r[5]),
+        "spread": int(r[6]), "real_volume": int(r[7]),
+    } for r in rates]
 
+
+def _fetch_rates(symbol):
+    """Resolve a rates query from request.args. Returns (rates, tf_str, err).
+
+    On success: (rates_list_or_empty, tf_str, None) — rates may be an empty
+    list when the query is well-formed but produced no bars.
+    On error:   (None, "", (response, status)) — caller returns it as-is.
+
+    MT5 must already be initialized; caller is responsible for the @with_mt5
+    wrapper and the ensure_initialized() check.
+    """
     tf_str = request.args.get("timeframe", "M1").upper()
     timeframe = TIMEFRAME_MAP.get(tf_str)
     if timeframe is None:
-        return jsonify({"error": f"Invalid timeframe: {tf_str}. Use: {list(TIMEFRAME_MAP.keys())}"}), 400
+        return None, "", (
+            jsonify({"error": f"Invalid timeframe: {tf_str}. Use: {list(TIMEFRAME_MAP.keys())}"}),
+            400,
+        )
 
     if not _ensure_symbol(symbol):
-        return jsonify({"error": f"Symbol {symbol} not found"}), 404
+        return None, "", (jsonify({"error": f"Symbol {symbol} not found"}), 404)
 
     date_from = request.args.get("from")
     date_to = request.args.get("to")
@@ -133,41 +159,35 @@ def get_rates(symbol):
     # Three modes: range (from+to), anchor+count (from+count or count alone),
     # or default (count=100 from now). count and to are mutually exclusive.
     if date_to is not None and count_arg is not None:
-        return jsonify({"error": "use either 'count' or 'to', not both"}), 400
+        return None, "", (jsonify({"error": "use either 'count' or 'to', not both"}), 400)
     if date_to is not None and date_from is None:
-        return jsonify({"error": "'to' requires 'from'"}), 400
+        return None, "", (jsonify({"error": "'to' requires 'from'"}), 400)
 
     if date_to is not None:
         from_utc = _parse_anchor(date_from)
         to_utc = _parse_anchor(date_to)
         if from_utc is None or to_utc is None:
-            return jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+            return None, "", (
+                jsonify({"error": "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}),
+                400,
+            )
         df = utc_seconds_to_broker_dt(from_utc)
         dt = utc_seconds_to_broker_dt(to_utc)
         rates = m(mt5.copy_rates_range, symbol, timeframe, df, dt)
-        if rates is None or len(rates) == 0:
-            return jsonify([])
-        return jsonify([{
-            "time": broker_to_utc_seconds(r[0]),
-            "open": float(r[1]), "high": float(r[2]),
-            "low": float(r[3]), "close": float(r[4]), "tick_volume": int(r[5]),
-            "spread": int(r[6]), "real_volume": int(r[7]),
-        } for r in rates])
+        return (list(rates) if rates is not None else []), tf_str, None
 
     count = int(count_arg) if count_arg else 100
-
-    # count > 0: N bars forward from `from` (inclusive)
-    # count < 0: |N| bars backward ending at `from` (inclusive)
-    # from omitted: anchor is now
     if count == 0:
-        return jsonify([])
-
+        return [], tf_str, None
     abs_count = abs(count)
 
     if date_from:
         anchor_utc = _parse_anchor(date_from)
         if anchor_utc is None:
-            return jsonify({"error": "'from' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}), 400
+            return None, "", (
+                jsonify({"error": "'from' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"}),
+                400,
+            )
         df = utc_seconds_to_broker_dt(anchor_utc)
         if count > 0:
             # Forward from anchor (inclusive): MT5's copy_rates_from goes
@@ -197,15 +217,114 @@ def get_rates(symbol):
         # No `from` — last N bars from current bar
         rates = m(mt5.copy_rates_from_pos, symbol, timeframe, 0, abs_count)
 
-    if rates is None or len(rates) == 0:
-        return jsonify([])
+    return (list(rates) if rates is not None else []), tf_str, None
 
-    return jsonify([{
+
+@with_mt5
+def get_rates(symbol):
+    if not ensure_initialized():
+        return jsonify({"error": "MT5 not initialized"}), 503
+    rates, _, err = _fetch_rates(symbol)
+    if err is not None:
+        return err
+    return jsonify(_rates_to_dicts(rates))
+
+
+def _bars_to_wickworks(rates):
+    """MT5 bar shape -> wickworks bar shape (camelCase volume fields)."""
+    return [{
         "time": broker_to_utc_seconds(r[0]),
         "open": float(r[1]), "high": float(r[2]),
-        "low": float(r[3]), "close": float(r[4]), "tick_volume": int(r[5]),
-        "spread": int(r[6]), "real_volume": int(r[7]),
-    } for r in rates])
+        "low": float(r[3]), "close": float(r[4]),
+        "tickVolume": int(r[5]),
+        "realVolume": int(r[7]),
+    } for r in rates]
+
+
+def _call_wickworks(payload):
+    """POST to wickworks and return (parsed_body, status_code, err_str).
+
+    Network/decode errors -> (None, 502, msg). HTTP errors from wickworks
+    pass through the original status + parsed body so the caller can mirror
+    them to the API consumer.
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        WICKWORKS_URL,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=WICKWORKS_TIMEOUT_SECONDS) as resp:
+            body = resp.read()
+            try:
+                return json.loads(body.decode("utf-8")), resp.status, None
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return None, 502, f"wickworks returned non-JSON: {exc}"
+    except urllib_error.HTTPError as exc:
+        raw = exc.read() if hasattr(exc, "read") else b""
+        try:
+            parsed = json.loads(raw.decode("utf-8")) if raw else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            parsed = {"error": raw.decode("utf-8", errors="replace")[:500]}
+        return parsed, exc.code, None
+    except (urllib_error.URLError, OSError, TimeoutError) as exc:
+        return None, 502, f"wickworks unreachable: {exc}"
+
+
+@with_mt5
+def get_rates_ta(symbol):
+    """Same query params as GET /symbols/<symbol>/rates; body is a wickworks
+    indicators spec. Returns the bars and the TA analysis as siblings.
+    """
+    if not ensure_initialized():
+        return jsonify({"error": "MT5 not initialized"}), 503
+
+    body = request.get_json(silent=True) or {}
+    indicators = body.get("indicators")
+    if not isinstance(indicators, dict) or not indicators:
+        return jsonify({"error": "request body must include a non-empty 'indicators' object"}), 400
+
+    rates, tf_str, err = _fetch_rates(symbol)
+    if err is not None:
+        return err
+
+    bars_out = _rates_to_dicts(rates)
+    if not rates:
+        return jsonify({
+            "symbol": symbol,
+            "timeframe": tf_str,
+            "bars": [],
+            "ta": None,
+        })
+
+    wickworks_payload = {
+        "symbol": symbol,
+        "timeframe": tf_str,
+        "bars": _bars_to_wickworks(rates),
+        "indicators": indicators,
+    }
+    if "recentBars" in body:
+        wickworks_payload["recentBars"] = body["recentBars"]
+
+    ta_body, status, conn_err = _call_wickworks(wickworks_payload)
+    if conn_err is not None:
+        log.warning("wickworks call failed: %s", conn_err)
+        return jsonify({"error": conn_err}), 502
+    if status >= 400:
+        return jsonify({
+            "error": "wickworks rejected request",
+            "wickworksStatus": status,
+            "wickworksBody": ta_body,
+        }), 502
+
+    return jsonify({
+        "symbol": symbol,
+        "timeframe": tf_str,
+        "bars": bars_out,
+        "ta": ta_body,
+    })
 
 
 @with_mt5

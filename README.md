@@ -276,6 +276,7 @@ If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps throug
 | GET    | `/symbols/:symbol`       | Symbol details                            |
 | GET    | `/symbols/:symbol/tick`  | Latest tick                               |
 | GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`, `?timeframe=H1&from=<unix>&count=-100`, or `?timeframe=H1&from=<unix>&to=<unix>`) |
+| POST   | `/symbols/:symbol/rates/ta` | Same query params as `/rates`; JSON body `{indicators: {...}, recentBars?: N}`. Returns bars + wickworks TA analysis. |
 | GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100`, `?from=<unix>&count=-100`, or `?from=<unix>&to=<unix>`)                                            |
 
 **GET `/symbols`** — array of symbol names:
@@ -418,6 +419,35 @@ Pick the mode that fits: `count` when you want exactly N bars and don't care abo
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
 Symbols are auto-selected into MarketWatch on first access — backfilling rarely-traded instruments works without a manual select step.
+
+**POST `/symbols/:symbol/rates/ta`** — fetches candles exactly like `GET /symbols/:symbol/rates` (same query params: `timeframe`, `count`, `from`, `to`), then forwards them to the [wickworks](https://github.com/psyb0t/docker-wickworks) TA sidecar for indicator analysis. Returns both as siblings:
+
+```json
+{
+  "symbol": "EURUSD",
+  "timeframe": "H1",
+  "bars": [ { "time": 1771146000, "open": 1.0832, "high": 1.0840, "low": 1.0828, "close": 1.0835, "tick_volume": 1234, "spread": 1, "real_volume": 0 } ],
+  "ta": { "indicators": { "rsi": [ ... ], "macd": { ... } }, "...": "wickworks response" }
+}
+```
+
+JSON body:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `indicators` | yes | Non-empty object — wickworks indicator spec (`{rsi: true, macd: {type: "macd", params: {...}}, ...}`). See wickworks docs for the full catalog. |
+| `recentBars` | no | Tail the response to the last N bars (wickworks computes indicators over all bars but returns only the tail). |
+
+The sidecar runs inside the mt5 container's net namespace with no published ports — only the mt5 process (and by extension this API) can reach it. Configure via `wickworks:` in `config.yaml` (defaults to `http://20.20.20.1:8000/`, the dockurr gateway IP seen from inside the Windows VM).
+
+Example:
+
+```bash
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"indicators":{"rsi":true,"macd":true},"recentBars":50}' \
+     "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
+```
 
 **GET `/symbols/:symbol/ticks`** — array of ticks:
 
@@ -828,7 +858,11 @@ Helper: `mt5httpapi.IsNotInitialized(err)` shortcuts the common 503 retry case.
 
 ## Technical Analysis
 
-The API gives you raw market data — it doesn't do TA. If you need indicators, grab the candles from here and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
+Two options:
+
+**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, divergences, dozens more). The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](#symbols).
+
+**Client-side** — grab the raw candles with `GET /rates` and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 
 ```bash
 cd examples/python

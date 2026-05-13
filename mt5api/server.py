@@ -73,6 +73,7 @@ app.get("/symbols")(symbols.list_symbols)
 app.get("/symbols/<symbol>")(symbols.get_symbol)
 app.get("/symbols/<symbol>/tick")(symbols.get_tick)
 app.get("/symbols/<symbol>/rates")(symbols.get_rates)
+app.post("/symbols/<symbol>/rates/ta")(symbols.get_rates_ta)
 app.get("/symbols/<symbol>/ticks")(symbols.get_ticks)
 
 # ── Positions ────────────────────────────────────────────────────

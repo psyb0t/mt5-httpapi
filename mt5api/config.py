@@ -125,6 +125,20 @@ UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.enviro
 UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)
 UTC_OFFSET_HOURS = UTC_OFFSET_SECONDS / 3600.0
 
+# Wickworks TA sidecar — reachable only from the mt5 container's net namespace
+# (compose: network_mode: "service:mt5", no published ports). From inside the
+# Windows VM, the dockurr/windows gateway address 20.20.20.1 routes to the
+# shared netns where wickworks binds 0.0.0.0:8000.
+_wickworks_cfg = (load_yaml_config().get("wickworks") or {})
+WICKWORKS_URL = (
+    os.environ.get("WICKWORKS_URL")
+    or _wickworks_cfg.get("url")
+    or "http://20.20.20.1:8000/"
+)
+WICKWORKS_TIMEOUT_SECONDS = parse_duration_to_seconds(
+    os.environ.get("WICKWORKS_TIMEOUT") or _wickworks_cfg.get("timeout") or "30s"
+) or 30
+
 # Resolve TERMINAL_PATH: account-specific copy first, then base install
 _candidates = []
 if ACCOUNT:

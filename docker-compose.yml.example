@@ -31,6 +31,21 @@ services:
     restart: unless-stopped
     stop_grace_period: 2m
 
+  # Wickworks TA sidecar — shares mt5's net namespace so it's reachable
+  # ONLY from the mt5 container (and from the Windows VM via the dockurr
+  # gateway 20.20.20.1:8000). No ports published; nothing else on the
+  # docker network can talk to it.
+  wickworks:
+    image: psyb0t/wickworks:v0.2.0
+    restart: unless-stopped
+    network_mode: "service:mt5"
+    environment:
+      LOG_LEVEL: INFO
+      MAX_BARS: "5000"
+      MIN_BARS: "50"
+    depends_on:
+      - mt5
+
   # Daily log rotator. Rotates data/shared/logs/*.log to *.log.YYYYMMDD
   # at the day boundary and prunes archives older than RETAIN_DAYS.
   # Truncate-in-place so the Python API's open log handles keep working
