@@ -1,6 +1,6 @@
 ---
 name: mt5-httpapi
-description: MetaTrader 5 trading via REST API — get market data, place/modify/close orders, manage positions, pull history. Use when you need to interact with forex/crypto/stock markets through MT5.
+description: MetaTrader 5 trading + server-side technical analysis via REST API. Get OHLC/ticks, place/modify/close orders, manage positions, pull history — AND in a single POST get bars enriched with RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, divergences, and dozens more indicators. Use when you need market data, trading, or technical analysis against forex/crypto/stock markets through MT5.
 compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL env var must be set. MT5_API_TOKEN is optional (only needed if the server has auth configured).
 metadata:
   author: psyb0t
@@ -10,6 +10,8 @@ metadata:
 # mt5-httpapi
 
 REST API on top of MetaTrader 5 running inside a Windows VM. Talk to it with plain HTTP/JSON — no MT5 libraries, no Windows, no bullshit. Just curl and go.
+
+**One-stop technical analysis.** Skip the client-side TA stack entirely. `POST /symbols/<symbol>/rates/ta` with an indicator spec → get OHLC bars + analyzed indicator series back in a single call. RSI, MACD, Bollinger, ADX, ATR, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, liquidity, divergences (regular + hidden), session anchors, dozens more — all computed server-side by the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar that ships with this stack. See the [Technical Analysis](#technical-analysis) section.
 
 For installation and setup, see [references/setup.md](references/setup.md).
 
@@ -120,14 +122,6 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/symbols/EURUSD/tick
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H4&count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date +%s)&count=-100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
-
-# Rates + technical analysis (wickworks sidecar). Same query params as /rates;
-# JSON body is the wickworks indicator spec. Returns {symbol, timeframe, bars, ta}.
-curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"indicators":{"rsi":true,"macd":true,"bbands":{"type":"bbands","params":{"length":20}}},"recentBars":50}' \
-  "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
-
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?count=100"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&count=500"
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/ticks?from=$(date -d '1 hour ago' +%s)&to=$(date +%s)"
@@ -146,6 +140,60 @@ Capped at `terminal_info().maxbars` rows per request (default 100k — see `GET 
 Tick `flags` param: `ALL` (default), `INFO` (bid/ask only — ~10× smaller), `TRADE` (trades only).
 
 Key symbol fields: `bid`, `ask`, `digits`, `point`, `trade_contract_size`, `trade_tick_value`, `trade_tick_size`, `volume_min`, `volume_max`, `volume_step`, `spread`, `swap_long`, `swap_short`, `trade_stops_level`, `trade_mode`.
+
+### Technical Analysis
+
+`POST /symbols/<symbol>/rates/ta` — same query params as `/rates` (timeframe, count, from, to), JSON body carries the [wickworks](https://github.com/psyb0t/docker-wickworks) indicator spec. Response is `{symbol, timeframe, bars, ta}` — OHLC bars *and* analyzed indicator series in one round-trip. No client-side TA library needed.
+
+Full catalog with all indicator types, params, output shapes, and SMC primitives is documented at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks#available-indicators).
+
+```bash
+# RSI + MACD + Bollinger Bands on the last 200 H1 bars; tail TA results to last 50.
+curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "indicators": {
+      "rsi": true,
+      "macd": true,
+      "bbands": {"type": "bbands", "params": {"length": 20, "stddev": 2}}
+    },
+    "recentBars": 50
+  }' \
+  "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
+```
+
+Response shape (keys under `ta` mirror the keys in your `indicators` object):
+
+```json
+{
+  "symbol": "EURUSD",
+  "timeframe": "H1",
+  "bars": [ { "time": ..., "open": ..., "high": ..., "low": ..., "close": ..., "tick_volume": ... } ],
+  "ta": {
+    "rsi": [null, null, ..., 54.2, 56.1, 58.7],
+    "macd": { "macd": [...], "signal": [...], "hist": [...] },
+    "bbands": { "upper": [...], "middle": [...], "lower": [...] }
+  }
+}
+```
+
+**Indicator catalog** (request as `"name": true` for defaults, or `"name": {"type": "...", "params": {...}}` for tuning):
+
+- **Trend**: `sma`, `ema`, `wma`, `dema`, `tema`, `hma`, `kama`, `zlema`, `t3`, `frama`, `vidya`, `mama`, `slope`, `donchian`, `ichimoku`
+- **Momentum**: `rsi`, `stoch`, `stochrsi`, `macd`, `cci`, `willr`, `roc`, `mom`, `tsi`, `trix`, `uo`, `fisher`
+- **Directional**: `adx`, `aroon`, `supertrend`
+- **Volatility**: `atr`, `natr`, `bbands`, `keltner`, `squeeze`
+- **Volume**: `vwap` (anchored: session/day/week), `vwma`, `obv`, `ad`, `adosc`, `cmf`, `kvo`, `mfi`
+- **SMC / structure**: `orderBlocks`, `fvg` (fair value gaps), `bosChoch`, `swingPoints`, `srLevels`, `liquidity`, `retracements`, `sessions`, `prevHL`
+- **Divergences**: `divergence` (regular + hidden, signal-tagged with stable IDs)
+- **Summaries**: `position`, `slopeSummary`, `momentumSummary`, `volumeRegime`, `rangeSummary`
+
+Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 bars). If you under-feed it, the server returns HTTP 502 wrapping a wickworks 400 with a per-indicator deficit list — so you see exactly which indicators need more bars, not just a generic "insufficient bars" error.
+
+**Pre-flight tips:**
+- Match `count` to your slowest indicator's lookback × 2 (e.g. `sma(200)` → fetch at least 400 bars for warmup + signal).
+- Use `recentBars` to limit the tail of the TA response when you only care about the latest few bars; wickworks still computes over the full series so the latest values are correct.
+- Combine with `/symbols/:symbol/rates` (raw OHLC) when you need TA for charting separate from trade-decision logic.
 
 ### Orders
 

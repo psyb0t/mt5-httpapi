@@ -4,6 +4,42 @@ MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with a REST AP
 
 Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process inside the VM, and an always-on nginx sidecar fronts them all behind a single host port at `http://localhost:8888/<broker>/<account>/...`. Run two FTMO challenges at once, or mix brokers - whatever you need.
 
+**Built-in technical analysis.** One `POST /symbols/<symbol>/rates/ta` returns OHLC bars *and* the indicators you asked for — RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, divergences, dozens more — in a single round-trip. The [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar lives inside the mt5 container's net namespace, so nothing outside the API can reach it. No client-side TA stack, no pandas pipeline, no `pip install` dance — just ask for the indicators you need and get them back with the bars. See [Technical Analysis](#technical-analysis).
+
+## Table of Contents
+
+- [Disclaimer](#-disclaimer)
+- [Recommended Brokers](#recommended-brokers)
+- [Requirements](#requirements)
+  - [When 512M is NOT enough](#when-512m-is-not-enough)
+  - [Real-world usage](#real-world-usage-4-terminals-on-2-vcpus--512m-ram-light-load-only)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+  - [`config/config.yaml`](#configconfigyaml)
+  - [`config/setup.bat`](#configsetupbat)
+  - [`mt5installers/`](#mt5installers)
+- [API](#api)
+  - [Health](#health)
+  - [Terminal](#terminal)
+  - [Account](#account)
+  - [Broker time vs real UTC](#broker-time-vs-real-utc)
+  - [Symbols](#symbols) — list, info, ticks, **rates**, **rates + TA**
+  - [Positions](#positions)
+  - [Orders](#orders)
+  - [Trade Result](#trade-result)
+  - [History](#history)
+- [Examples](#examples)
+- [Go Client](#go-client)
+- [Technical Analysis](#technical-analysis) — server-side via wickworks, or client-side with pandas-ta
+- [Make Targets](#make-targets)
+- [Ports](#ports)
+- [Tailscale (optional)](#tailscale-optional)
+- [Cloudflare Tunnel (optional)](#cloudflare-tunnel-optional)
+- [Project Structure](#project-structure)
+- [Concurrency & Backpressure](#concurrency--backpressure)
+- [Logs](#logs)
+- [License](#license)
+
 ## ⚠️ Disclaimer
 
 This is a tool for automating trades. If you blow your account, that's on you. Use demo accounts first, test your shit, and don't come crying when your algo buys the top.
@@ -435,7 +471,7 @@ JSON body:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `indicators` | yes | Non-empty object — wickworks indicator spec (`{rsi: true, macd: {type: "macd", params: {...}}, ...}`). See wickworks docs for the full catalog. |
+| `indicators` | yes | Non-empty object — wickworks indicator spec (`{rsi: true, macd: {type: "macd", params: {...}}, ...}`). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
 | `recentBars` | no | Tail the response to the last N bars (wickworks computes indicators over all bars but returns only the tail). |
 
 The sidecar runs inside the mt5 container's net namespace with no published ports — only the mt5 process (and by extension this API) can reach it. Configure via `wickworks:` in `config.yaml` (defaults to `http://20.20.20.1:8000/`, the dockurr gateway IP seen from inside the Windows VM).
@@ -860,7 +896,7 @@ Helper: `mt5httpapi.IsNotInitialized(err)` shortcuts the common 503 retry case.
 
 Two options:
 
-**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, divergences, dozens more). The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](#symbols).
+**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, divergences, dozens more). The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
 
 **Client-side** — grab the raw candles with `GET /rates` and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 
