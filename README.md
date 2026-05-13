@@ -831,7 +831,7 @@ func main() {
 | `LastError` | `GET /error` |
 | `GetTerminal` / `InitTerminal` / `ShutdownTerminal` / `RestartTerminal` | `/terminal[/...]` |
 | `GetAccount` | `GET /account` |
-| `ListSymbols` / `GetSymbol` / `GetTick` / `GetRates` / `GetTicks` | `/symbols[/...]` |
+| `ListSymbols` / `GetSymbol` / `GetTick` / `GetRates` / `GetRatesTA` / `GetTicks` | `/symbols[/...]` |
 | `ListOrders` / `CreateOrder` / `GetOrder` / `UpdateOrder` / `CancelOrder` | `/orders[/...]` |
 | `ListPositions` / `GetPosition` / `UpdatePosition` / `ClosePosition` | `/positions[/...]` |
 | `HistoryOrders` / `HistoryDeals` | `/history/...` |

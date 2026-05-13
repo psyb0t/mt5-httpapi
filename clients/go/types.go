@@ -1,5 +1,7 @@
 package mt5httpapi
 
+import "encoding/json"
+
 type APIError struct {
 	Error string `json:"error"`
 }
@@ -323,6 +325,31 @@ type RatesQuery struct {
 	Count     int   // positive = forward, negative = backward from From; ignored when To > 0
 	From      int64 // unix seconds, 0 = unset (defaults to now in count mode)
 	To        int64 // unix seconds, 0 = unset; when > 0 selects range mode
+}
+
+// RatesTAQuery selects bars exactly like RatesQuery and forwards them to the
+// wickworks TA sidecar for indicator analysis. Indicators is the wickworks
+// indicator spec — a map of output-name -> (bool | {type, params}). See the
+// wickworks docs for the available indicator catalog. RecentBars (optional)
+// tails the response to the last N bars; 0 leaves it unset (wickworks
+// default is 10).
+type RatesTAQuery struct {
+	Timeframe   string
+	Count       int
+	From        int64
+	To          int64
+	Indicators  map[string]any
+	RecentBars  int
+}
+
+// RatesTAResponse mirrors POST /symbols/:symbol/rates/ta. TA is the raw
+// wickworks payload — left as RawMessage so callers can decode the shape
+// they asked for (e.g. number[] for rsi, {macd, signal, hist} for macd).
+type RatesTAResponse struct {
+	Symbol    string          `json:"symbol"`
+	Timeframe string          `json:"timeframe"`
+	Bars      []Rate          `json:"bars"`
+	TA        json.RawMessage `json:"ta"`
 }
 
 // TicksQuery: same two modes as RatesQuery — anchor+count, or from+to range.

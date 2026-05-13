@@ -79,6 +79,53 @@ func (c *Client) GetRates(
 	return out, nil
 }
 
+func (c *Client) GetRatesTA(
+	ctx context.Context,
+	symbol string,
+	q RatesTAQuery,
+) (*RatesTAResponse, error) {
+	if len(q.Indicators) == 0 {
+		return nil, ctxerrors.New("rates/ta query: indicators must not be empty")
+	}
+
+	if q.To > 0 && q.Count != 0 {
+		return nil, ctxerrors.New("rates/ta query: count and to are mutually exclusive")
+	}
+
+	if q.To > 0 && q.From <= 0 {
+		return nil, ctxerrors.New("rates/ta query: to requires from")
+	}
+
+	query := url.Values{}
+	if q.Timeframe != "" {
+		query.Set("timeframe", q.Timeframe)
+	}
+
+	if q.Count != 0 {
+		query.Set("count", strconv.Itoa(q.Count))
+	}
+
+	if q.From > 0 {
+		query.Set("from", strconv.FormatInt(q.From, 10))
+	}
+
+	if q.To > 0 {
+		query.Set("to", strconv.FormatInt(q.To, 10))
+	}
+
+	body := map[string]any{"indicators": q.Indicators}
+	if q.RecentBars > 0 {
+		body["recentBars"] = q.RecentBars
+	}
+
+	out := &RatesTAResponse{}
+	if err := c.do(ctx, http.MethodPost, "/symbols/"+symbol+"/rates/ta", query, body, out); err != nil {
+		return nil, ctxerrors.Wrapf(err, "get rates+ta %s", symbol)
+	}
+
+	return out, nil
+}
+
 func (c *Client) GetTicks(
 	ctx context.Context,
 	symbol string,
