@@ -1,6 +1,6 @@
 ---
 name: mt5-httpapi
-description: MetaTrader 5 trading + server-side technical analysis via REST API. Get OHLC/ticks, place/modify/close orders, manage positions, pull history — AND in a single POST get bars enriched with RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, divergences, and dozens more indicators. Use when you need market data, trading, or technical analysis against forex/crypto/stock markets through MT5.
+description: MetaTrader 5 trading + server-side technical analysis via REST API. Get OHLC/ticks, place/modify/close orders, manage positions, pull history — AND in a single POST get bars enriched with RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, and dozens more indicators. Use when you need market data, trading, or technical analysis against forex/crypto/stock markets through MT5.
 compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL env var must be set. MT5_API_TOKEN is optional (only needed if the server has auth configured).
 metadata:
   author: psyb0t
@@ -11,7 +11,7 @@ metadata:
 
 REST API on top of MetaTrader 5 running inside a Windows VM. Talk to it with plain HTTP/JSON — no MT5 libraries, no Windows, no bullshit. Just curl and go.
 
-**One-stop technical analysis.** Skip the client-side TA stack entirely. `POST /symbols/<symbol>/rates/ta` with an indicator spec → get OHLC bars + analyzed indicator series back in a single call. RSI, MACD, Bollinger, ADX, ATR, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, liquidity, divergences (regular + hidden), session anchors, dozens more — all computed server-side by the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar that ships with this stack. See the [Technical Analysis](#technical-analysis) section.
+**One-stop technical analysis.** Skip the client-side TA stack entirely. `POST /symbols/<symbol>/rates/ta` with an indicator spec → get OHLC bars + analyzed indicator series back in a single call. RSI, MACD, Bollinger, ADX, ATR, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, liquidity, session anchors, dozens more — all computed server-side by the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar that ships with this stack. Primitives only — wickworks returns raw indicator series and structural facts (e.g. "order block formed at this bar", "price closed past this swing"), never interpretive signals like divergences or crossover events. Build those in the consumer. See the [Technical Analysis](#technical-analysis) section.
 
 For installation and setup, see [references/setup.md](references/setup.md).
 
@@ -155,7 +155,7 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
     "indicators": {
       "rsi": true,
       "macd": true,
-      "bbands": {"type": "bbands", "params": {"length": 20, "stddev": 2}}
+      "bbands": {"length": 20, "std": 2}
     },
     "recentBars": 50
   }' \
@@ -177,22 +177,26 @@ Response shape (keys under `ta` mirror the keys in your `indicators` object):
 }
 ```
 
-**Indicator catalog** (request as `"name": true` for defaults, or `"name": {"type": "...", "params": {...}}` for tuning):
+**Indicator catalog** (request as `"name": true` for defaults, or `"name": {"length": 21, ...}` for tuning — params are flat on the object; add `"type": "<name>"` only when the output key differs from the indicator name, e.g. running two RSIs as `rsi14` + `rsi21`):
 
-- **Trend**: `sma`, `ema`, `wma`, `dema`, `tema`, `hma`, `kama`, `zlema`, `t3`, `frama`, `vidya`, `mama`, `slope`, `donchian`, `ichimoku`
-- **Momentum**: `rsi`, `stoch`, `stochrsi`, `macd`, `cci`, `willr`, `roc`, `mom`, `tsi`, `trix`, `uo`, `fisher`
-- **Directional**: `adx`, `aroon`, `supertrend`
-- **Volatility**: `atr`, `natr`, `bbands`, `keltner`, `squeeze`
-- **Volume**: `vwap` (anchored: session/day/week), `vwma`, `obv`, `ad`, `adosc`, `cmf`, `kvo`, `mfi`
-- **SMC / structure**: `orderBlocks`, `fvg` (fair value gaps), `bosChoch`, `swingPoints`, `srLevels`, `liquidity`, `retracements`, `sessions`, `prevHL`
-- **Divergences**: `divergence` (regular + hidden, signal-tagged with stable IDs)
-- **Summaries**: `position`, `slopeSummary`, `momentumSummary`, `volumeRegime`, `rangeSummary`
+- **Moving averages**: `ema`, `sma`, `hma`, `wma`, `dema`, `tema`, `t3`, `kama`, `alma`, `linreg`, `jma`, `zlma`, `rma`, `fwma`, `swma`, `sinwma`, `trima`, `vwma`, `vwap` (session-anchored: `anchor` D/W/M + `sessionOffset`)
+- **Momentum oscillators**: `rsi`, `mfi`, `willr`, `cci`, `roc`, `mom`, `uo`, `stoch`, `stochrsi`, `macd`, `tsi`, `trix`, `fisher`
+- **Trend strength & cross-direction**: `adx`, `aroon`, `vortex`
+- **Volatility**: `atr`, `natr`
+- **Volume / money flow**: `obv`, `ad`, `cmf`, `adosc`, `kvo`
+- **Bands & channels**: `bbands`, `kc`, `donchian`
+- **Trailing trend signals**: `supertrend`, `psar`, `chandelierExit`, `ichimoku`
+- **Compression**: `squeeze` (Bollinger inside Keltner — state machine `on`/`off`/`no` flags)
+- **SMC primitives**: `orderBlocks`, `fvg` (alias `fvgs`), `bosChoch`, `swingLevels`, `srLevels`, `recentRange`, `liquidity`, `previousHighLow`, `sessions`, `retracements`
+- **Analysis summaries** (last-bar snapshots, shared cached pass — free if you ask for any): `price`, `levels`, `momentum`, `volume`, `position`, `slope`
+
+Wickworks is **primitives-only** as of v0.3.0 — no built-in divergence detection, no MA-cross events, no golden/death-cross tagging. Build those in the consumer over the raw series.
 
 Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 bars). If you under-feed it, the server returns HTTP 502 wrapping a wickworks 400 with a per-indicator deficit list — so you see exactly which indicators need more bars, not just a generic "insufficient bars" error.
 
 **Pre-flight tips:**
 - Match `count` to your slowest indicator's lookback × 2 (e.g. `sma(200)` → fetch at least 400 bars for warmup + signal).
-- Use `recentBars` to limit the tail of the TA response when you only care about the latest few bars; wickworks still computes over the full series so the latest values are correct.
+- `recentBars` is **inert** in wickworks v0.3.0 — accepted by the request schema but currently unused (reserved for future signal-tagged outputs). To get only the last N bars, set `count` accordingly on the rates query, or slice the response client-side.
 - Combine with `/symbols/:symbol/rates` (raw OHLC) when you need TA for charting separate from trade-decision logic.
 
 ### Orders

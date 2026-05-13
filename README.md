@@ -4,7 +4,7 @@ MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with a REST AP
 
 Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process inside the VM, and an always-on nginx sidecar fronts them all behind a single host port at `http://localhost:8888/<broker>/<account>/...`. Run two FTMO challenges at once, or mix brokers - whatever you need.
 
-**Built-in technical analysis.** One `POST /symbols/<symbol>/rates/ta` returns OHLC bars *and* the indicators you asked for — RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, divergences, dozens more — in a single round-trip. The [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar lives inside the mt5 container's net namespace, so nothing outside the API can reach it. No client-side TA stack, no pandas pipeline, no `pip install` dance — just ask for the indicators you need and get them back with the bars. See [Technical Analysis](#technical-analysis).
+**Built-in technical analysis.** One `POST /symbols/<symbol>/rates/ta` returns OHLC bars *and* the indicators you asked for — RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, dozens more — in a single round-trip. The [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar lives inside the mt5 container's net namespace, so nothing outside the API can reach it. Primitives only — raw indicator series and structural facts, no interpretive signals (build those in your consumer). No client-side TA stack, no pandas pipeline, no `pip install` dance — just ask for the indicators you need and get them back with the bars. See [Technical Analysis](#technical-analysis).
 
 ## Table of Contents
 
@@ -471,8 +471,8 @@ JSON body:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `indicators` | yes | Non-empty object — wickworks indicator spec (`{rsi: true, macd: {type: "macd", params: {...}}, ...}`). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
-| `recentBars` | no | Tail the response to the last N bars (wickworks computes indicators over all bars but returns only the tail). |
+| `indicators` | yes | Non-empty object — wickworks indicator spec. Each entry maps an output key to either `true` (run with defaults) or a flat params object (e.g. `{"length": 20, "std": 2}`); add `"type": "<name>"` only when the output key differs from the indicator name (e.g. `{"rsi21": {"type": "rsi", "length": 21}}` to run a second RSI under a custom key). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
+| `recentBars` | no | Currently **inert** in wickworks v0.3.0 — accepted by the request schema but unused (reserved for future signal-tagged outputs). To get fewer bars back, lower `count` on the query string or slice client-side. |
 
 The sidecar runs inside the mt5 container's net namespace with no published ports — only the mt5 process (and by extension this API) can reach it. Configure via `wickworks:` in `config.yaml` (defaults to `http://20.20.20.1:8000/`, the dockurr gateway IP seen from inside the Windows VM).
 
@@ -896,7 +896,7 @@ Helper: `mt5httpapi.IsNotInitialized(err)` shortcuts the common 503 retry case.
 
 Two options:
 
-**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, divergences, dozens more). The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
+**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, swing structure, S/R levels, dozens more). Primitives only — wickworks emits raw indicator series and SMC structural facts; interpretive signals (divergences, crossover events, etc.) belong in your consumer. The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
 
 **Client-side** — grab the raw candles with `GET /rates` and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 

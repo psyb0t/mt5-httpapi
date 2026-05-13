@@ -329,10 +329,12 @@ type RatesQuery struct {
 
 // RatesTAQuery selects bars exactly like RatesQuery and forwards them to the
 // wickworks TA sidecar for indicator analysis. Indicators is the wickworks
-// indicator spec — a map of output-name -> (bool | {type, params}). See the
-// wickworks docs for the available indicator catalog. RecentBars (optional)
-// tails the response to the last N bars; 0 leaves it unset (wickworks
-// default is 10).
+// indicator spec — a map of output-name -> (bool | flat-params-object). Add
+// "type": "<name>" inside the params object only when the output key differs
+// from the indicator name (e.g. running two RSIs under "rsi14" + "rsi21").
+// See the wickworks docs for the available indicator catalog. RecentBars is
+// inert in wickworks v0.3.x — accepted by the request schema but currently
+// unused; set Count appropriately or slice client-side to trim the response.
 type RatesTAQuery struct {
 	Timeframe   string
 	Count       int
