@@ -1,6 +1,6 @@
 import MetaTrader5 as mt5
 from flask import jsonify
-from mt5api.config import UTC_OFFSET_HOURS, UTC_OFFSET_SECONDS
+from mt5api.config import MODE, UTC_OFFSET_HOURS, UTC_OFFSET_SECONDS
 from mt5api.mt5client import (
     ensure_initialized,
     m,
@@ -11,7 +11,7 @@ from mt5api.mt5client import (
 
 
 def ping():
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "mode": MODE})
 
 
 @with_mt5

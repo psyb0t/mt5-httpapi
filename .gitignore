@@ -4,6 +4,12 @@ data/*
 !data/.gitkeep
 mt5installers/*
 !mt5installers/.gitkeep
+# Host-managed backtest assets — referenced by /backtest via expert_name/set_name.
+# Binaries are user-provided; only the layout (and any tracked docs) belong in git.
+assets/experts/*
+!assets/experts/.gitkeep
+assets/sets/*
+!assets/sets/.gitkeep
 config/config.yaml
 config/accounts.json
 config/terminals.json

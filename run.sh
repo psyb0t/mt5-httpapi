@@ -12,7 +12,7 @@ done
 LOG_FILE="${DIR}/run.log"
 exec > >(tee "${LOG_FILE}") 2>&1
 
-mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem"
+mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem" "${DIR}/assets/experts" "${DIR}/assets/sets"
 
 # Bootstrap docker-compose.yml from example on first run; user owns the real file.
 if [ ! -f "${DIR}/docker-compose.yml" ]; then
