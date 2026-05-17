@@ -45,7 +45,7 @@ def update_position(ticket):
         "tp": float(body.get("tp", pos.tp)),
     }
 
-    result = m(mt5.order_send, req)
+    result = m(mt5.order_send, **req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
         err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to update position: {err}"}), 500
@@ -80,7 +80,7 @@ def close_position(ticket):
         "deviation": int(body.get("deviation", 20)) if body else 20,
     }
 
-    result = m(mt5.order_send, req)
+    result = m(mt5.order_send, **req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
         err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to close position: {err}"}), 500

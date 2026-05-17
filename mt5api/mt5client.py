@@ -250,6 +250,16 @@ def with_mt5(handler):
     return wrapper
 
 
+def ensure_symbol(symbol):
+    """Make sure symbol is selected in MarketWatch. Returns True if known."""
+    info = m(mt5.symbol_info, symbol)
+    if info is None:
+        return False
+    if not info.visible:
+        m(mt5.symbol_select, symbol, True)
+    return True
+
+
 def init_mt5(login=None, password=None, server=None):
     """Initialize the MT5 connection.
 

@@ -45,11 +45,27 @@ call :log "%START_LOG%" "install.bat done."
 
 :: ── Pip install ──────────────────────────────────────────────────
 :: Install base deps first (pyyaml required for config_helper.py below).
+:: numpy<2 pin: MetaTrader5 5.0.5735 was built against numpy 1.x and breaks
+:: silently with numpy 2.x — reads still work but order_send fails immediately
+:: with (-2, 'Unnamed arguments not allowed'). Drop the pin once MetaQuotes
+:: ships a numpy-2-compatible wheel.
+::
+:: Each pip command writes to a per-call temp file so we can detect whether
+:: anything ACTUALLY got installed/upgraded (presence of "Successfully
+:: installed" in pip's output). If so, the python processes already running
+:: from the previous boot are stale → reboot to pick up the new libs.
+set "PIP_TMP=%TEMP%\mt5-pip-%RANDOM%-%RANDOM%.txt"
+set "PIP_CHANGED=0"
+
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
-"%PYDIR%\python.exe" -m pip install --quiet pyyaml MetaTrader5 flask waitress flask-compress psutil >> "%PIP_LOG%" 2>&1
-if !errorlevel! neq 0 (
-    call :log "%START_LOG%" "ERROR: pip install (base) failed (exit code !errorlevel!), aborting."
+"%PYDIR%\python.exe" -m pip install pyyaml MetaTrader5 "numpy<2" flask waitress flask-compress psutil > "%PIP_TMP%" 2>&1
+set "PIP_EC=!errorlevel!"
+type "%PIP_TMP%" >> "%PIP_LOG%"
+findstr /C:"Successfully installed" "%PIP_TMP%" >nul 2>&1 && set "PIP_CHANGED=1"
+del "%PIP_TMP%" 2>nul
+if !PIP_EC! neq 0 (
+    call :log "%START_LOG%" "ERROR: pip install (base) failed (exit code !PIP_EC!), aborting."
     call :log "%PIP_LOG%" "ERROR: pip install (base) failed"
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
@@ -59,10 +75,22 @@ if !errorlevel! neq 0 (
 :: not commands. Without usebackq, ('cmd') executes the command. This is
 :: the same pattern install.bat uses for the `ports` lookup.
 for /f "delims=" %%R in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" requirements 2^>nul') do (
-    "%PYDIR%\python.exe" -m pip install --quiet "%%R" >> "%PIP_LOG%" 2>&1
+    "%PYDIR%\python.exe" -m pip install "%%R" > "%PIP_TMP%" 2>&1
+    type "%PIP_TMP%" >> "%PIP_LOG%"
+    findstr /C:"Successfully installed" "%PIP_TMP%" >nul 2>&1 && set "PIP_CHANGED=1"
+    del "%PIP_TMP%" 2>nul
 )
 call :log "%START_LOG%" "pip done."
 call :log "%PIP_LOG%" "pip done."
+
+if "!PIP_CHANGED!"=="1" (
+    call :log "%START_LOG%" "pip changed packages -> rebooting so api_runners pick up new libs"
+    call :log "%FULL_LOG%" "[start] pip changed packages -> rebooting"
+    echo rebooting > "%SHARED%\rebooting.flag"
+    shutdown /r /t 5 /f
+    rmdir "%LOCKDIR%" 2>nul
+    exit /b 0
+)
 
 :: ── Start Windows event log tailer (background) ────────────────
 :: Streams Warning/Error/Critical from System + Application logs into

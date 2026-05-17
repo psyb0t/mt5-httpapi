@@ -130,13 +130,17 @@ if !errorlevel! neq 0 (
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
 )
-"%PYDIR%\python.exe" -m pip install MetaTrader5 pyyaml >> "%INSTALL_LOG%" 2>&1
+rem MetaTrader5 5.0.5735 was built against numpy 1.x. With numpy 2.x installed,
+rem order_send fails immediately with (-2, 'Unnamed arguments not allowed')
+rem even though read-only calls (account_info, copy_rates, etc.) keep working.
+rem Pin numpy<2 until MetaQuotes ships a wheel rebuilt for numpy 2.x.
+"%PYDIR%\python.exe" -m pip install MetaTrader5 "numpy<2" pyyaml >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
-    call :log "ERROR: Failed to install MetaTrader5 / pyyaml"
+    call :log "ERROR: Failed to install MetaTrader5 / numpy / pyyaml"
     rmdir "%LOCKDIR%" 2>nul
     exit /b 1
 )
-call :log "  MetaTrader5 + pyyaml installed."
+call :log "  MetaTrader5 + numpy<2 + pyyaml installed."
 call :log "[3/4] Done. Rebooting..."
 call :do_reboot
 exit /b 3

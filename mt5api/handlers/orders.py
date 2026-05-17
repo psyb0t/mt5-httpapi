@@ -1,11 +1,14 @@
 from flask import jsonify, request
 
+import time
+
 import MetaTrader5 as mt5
 
 from mt5api.config import ORDER_TYPE_MAP, TIME_MAP
 from mt5api.mt5client import (
     build_order_request,
     ensure_initialized,
+    ensure_symbol,
     m,
     to_dict,
     with_mt5,
@@ -39,9 +42,17 @@ def create_order():
 
     is_market = order_type in ("BUY", "SELL")
 
+    if not ensure_symbol(body["symbol"]):
+        return jsonify({"error": f"Symbol {body['symbol']} not found"}), 404
+
     if is_market and "price" not in body:
-        tick = m(mt5.symbol_info_tick, body["symbol"])
-        if tick is None:
+        tick = None
+        for _ in range(10):
+            tick = m(mt5.symbol_info_tick, body["symbol"])
+            if tick is not None and (tick.ask != 0 or tick.bid != 0):
+                break
+            time.sleep(0.2)
+        if tick is None or (tick.ask == 0 and tick.bid == 0):
             return jsonify({"error": f"Cannot get price for {body['symbol']}"}), 500
         body["price"] = tick.ask if order_type == "BUY" else tick.bid
 
@@ -51,7 +62,7 @@ def create_order():
     if err:
         return jsonify({"error": err}), 400
 
-    result = m(mt5.order_send, req)
+    result = m(mt5.order_send, **req)
     if result is None:
         err = m(mt5.last_error)
         return jsonify({"error": f"order_send failed: {err}"}), 500
@@ -91,7 +102,7 @@ def update_order(ticket):
         "sl": float(body.get("sl", order.sl)),
         "tp": float(body.get("tp", order.tp)),
         "type_time": order.type_time,
-        "expiration": order.expiration,
+        "expiration": order.time_expiration,
     }
 
     if "type_time" in body:
@@ -99,7 +110,7 @@ def update_order(ticket):
         if tt in TIME_MAP:
             req["type_time"] = TIME_MAP[tt]
 
-    result = m(mt5.order_send, req)
+    result = m(mt5.order_send, **req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
         err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to modify order: {err}"}), 500
@@ -120,7 +131,7 @@ def cancel_order(ticket):
         "order": ticket,
     }
 
-    result = m(mt5.order_send, req)
+    result = m(mt5.order_send, **req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
         err = result.comment if result else str(m(mt5.last_error))
         return jsonify({"error": f"Failed to cancel order: {err}"}), 500

@@ -6,6 +6,26 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.3.1] — 2026-05-17
+
+Critical trading-path fixes + integration test suite.
+
+### Fixed
+
+- `order_send` / `order_check` now use `**kwargs` unpacking. MetaTrader5 wheel `5.0.5735` `_core.pyd` is keyword-only for these calls — a positional dict fails in 0ms with the misleading `(-2, 'Unnamed arguments not allowed')` before any IPC to the terminal. Read-only calls were unaffected, which is why the regression hid for so long. Applies to `mt5api/handlers/orders.py` (create / update / cancel) and `mt5api/handlers/positions.py` (SL/TP modify, close).
+- `update_order` referenced the non-existent `TradeOrder.expiration` field — now uses `time_expiration`. Previously surfaced as a 500 with HTML body on `PUT /orders/<ticket>`.
+- `create_order` now waits for the first non-zero tick after auto-selecting a freshly-added symbol (10 × 0.2s). Fixes "Cannot get price" on the very first market order after a cold boot, when `symbol_select` succeeds but the tick subscription hasn't filled yet.
+
+### Added
+
+- `mt5client.ensure_symbol()` — moved out of `symbols.py` so order handlers can auto-select the symbol on every trade entry, not just on `/symbols/<s>` reads. Trade endpoints no longer require the caller to pre-warm a symbol via `/symbols/<s>/tick`.
+- `tests/real/` — live-API integration suite (pytest). 35 tests covering account, ping/terminal, symbols (info/tick/rates/ta/ticks), orders (list/create/get/update/cancel), positions (list/get/update/close), history (orders/deals). Magic-number-tagged so it can run against a live demo account in parallel with manual trading without disturbing it.
+- `scripts/start.bat`: auto-reboot when pip installs or upgrades a package on boot. Detects "Successfully installed" in pip output and triggers `shutdown /r` so already-running `api_runner` processes don't keep stale imports.
+
+### Infra
+
+- Pin `numpy<2` in `scripts/install.bat` and `scripts/start.bat`. The MetaTrader5 wheel is built against numpy 1.x ABI; defensive measure even though the `unnamed arguments` regression was caused by the kwargs issue, not the numpy ABI.
+
 ## [v4.3.0] — 2026-05-14
 
 **MT5 Strategy Tester HTTP API + per-terminal live/backtest mode.** Lands PR #2 from `algotradingspace/backtester` (Marin). A tester-mode terminal now runs alongside live terminals on the same Docker / Windows VM deployment, behind the same `/<broker>/<account>/...` nginx routing.
@@ -231,6 +251,7 @@ Multi-terminal support on a single machine — multiple broker/account terminals
 
 Initial public release. MT5 terminal running inside a `dockurr/windows` VM, exposed via a Python HTTP API for live trading and market data.
 
+[v4.3.1]: https://github.com/psyb0t/mt5-httpapi/releases/tag/v4.3.1
 [v4.3.0]: https://github.com/psyb0t/mt5-httpapi/releases/tag/v4.3.0
 [v4.2.2]: https://github.com/psyb0t/mt5-httpapi/releases/tag/v4.2.2
 [v4.2.1]: https://github.com/psyb0t/mt5-httpapi/releases/tag/v4.2.1

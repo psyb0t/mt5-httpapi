@@ -18,6 +18,7 @@ from mt5api.mt5client import (
     broker_to_utc_ms,
     broker_to_utc_seconds,
     ensure_initialized,
+    ensure_symbol,
     m,
     to_dict,
     utc_seconds_to_broker_dt,
@@ -79,16 +80,6 @@ def _parse_anchor(s):
         return None
 
 
-def _ensure_symbol(symbol):
-    """Make sure symbol is selected in MarketWatch. Returns True if known."""
-    info = m(mt5.symbol_info, symbol)
-    if info is None:
-        return False
-    if not info.visible:
-        m(mt5.symbol_select, symbol, True)
-    return True
-
-
 @with_mt5
 def list_symbols():
     if not ensure_initialized():
@@ -102,7 +93,7 @@ def list_symbols():
 def get_symbol(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
-    if not _ensure_symbol(symbol):
+    if not ensure_symbol(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
     info = m(mt5.symbol_info, symbol)
     if info is None:
@@ -114,7 +105,7 @@ def get_symbol(symbol):
 def get_tick(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
-    if not _ensure_symbol(symbol):
+    if not ensure_symbol(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
     tick = m(mt5.symbol_info_tick, symbol)
     if tick is None:
@@ -149,7 +140,7 @@ def _fetch_rates(symbol):
             400,
         )
 
-    if not _ensure_symbol(symbol):
+    if not ensure_symbol(symbol):
         return None, "", (jsonify({"error": f"Symbol {symbol} not found"}), 404)
 
     date_from = request.args.get("from")
@@ -332,7 +323,7 @@ def get_ticks(symbol):
     if not ensure_initialized():
         return jsonify({"error": "MT5 not initialized"}), 503
 
-    if not _ensure_symbol(symbol):
+    if not ensure_symbol(symbol):
         return jsonify({"error": f"Symbol {symbol} not found"}), 404
 
     flags_str = request.args.get("flags", "ALL").upper()
