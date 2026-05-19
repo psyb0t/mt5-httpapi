@@ -6,7 +6,7 @@ import time
 from waitress import serve
 
 from mt5api.backtest import jobs as backtest_jobs
-from mt5api.config import ACCOUNT, BROKER, HOST, MODE, PORT
+from mt5api.config import ACCOUNT, BROKER, HOST, INSTANCE, MODE, PORT
 from mt5api.logger import log
 from mt5api.monitor import start_monitor
 from mt5api.mt5client import (
@@ -65,7 +65,14 @@ def _handle_signal(sig, _frame):
 
 
 def main():
-    log.info("Starting — broker=%s account=%s port=%d mode=%s", BROKER, ACCOUNT, PORT, MODE)
+    log.info(
+        "Starting — broker=%s account=%s instance=%s port=%d mode=%s",
+        BROKER,
+        ACCOUNT,
+        INSTANCE,
+        PORT,
+        MODE,
+    )
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -119,8 +126,11 @@ def main():
         raise
     finally:
         log.critical(
-            "API process exiting — broker=%s account=%s port=%d",
-            BROKER, ACCOUNT, PORT,
+            "API process exiting — broker=%s account=%s instance=%s port=%d",
+            BROKER,
+            ACCOUNT,
+            INSTANCE,
+            PORT,
         )
 
 

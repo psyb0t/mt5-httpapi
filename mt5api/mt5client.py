@@ -14,6 +14,7 @@ from mt5api.config import (
     BROKER,
     FILLING_MAP,
     INI_FILE,
+    INSTANCE,
     ORDER_TYPE_MAP,
     TERMINAL_DIR,
     TERMINAL_PATH,
@@ -330,7 +331,10 @@ def _kill_terminal():
     """Kill the terminal64.exe in our terminal directory."""
     # WMI via PowerShell — can see and kill elevated processes
     # (psutil can't read exe paths of elevated processes from non-elevated context)
-    path_filter = f"*\\{BROKER}\\{ACCOUNT}\\*" if ACCOUNT else f"*\\{BROKER}\\*"
+    if ACCOUNT:
+        path_filter = f"*\\{BROKER}\\{ACCOUNT}\\{INSTANCE}\\*"
+    else:
+        path_filter = f"*\\{BROKER}\\*"
     ps_cmd = (
         "$p = Get-WmiObject Win32_Process -Filter \"Name='terminal64.exe'\" "
         "| Where-Object { $_.ExecutablePath -like '" + path_filter + "' }; "
