@@ -49,6 +49,8 @@ accounts:
 #   Normal case: omit it entirely.
 #   Multi-instance case: if you define the SAME broker/account more than once,
 #   give each clone an explicit instance like "a", "b", "c".
+#   There is no queue field in config.yaml; choose a specific terminal clone by
+#   calling its /<broker>/<account>/<instance>/... route.
 #   Missing/empty = "default". Routes become /<broker>/<account>/<instance>/...
 #   and that default instance also keeps a legacy /<broker>/<account>/ alias.
 # utc_offset: broker wall-clock offset from real UTC.

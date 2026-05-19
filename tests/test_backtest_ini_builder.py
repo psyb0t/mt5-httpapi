@@ -113,6 +113,35 @@ def test_report_name_normalization():
     assert _parse(text)["Tester"]["Report"] == "Reports\\custom.htm"
 
 
+def test_optimization_report_name_normalization():
+    text = ini_builder.build_ini(_base(optimization=2, reportName="custom"))
+    assert _parse(text)["Tester"]["Report"] == "Reports\\custom.xml"
+
+
+def test_optimization_modes_are_preserved():
+    assert _parse(ini_builder.build_ini(_base(optimization=2)))["Tester"]["Optimization"] == "2"
+    assert _parse(ini_builder.build_ini(_base(optimization=3)))["Tester"]["Optimization"] == "3"
+
+
+def test_invalid_optimization_raises():
+    with pytest.raises(ValueError, match="optimization"):
+        ini_builder.build_ini(_base(optimization=4))
+    with pytest.raises(ValueError, match="optimization"):
+        ini_builder.build_ini(_base(optimization=-1))
+    with pytest.raises(ValueError, match="optimization"):
+        ini_builder.build_ini(_base(optimization="fast"))
+
+
+def test_optimization_criterion_defaults_and_overrides():
+    assert _parse(ini_builder.build_ini(_base()))["Tester"]["OptimizationCriterion"] == "0"
+    assert _parse(ini_builder.build_ini(_base(optimizationCriterion=5)))["Tester"]["OptimizationCriterion"] == "5"
+
+
+def test_invalid_optimization_criterion_raises():
+    with pytest.raises(ValueError, match="optimizationCriterion"):
+        ini_builder.build_ini(_base(optimizationCriterion=8))
+
+
 def test_missing_symbol_raises():
     with pytest.raises(ValueError, match="symbol"):
         ini_builder.build_ini({"timeframe": "M15", "expert": "EA.ex5", "lastDays": 30})

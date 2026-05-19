@@ -74,6 +74,8 @@ _VALID_INI = (
     "Model=2\n"
 )
 
+_OPTIMIZATION_INI = _VALID_INI + "Optimization=2\n"
+
 
 def _multipart(ini_text=_VALID_INI, expert_bytes=b"EX5BYTES", expert_filename="MyEA.ex5",
                set_bytes=None, set_filename=None, expert_name=None, set_name=None,
@@ -98,6 +100,38 @@ def test_missing_ini_returns_400(client):
                   content_type="multipart/form-data")
     assert resp.status_code == 400
     assert "ini" in resp.get_json()["error"].lower()
+
+
+def test_build_set_route_returns_mt5_style_set_text(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest/build-set",
+        json={
+            "parameters": [
+                {"name": "_Properties_", "value": "------"},
+                {
+                    "name": "Take_Profit",
+                    "value": 92,
+                    "start": 80,
+                    "step": 4,
+                    "stop": 92,
+                    "optimize": True,
+                },
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.get_data(as_text=True) == (
+        "_Properties_=------\n"
+        "Take_Profit=92||80||4||92||Y\n"
+    )
+
+
+def test_build_set_route_requires_json(client):
+    c, _ = client
+    resp = c.post("/backtest/build-set", data="{}", content_type="text/plain")
+    assert resp.status_code == 400
+    assert "content-type" in resp.get_json()["error"].lower()
 
 
 def test_missing_expert_returns_400(client):
@@ -167,6 +201,46 @@ def test_happy_path_inline_upload_returns_202(client):
     assert "Expert=Uploaded\\MyEA" in norm
 
 
+def test_optimization_submission_sets_xml_report_and_payload_fields(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body["optimizationType"] == 2
+    assert body["optimizationResults"] is None
+
+    job = jobs.load_job(body["jobId"])
+    assert job["optimizationType"] == 2
+    assert job["reportName"].endswith(".xml")
+
+
+def test_top_passes_form_override_is_stored(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(ini_text=_OPTIMIZATION_INI), "topPasses": "10"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    job = jobs.load_job(resp.get_json()["jobId"])
+    assert job["topPasses"] == 10
+
+
+def test_invalid_top_passes_returns_400(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(ini_text=_OPTIMIZATION_INI), "topPasses": "0"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "toppasses" in resp.get_json()["error"].lower()
+
+
 def test_backtest_timeout_form_override_is_stored(client):
     c, _ = client
     resp = c.post(
@@ -223,6 +297,23 @@ def test_report_and_log_404_when_not_ready(client):
     # Worker is no-op so neither file exists.
     assert c.get(f"/backtest/{job_id}/report").status_code == 404
     assert c.get(f"/backtest/{job_id}/log").status_code == 404
+
+
+def test_xml_report_is_served_with_application_xml(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    job = jobs.load_job(resp.get_json()["jobId"])
+    os.makedirs(os.path.dirname(job["reportPath"]), exist_ok=True)
+    with open(job["reportPath"], "w", encoding="utf-8") as handle:
+        handle.write("<xml />")
+
+    report_resp = c.get(f"/backtest/{job['jobId']}/report")
+    assert report_resp.status_code == 200
+    assert report_resp.mimetype == "application/xml"
 
 
 def test_build_ini_route_returns_text(client):

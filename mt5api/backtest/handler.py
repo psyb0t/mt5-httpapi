@@ -26,7 +26,7 @@ import uuid
 
 from flask import Response, abort, jsonify, request, send_file
 
-from mt5api.backtest import ini_builder, jobs
+from mt5api.backtest import ini_builder, jobs, optimization_parser, set_builder
 from mt5api.config import (
     ACCOUNT,
     BROKER,
@@ -45,6 +45,8 @@ from mt5api.logger import log
 
 RUN_LOCK = threading.Lock()
 DIAGNOSTIC_TAIL_CHARS = 4000
+DEFAULT_TOP_PASSES = 50
+MAX_TOP_PASSES = 500
 
 
 # ── INI builder route ───────────────────────────────────────────────
@@ -58,6 +60,16 @@ def build_ini_route():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return Response(ini_text, mimetype="text/plain")
+
+
+def build_set_route():
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
+    try:
+        set_text = set_builder.build_set(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return Response(set_text, mimetype="text/plain")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -125,11 +137,31 @@ def _override_credentials(parser, creds):
     common["Server"] = str(creds["server"])
 
 
+def _optimization_type(parser):
+    raw = parser["Tester"].get("Optimization", "0").strip() or "0"
+    try:
+        optimization_type = int(raw)
+    except ValueError as exc:
+        raise ValueError("Tester Optimization must be an integer 0..3") from exc
+    if optimization_type not in (0, 1, 2, 3):
+        raise ValueError("Tester Optimization must be 0..3")
+    return optimization_type
+
+
 def _ensure_report_path(parser):
     tester = parser["Tester"]
     raw = tester.get("Report", "").strip()
-    name = raw.split("\\")[-1].split("/")[-1].strip() or f"backtest-{uuid.uuid4().hex}.htm"
-    if not name.lower().endswith((".htm", ".html")):
+    optimization_type = _optimization_type(parser)
+    default_name = (
+        f"optimization-{uuid.uuid4().hex}.xml"
+        if optimization_type
+        else f"backtest-{uuid.uuid4().hex}.htm"
+    )
+    name = raw.split("\\")[-1].split("/")[-1].strip() or default_name
+    if optimization_type:
+        if not name.lower().endswith(".xml"):
+            name += ".xml"
+    elif not name.lower().endswith((".htm", ".html")):
         name += ".htm"
     tester["Report"] = f"Reports\\{name}"
     tester["ReplaceReport"] = "1"
@@ -233,6 +265,19 @@ def _tail_terminal_log(lines=20):
     return "\n".join(tail_lines[-lines:])
 
 
+def _parse_top_passes(raw_value):
+    raw_value = (raw_value or "").strip()
+    if not raw_value:
+        return DEFAULT_TOP_PASSES
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("topPasses must be an integer 1..500") from exc
+    if value < 1 or value > MAX_TOP_PASSES:
+        raise ValueError("topPasses must be 1..500")
+    return value
+
+
 # ── Submit route ────────────────────────────────────────────────────
 
 
@@ -251,6 +296,7 @@ def run_backtest():
 
     try:
         timeout_value = (request.form.get("timeout") or "").strip()
+        top_passes = _parse_top_passes(request.form.get("topPasses"))
         timeout_seconds = (
             parse_duration_to_seconds(timeout_value)
             if timeout_value
@@ -277,6 +323,7 @@ def run_backtest():
         _override_credentials(parser, creds)
         _normalize_symbol(parser)
         _normalize_expert(parser, expert_filename)
+        optimization_type = _optimization_type(parser)
         report_name = _ensure_report_path(parser)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -330,6 +377,9 @@ def run_backtest():
         "exitCode": None,
         "error": None,
         "summary": None,
+        "optimizationType": optimization_type,
+        "optimizationResults": None,
+        "topPasses": top_passes,
         "timeoutSeconds": timeout_seconds,
     }
     jobs.store_job(job)
@@ -417,7 +467,12 @@ def _execute_job(job_id):
                     )
                     return
         except Exception as exc:
-            log.exception("backtest crashed broker=%s account=%s job=%s", BROKER, ACCOUNT, job_id)
+            log.exception(
+                "backtest crashed broker=%s account=%s job=%s",
+                BROKER,
+                ACCOUNT,
+                job_id,
+            )
             jobs.update_job(
                 job_id,
                 status="failed",
@@ -462,6 +517,29 @@ def _execute_job(job_id):
         )
         return
 
+    if job.get("optimizationType"):
+        optimization_results = optimization_parser.parse_optimization_report(
+            job["reportPath"],
+            job.get("topPasses", DEFAULT_TOP_PASSES),
+        )
+        jobs.update_job(
+            job_id,
+            status="completed",
+            exitCode=result.returncode,
+            durationSeconds=duration,
+            finishedAt=jobs.now_iso(),
+            optimizationResults=optimization_results,
+        )
+        log.info(
+            "optimization done broker=%s account=%s job=%s duration=%.1fs passes=%s",
+            BROKER,
+            ACCOUNT,
+            job_id,
+            duration,
+            len(optimization_results),
+        )
+        return
+
     report_html = _read_text_best_effort(job["reportPath"])
     summary = jobs.parse_report_summary(report_html)
     if jobs.is_empty_backtest_summary(summary):
@@ -487,7 +565,13 @@ def _execute_job(job_id):
         finishedAt=jobs.now_iso(),
         summary=summary,
     )
-    log.info("backtest done broker=%s account=%s job=%s duration=%.1fs", BROKER, ACCOUNT, job_id, duration)
+    log.info(
+        "backtest done broker=%s account=%s job=%s duration=%.1fs",
+        BROKER,
+        ACCOUNT,
+        job_id,
+        duration,
+    )
 
 
 # ── Status / artifacts ──────────────────────────────────────────────
@@ -507,7 +591,8 @@ def get_report(job_id):
     path = job.get("reportPath")
     if not path or not os.path.exists(path):
         return jsonify({"error": "Report not available yet"}), 404
-    return send_file(path, mimetype="text/html", as_attachment=False, download_name=job["reportName"])
+    mimetype = "application/xml" if path.lower().endswith(".xml") else "text/html"
+    return send_file(path, mimetype=mimetype, as_attachment=False, download_name=job["reportName"])
 
 
 def get_log(job_id):
