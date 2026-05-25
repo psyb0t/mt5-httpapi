@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -75,6 +76,7 @@ _VALID_INI = (
 )
 
 _OPTIMIZATION_INI = _VALID_INI + "Optimization=2\n"
+_MODE3_OPTIMIZATION_INI = _VALID_INI + "Optimization=3\n"
 
 
 def _multipart(ini_text=_VALID_INI, expert_bytes=b"EX5BYTES", expert_filename="MyEA.ex5",
@@ -314,6 +316,86 @@ def test_xml_report_is_served_with_application_xml(client):
     report_resp = c.get(f"/backtest/{job['jobId']}/report")
     assert report_resp.status_code == 200
     assert report_resp.mimetype == "application/xml"
+
+
+def test_mode3_falls_back_to_symbols_xml_report(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_MODE3_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+
+    job_id = resp.get_json()["jobId"]
+    queued_job = jobs.load_job(job_id)
+    symbols_report_path = f"{os.path.splitext(queued_job['reportPath'])[0]}.symbols.xml"
+
+    def _fake_run(*args, **kwargs):
+        os.makedirs(os.path.dirname(symbols_report_path), exist_ok=True)
+        with open(symbols_report_path, "w", encoding="utf-8") as handle:
+            handle.write("<xml />")
+        return SimpleNamespace(returncode=0)
+
+    with patch.object(handler.subprocess, "run", side_effect=_fake_run), patch.object(
+        handler.cache_parser,
+        "parse_cache_details",
+        return_value={
+            "rows": [{"Result": 123.45}],
+            "cache": {"name": "cache.opt", "rowCount": 1},
+        },
+    ) as parse_cache, patch.object(
+        handler.optimization_parser,
+        "parse_optimization_report",
+        return_value=[{"Result": 999.99}],
+    ) as parse_report:
+        handler._execute_job(job_id)
+
+    job = jobs.load_job(job_id)
+    assert job["status"] == "completed"
+    assert job["reportPath"] == symbols_report_path
+    assert job["reportName"].endswith(".symbols.xml")
+    assert job["optimizationResults"] == [{"Result": 123.45}]
+    assert job["optimizationCache"] == {"name": "cache.opt", "rowCount": 1}
+    parse_cache.assert_called_once_with(queued_job["debugIniPath"], handler.TERMINAL_DIR, 50)
+    parse_report.assert_not_called()
+
+
+def test_non_mode3_falls_back_to_xml_when_cache_results_empty(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+
+    job_id = resp.get_json()["jobId"]
+    queued_job = jobs.load_job(job_id)
+
+    def _fake_run(*args, **kwargs):
+        os.makedirs(os.path.dirname(queued_job["reportPath"]), exist_ok=True)
+        with open(queued_job["reportPath"], "w", encoding="utf-8") as handle:
+            handle.write("<xml />")
+        return SimpleNamespace(returncode=0)
+
+    with patch.object(handler.subprocess, "run", side_effect=_fake_run), patch.object(
+        handler.cache_parser,
+        "parse_cache_details",
+        return_value={"rows": [], "cache": {"name": "cache.opt", "rowCount": 0}},
+    ) as parse_cache, patch.object(
+        handler.optimization_parser,
+        "parse_optimization_report",
+        return_value=[{"Result": 321.0}],
+    ) as parse_report:
+        handler._execute_job(job_id)
+
+    job = jobs.load_job(job_id)
+    assert job["status"] == "completed"
+    assert job["optimizationResults"] == [{"Result": 321.0}]
+    assert job["optimizationCache"] == {"name": "cache.opt", "rowCount": 0}
+    parse_cache.assert_called_once_with(queued_job["debugIniPath"], handler.TERMINAL_DIR, 50)
+    parse_report.assert_called_once_with(queued_job["reportPath"], 50)
 
 
 def test_build_ini_route_returns_text(client):

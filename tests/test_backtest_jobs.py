@@ -98,6 +98,7 @@ def test_public_payload_shape(tmp_jobs_dir):
         "summary": {"netProfit": 1.0},
         "optimizationType": 2,
         "optimizationResults": [{"Pass": 7, "Result": 12.5}],
+        "optimizationCache": {"name": "cache.opt", "rowCount": 27},
         "exitCode": 0,
     }
     payload = jobs.public_payload(job)
@@ -108,6 +109,7 @@ def test_public_payload_shape(tmp_jobs_dir):
     assert payload["summary"] == {"netProfit": 1.0}
     assert payload["optimizationType"] == 2
     assert payload["optimizationResults"] == [{"Pass": 7, "Result": 12.5}]
+    assert payload["optimizationCache"] == {"name": "cache.opt", "rowCount": 27}
     assert payload["exitCode"] == 0
     assert "queuePosition" not in payload  # completed → no position
 

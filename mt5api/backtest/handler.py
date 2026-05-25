@@ -26,7 +26,7 @@ import uuid
 
 from flask import Response, abort, jsonify, request, send_file
 
-from mt5api.backtest import ini_builder, jobs, optimization_parser, set_builder
+from mt5api.backtest import cache_parser, ini_builder, jobs, optimization_parser, set_builder
 from mt5api.config import (
     ACCOUNT,
     BROKER,
@@ -379,6 +379,7 @@ def run_backtest():
         "summary": None,
         "optimizationType": optimization_type,
         "optimizationResults": None,
+        "optimizationCache": None,
         "topPasses": top_passes,
         "timeoutSeconds": timeout_seconds,
     }
@@ -506,6 +507,18 @@ def _execute_job(job_id):
         )
         return
 
+    if not os.path.exists(job["reportPath"]) and job.get("optimizationType") == 3:
+        # MT5 writes mode-3 optimization output to <base>.symbols.xml.
+        symbols_report_path = f"{os.path.splitext(job['reportPath'])[0]}.symbols.xml"
+        if os.path.exists(symbols_report_path):
+            job["reportPath"] = symbols_report_path
+            job["reportName"] = os.path.basename(symbols_report_path)
+            jobs.update_job(
+                job_id,
+                reportPath=symbols_report_path,
+                reportName=os.path.basename(symbols_report_path),
+            )
+
     if not os.path.exists(job["reportPath"]):
         jobs.update_job(
             job_id,
@@ -518,10 +531,22 @@ def _execute_job(job_id):
         return
 
     if job.get("optimizationType"):
-        optimization_results = optimization_parser.parse_optimization_report(
-            job["reportPath"],
-            job.get("topPasses", DEFAULT_TOP_PASSES),
+        top_passes = job.get("topPasses", DEFAULT_TOP_PASSES)
+        cache_details = cache_parser.parse_cache_details(
+            job["debugIniPath"],
+            TERMINAL_DIR,
+            top_passes,
         )
+        optimization_results = list(cache_details.get("rows") or [])
+        optimization_cache = cache_details.get("cache")
+        result_source = "cache" if optimization_results else "none"
+        if not optimization_results and job.get("optimizationType") != 3:
+            optimization_results = optimization_parser.parse_optimization_report(
+                job["reportPath"],
+                top_passes,
+            )
+            if optimization_results:
+                result_source = "xml"
         jobs.update_job(
             job_id,
             status="completed",
@@ -529,14 +554,16 @@ def _execute_job(job_id):
             durationSeconds=duration,
             finishedAt=jobs.now_iso(),
             optimizationResults=optimization_results,
+            optimizationCache=optimization_cache,
         )
         log.info(
-            "optimization done broker=%s account=%s job=%s duration=%.1fs passes=%s",
+            "optimization done broker=%s account=%s job=%s duration=%.1fs passes=%s source=%s",
             BROKER,
             ACCOUNT,
             job_id,
             duration,
             len(optimization_results),
+            result_source,
         )
         return
 

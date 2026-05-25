@@ -19,6 +19,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [`config/setup.bat`](#configsetupbat)
   - [`mt5installers/`](#mt5installers)
 - [API](#api)
+  - [Backtest](#backtest)
   - [Health](#health)
   - [Terminal](#terminal)
   - [Account](#account)
@@ -29,6 +30,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Trade Result](#trade-result)
   - [History](#history)
 - [Examples](#examples)
+- [Optimization Guide](#optimization-guide)
 - [Go Client](#go-client)
 - [Technical Analysis](#technical-analysis) — server-side via wickworks, or client-side with pandas-ta
 - [Make Targets](#make-targets)
@@ -806,6 +808,21 @@ Optimization runs require a `.set` file whose input parameters already contain
 optimization ranges. mt5-httpapi can now either stage an MT5-saved `.set`
 directly or generate one from structured JSON via `POST /backtest/build-set`.
 
+Optimization modes do not all emit the same MT5 artifacts:
+
+| Mode | MT5 setting | Search scope | Primary parsed artifact | Report name written by MT5 |
+| ---- | ----------- | ------------ | ----------------------- | -------------------------- |
+| `1`  | slow complete | Single symbol in `[Tester].Symbol` | MT5 XML spreadsheet report | `<report>.xml` |
+| `2`  | genetic | Single symbol in `[Tester].Symbol` | MT5 XML spreadsheet report | `<report>.xml` |
+| `3`  | all Market Watch symbols | Symbols currently selected in Market Watch | `Tester/cache/*.opt` cache file | `<report>.symbols.xml` |
+
+Mode `3` is the odd one out. MT5 still writes a report file, but it is the
+header-only `.symbols.xml` variant and the actual pass rows live in the tester
+cache. mt5-httpapi parses that cache, recovers pass-to-symbol mappings from the
+agent logs, and exposes the discovered cache artifact in `optimizationCache`.
+If you want the full mode-by-mode request/response examples, see
+[`docs/backtest-optimization.md`](docs/backtest-optimization.md).
+
 MT5 `.set` files are plain parameter files, typically UTF-16 text. A normal
 saved set looks like this:
 
@@ -1037,6 +1054,7 @@ Responds `202 Accepted` with `Retry-After` header and the queued job payload:
   "pollAfterSeconds": 60,
   "optimizationType": 0,
   "optimizationResults": null,
+  "optimizationCache": null,
   "queuePosition": 1
 }
 ```
@@ -1056,7 +1074,13 @@ completed, includes a `summary` object parsed from the HTML report
 For optimization jobs, the payload instead includes:
 
 - `optimizationType` — the submitted MT5 optimization mode (`1`, `2`, or `3`)
-- `optimizationResults` — a parsed top-N list from the MT5 XML report, sorted by `Result` descending
+- `optimizationResults` — a parsed top-N list sorted by `Result` descending
+- `optimizationCache` — cache artifact metadata when results came from an MT5 `.opt` cache file
+
+Result source depends on the submitted mode:
+
+- Modes `1` and `2` parse the MT5 XML spreadsheet report first-class, and only use cache parsing if an `.opt` cache is available for the same job.
+- Mode `3` parses the MT5 tester cache first-class because the `.symbols.xml` report does not contain the optimization rows.
 
 The API keeps the MT5 column names as-is. If the XML export includes columns
 such as `Profit`, `Profit Factor`, `Expected Payoff`, `Drawdown`,
@@ -1075,6 +1099,7 @@ Example optimization status payload:
   "reportUrl": "/backtest/8c2a…/report",
   "logUrl": "/backtest/8c2a…/log",
   "optimizationType": 2,
+  "optimizationCache": null,
   "optimizationResults": [
     {
       "Pass": 184,
@@ -1087,6 +1112,45 @@ Example optimization status payload:
       "Sharpe Ratio": 2.41,
       "FastPeriod": 12,
       "SlowPeriod": 34
+    }
+  ]
+}
+```
+
+Example mode-3 optimization payload:
+
+```json
+{
+  "jobId": "b05643…",
+  "status": "completed",
+  "broker": "darwinex",
+  "account": "live",
+  "reportName": "mode3-gbpcad-m15-last5y-rerun5.symbols.xml",
+  "reportUrl": "/backtest/b05643…/report",
+  "logUrl": "/backtest/b05643…/log",
+  "optimizationType": 3,
+  "optimizationCache": {
+    "name": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.22.788ECDD113BA3097A58EF888EBEFF9CA.opt",
+    "pattern": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.*.opt",
+    "build": "22",
+    "cacheHash": "788ECDD113BA3097A58EF888EBEFF9CA",
+    "rowCount": 28,
+    "symbolComponent": "all_symbols",
+    "period": "M15"
+  },
+  "optimizationResults": [
+    {
+      "Pass": 21,
+      "Symbol": "GBPJPY",
+      "Result": 1657.54,
+      "Profit": 657.54,
+      "Profit Factor": 1.9,
+      "Expected Payoff": 2.57,
+      "Recovery Factor": 3.89,
+      "Sharpe Ratio": 0.75,
+      "Equity DD %": 11.22,
+      "Trades": 256,
+      "Custom": ""
     }
   ]
 }
@@ -1176,8 +1240,17 @@ Notes:
 
 - Use a terminal configured with `mode: backtest`, not a live terminal namespace.
 - Optimization results depend on the ranges encoded in the `.set` file. If no ranges are enabled in MT5, optimization is not meaningful.
-- `optimizationResults` is a convenience summary. The raw XML at `/report` remains the full source of truth.
+- `optimizationResults` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimizationCache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
 - If a metric you expect is missing from `optimizationResults`, first check the raw XML report. The API preserves MT5's exported columns rather than remapping them to a fixed schema.
+
+## Optimization Guide
+
+See [`docs/backtest-optimization.md`](docs/backtest-optimization.md) for a dedicated guide covering:
+
+- how modes `1`, `2`, and `3` differ operationally
+- how to build INIs and `.set` files for each mode
+- complete `curl` examples for all optimization modes
+- how to interpret `optimizationResults`, `optimizationCache`, and the generated report artifacts
 
 If the API is restarted while a backtest is running, the orphaned job is marked
 `failed` (`API restarted before completion`) on the next startup.
