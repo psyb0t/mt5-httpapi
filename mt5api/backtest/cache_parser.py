@@ -7,7 +7,11 @@ from pathlib import Path
 
 from mt5api.logger import log
 
-OPT_CACHE_SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,10}$")
+# Allow real-world MT5 symbol names including broker suffixes
+# such as .cash, .r, .p, .pro, -mini etc. Dots, hyphens, and
+# underscores are common. Length range covers shortest (e.g. .r is
+# invalid standalone but US500.cash is 10) to longest known.
+OPT_CACHE_SYMBOL_RE = re.compile(r"^[A-Z0-9.#_-]{3,20}$", re.IGNORECASE)
 _PASS_PATTERNS = (
     re.compile(r"optimization\s+pass\s+#?(\d+)\s+started", re.IGNORECASE),
     re.compile(r"pass\s+#?(\d+)\s+started", re.IGNORECASE),
@@ -15,7 +19,7 @@ _PASS_PATTERNS = (
 )
 _SYMBOL_PATTERNS = (
     re.compile(r"Symbols\s+([^:]+):\s+symbol to be synchronized", re.IGNORECASE),
-    re.compile(r"symbol\s+([A-Z0-9]{3,10})\s+to be synchronized", re.IGNORECASE),
+    re.compile(r"symbol\s+([A-Z0-9.#_-]{3,20})\s+to be synchronized", re.IGNORECASE),
 )
 _HISTORY_PATTERNS = (
     re.compile(r"History\s+([^,]+),([^:]+):\s+history cache allocated", re.IGNORECASE),
