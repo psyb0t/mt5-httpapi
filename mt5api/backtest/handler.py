@@ -630,3 +630,67 @@ def get_log(job_id):
     if not path or not os.path.exists(path):
         return jsonify({"error": "Log not available yet"}), 404
     return send_file(path, mimetype="text/plain", as_attachment=False, download_name=f"{job_id}.log")
+
+
+def _tail_dir_log(log_dir, lines):
+    """Return (path_used, last N non-empty lines) from the newest .log in log_dir."""
+    if not os.path.isdir(log_dir):
+        return None, ""
+    try:
+        candidates = sorted(f for f in os.listdir(log_dir) if f.lower().endswith(".log"))
+    except OSError:
+        return None, ""
+    if not candidates:
+        return None, ""
+    path = os.path.join(log_dir, candidates[-1])
+    content = _read_text_best_effort(path)
+    tail_lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    return path, "\n".join(tail_lines[-lines:])
+
+
+def get_tail(job_id):
+    """Live log tail — works for queued/running/completed jobs.
+
+    Returns JSON with:
+      - terminalLog: last N lines of the MT5 terminal journal
+      - testerLog:   last N lines of the Strategy Tester sub-log (if present)
+      - runLog:      stdout/stderr captured from terminal64.exe (usually sparse)
+    """
+    try:
+        n_lines = int(request.args.get("lines", 200))
+        n_lines = max(10, min(n_lines, 1000))
+    except (TypeError, ValueError):
+        n_lines = 200
+
+    job = jobs.load_job(job_id)
+    if job is None:
+        return jsonify({"error": f"Backtest job not found: {job_id}"}), 404
+
+    # run.log — stdout/stderr of terminal64.exe (sparse but useful on errors)
+    run_log = ""
+    log_path = job.get("logPath")
+    if log_path:
+        content = _read_text_best_effort(log_path)
+        run_tail = [ln.strip() for ln in content.splitlines() if ln.strip()]
+        run_log = "\n".join(run_tail[-50:])
+
+    # MT5 terminal journal: <TERMINAL_DIR>/logs/YYYYMMDD.log
+    terminal_log_dir = os.path.join(TERMINAL_DIR, "logs")
+    terminal_log_file, terminal_log = _tail_dir_log(terminal_log_dir, n_lines)
+
+    # Strategy Tester sub-log: <TERMINAL_DIR>/Tester/logs/YYYYMMDD.log
+    tester_log_dir = os.path.join(TERMINAL_DIR, "Tester", "logs")
+    tester_log_file, tester_log = _tail_dir_log(tester_log_dir, n_lines)
+
+    return jsonify({
+        "jobId": job_id,
+        "status": job.get("status"),
+        "startedAt": job.get("startedAt"),
+        "finishedAt": job.get("finishedAt"),
+        "error": job.get("error"),
+        "runLog": run_log,
+        "terminalLog": terminal_log,
+        "testerLog": tester_log,
+        "terminalLogFile": os.path.basename(terminal_log_file) if terminal_log_file else None,
+        "testerLogFile": os.path.basename(tester_log_file) if tester_log_file else None,
+    })
