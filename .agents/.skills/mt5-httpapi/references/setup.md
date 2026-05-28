@@ -61,7 +61,7 @@ wickworks:
 
 `broker` matches both the `mt5setup-<broker>.exe` installer name and the key in `accounts`. Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't conflict.
 
-`api_token` empty = open to anyone on the network. If set, all requests require `Authorization: Bearer <token>` and return `401` without it.
+> **`api_token` must be set to a strong random value before this server is reachable by anything other than localhost.** An empty `api_token` disables auth entirely — any process that can reach the listening socket can read account state, place orders, modify positions, and close trades. Generate one with `openssl rand -hex 32` (or equivalent) and keep it out of git. Do not skip this when planning to bind to a non-loopback interface, expose via a tunnel (see below), or run on a shared host.
 
 ## Ports
 
@@ -111,6 +111,13 @@ Inside the VM shared folder (`data/shared/logs/`):
 - `full.log` — combined log of everything
 
 ## Public Access via Cloudflare Tunnel (optional)
+
+> **Prerequisites — non-negotiable before exposing publicly:**
+>
+> 1. **Set a strong `api_token`** in `config/config.yaml` (`openssl rand -hex 32` or equivalent). An empty `api_token` plus a public tunnel means anyone on the internet can read your account state, place trades, modify positions, and close positions on your real broker account. This combination is catastrophic.
+> 2. **Restrict access at Cloudflare** as well — use Cloudflare Access (Zero Trust) to require email/SSO/service-token auth on the public hostname so the tunnel is not a wide-open path even if the token leaks.
+> 3. **Use a demo broker account first** until you have verified the auth chain end-to-end from a separate network.
+> 4. **Rotate the token** after testing and treat it as a high-value secret — losing it is equivalent to losing the brokerage account password.
 
 To expose the API publicly without opening firewall ports:
 

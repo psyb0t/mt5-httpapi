@@ -1,7 +1,7 @@
 ---
 name: mt5-httpapi
-description: MetaTrader 5 trading + server-side technical analysis via REST API. Get OHLC/ticks, place/modify/close orders, manage positions, pull history — AND in a single POST get bars enriched with RSI, MACD, Bollinger, ADX, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, and dozens more indicators. Use when you need market data, trading, or technical analysis against forex/crypto/stock markets through MT5.
-compatibility: Requires curl and a running mt5-httpapi instance. MT5_API_URL env var must be set. MT5_API_TOKEN is optional (only needed if the server has auth configured).
+description: HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Use ONLY when the user has explicitly installed and configured mt5-httpapi AND provided MT5_API_URL. Read endpoints (account, symbols, rates, ticks, server-side technical-analysis enrichment via the wickworks sidecar, history, backtest report fetching) are safe to invoke. Trade-mutating endpoints (POST/PUT/DELETE on /orders and /positions, /terminal/restart, /terminal/shutdown) MUST require explicit per-action user confirmation showing symbol, side, volume, and SL/TP — never invoke them on inferred intent. Do not use this skill for generic market-data, charting, or trading questions where the user hasn't named mt5-httpapi.
+compatibility: Requires curl and a user-deployed mt5-httpapi instance. MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from MT5_API_TOKEN env var OR by asking the user — never by reading repository config files autonomously.
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
@@ -9,7 +9,21 @@ metadata:
 
 # mt5-httpapi
 
-REST API on top of MetaTrader 5 running inside a Windows VM. Talk to it with plain HTTP/JSON — no MT5 libraries, no Windows, no bullshit. Just curl and go.
+REST client for an MT5 HTTP bridge that the user has already deployed. This skill talks to a running mt5-httpapi server — it does not stand one up, does not provision broker credentials, and does not place trades on its own initiative.
+
+## Live Trading Safety — read first
+
+This API can move real money on a user-owned brokerage account. Treat trade-mutating endpoints as irreversible side effects.
+
+**Hard rules — never violate, even on user prompts that sound permissive:**
+
+1. **Per-action confirmation for every mutating call.** Before any `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, `DELETE /positions/<id>`, `POST /terminal/restart`, or `POST /terminal/shutdown`: print the resolved request — symbol, side, volume, SL, TP, price, account login, broker URL — and wait for an explicit confirmation from the user for that specific action. A prior "yes" does not authorize subsequent actions.
+2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live.
+3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user — do not search the workspace.
+4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly.
+5. **Surface broker URL on every mutating action.** The path prefix `/<broker>/<account>/` in `MT5_API_URL` determines which real account is touched. Show it in confirmation prompts so the user can catch a wrong-account misroute.
+
+Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`) do not require per-action confirmation.
 
 **One-stop technical analysis.** Skip the client-side TA stack entirely. `POST /symbols/<symbol>/rates/ta` with an indicator spec → get OHLC bars + analyzed indicator series back in a single call. RSI, MACD, Bollinger, ADX, ATR, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, liquidity, session anchors, dozens more — all computed server-side by the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar that ships with this stack. Primitives only — wickworks returns raw indicator series and structural facts (e.g. "order block formed at this bar", "price closed past this swing"), never interpretive signals like divergences or crossover events. Build those in the consumer. See the [Technical Analysis](#technical-analysis) section.
 
@@ -17,18 +31,20 @@ For installation and setup, see [references/setup.md](references/setup.md).
 
 ## Setup
 
-The API should already be running. Set the base URL and token:
+The user must have a running mt5-httpapi instance and must provide:
 
 ```bash
-export MT5_API_URL=http://localhost:8888/roboforex/main
-export MT5_API_TOKEN=your_token_here
+export MT5_API_URL=http://localhost:8888/<broker>/<account>
+export MT5_API_TOKEN=<the-token-the-user-gives-you>
 ```
+
+If `MT5_API_URL` is not set in the environment, ask the user — do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
 
 A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `terminals.json`) selects which terminal you talk to — set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=...` at compose time.
 
 **Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok"}`. If not, the API isn't up yet (may still be initializing — it retries in the background).
 
-Auth is optional — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it.
+Auth is optional server-side — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it. From the agent's side, never assume the server is auth-disabled; always pass the token the user provided if there is one.
 
 ## How It Works
 
@@ -201,8 +217,10 @@ Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 b
 
 ### Orders
 
+> **Mutating endpoints — confirmation required.** Every `POST /orders`, `PUT /orders/<id>`, and `DELETE /orders/<id>` opens, modifies, or cancels a real order on the user's brokerage account. Before invoking any of them you MUST: (1) print the full resolved request (account login from `GET /account`, broker URL prefix, symbol, side, volume, price, SL, TP); (2) ask the user to confirm that specific action; (3) wait for an explicit yes. A prior confirmation does not carry over to a new action.
+
 ```bash
-# Place market order
+# Place market order — only after explicit per-action confirmation from the user.
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H 'Content-Type: application/json' \
   -d '{"symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.08, "tp": 1.10}'
@@ -245,6 +263,8 @@ Trade result:
 `retcode` 10009 = success. Anything else = something went wrong.
 
 ### Positions
+
+> **Mutating endpoints — confirmation required.** `PUT /positions/<id>` changes the SL/TP of a live position, and `DELETE /positions/<id>` closes it (full or partial). Both move real money. Per-action confirmation rule above applies — print symbol, ticket, current price, the change being made, and wait for explicit user yes.
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions
@@ -363,8 +383,13 @@ Before submitting a backtest that references host-managed files:
    For a real tester run, expect `{"status":"ok","mode":"backtest"}`.
 3. If the user specifies a concrete date window, prefer explicit UTC
    `fromDate`/`toDate` and do not also send `lastYears` or `lastDays`.
-4. If auth is needed and the repo owns the token, read it from `config/config.yaml`
-   instead of guessing or waiting for an env var to appear.
+4. Auth handling: use `MT5_API_TOKEN` from the user-set environment variable.
+   If it is missing and the server requires auth, ask the user to provide
+   it — do not search the repository or read `config/config.yaml` to harvest
+   credentials. Backtests are read-side from the user's perspective (the
+   server orchestrates Strategy Tester locally and never opens live trades),
+   so no per-action confirmation is required to submit, but still surface
+   the broker URL prefix so the user can catch a wrong-account misroute.
 
 Execution guidance:
 

@@ -26,4 +26,6 @@ __pycache__
 commit.sh
 git-update.sh
 fix.sh
+review.md
+ANUSTIMES.md
 .data
