@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -74,6 +75,9 @@ _VALID_INI = (
     "Model=2\n"
 )
 
+_OPTIMIZATION_INI = _VALID_INI + "Optimization=2\n"
+_MODE3_OPTIMIZATION_INI = _VALID_INI + "Optimization=3\n"
+
 
 def _multipart(ini_text=_VALID_INI, expert_bytes=b"EX5BYTES", expert_filename="MyEA.ex5",
                set_bytes=None, set_filename=None, expert_name=None, set_name=None,
@@ -98,6 +102,38 @@ def test_missing_ini_returns_400(client):
                   content_type="multipart/form-data")
     assert resp.status_code == 400
     assert "ini" in resp.get_json()["error"].lower()
+
+
+def test_build_set_route_returns_mt5_style_set_text(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest/build-set",
+        json={
+            "parameters": [
+                {"name": "_Properties_", "value": "------"},
+                {
+                    "name": "Take_Profit",
+                    "value": 92,
+                    "start": 80,
+                    "step": 4,
+                    "stop": 92,
+                    "optimize": True,
+                },
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.get_data(as_text=True) == (
+        "_Properties_=------\n"
+        "Take_Profit=92||80||4||92||Y\n"
+    )
+
+
+def test_build_set_route_requires_json(client):
+    c, _ = client
+    resp = c.post("/backtest/build-set", data="{}", content_type="text/plain")
+    assert resp.status_code == 400
+    assert "content-type" in resp.get_json()["error"].lower()
 
 
 def test_missing_expert_returns_400(client):
@@ -167,6 +203,46 @@ def test_happy_path_inline_upload_returns_202(client):
     assert "Expert=Uploaded\\MyEA" in norm
 
 
+def test_optimization_submission_sets_xml_report_and_payload_fields(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body["optimizationType"] == 2
+    assert body["optimizationResults"] is None
+
+    job = jobs.load_job(body["jobId"])
+    assert job["optimizationType"] == 2
+    assert job["reportName"].endswith(".xml")
+
+
+def test_top_passes_form_override_is_stored(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(ini_text=_OPTIMIZATION_INI), "topPasses": "10"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    job = jobs.load_job(resp.get_json()["jobId"])
+    assert job["topPasses"] == 10
+
+
+def test_invalid_top_passes_returns_400(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(ini_text=_OPTIMIZATION_INI), "topPasses": "0"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "toppasses" in resp.get_json()["error"].lower()
+
+
 def test_backtest_timeout_form_override_is_stored(client):
     c, _ = client
     resp = c.post(
@@ -223,6 +299,103 @@ def test_report_and_log_404_when_not_ready(client):
     # Worker is no-op so neither file exists.
     assert c.get(f"/backtest/{job_id}/report").status_code == 404
     assert c.get(f"/backtest/{job_id}/log").status_code == 404
+
+
+def test_xml_report_is_served_with_application_xml(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    job = jobs.load_job(resp.get_json()["jobId"])
+    os.makedirs(os.path.dirname(job["reportPath"]), exist_ok=True)
+    with open(job["reportPath"], "w", encoding="utf-8") as handle:
+        handle.write("<xml />")
+
+    report_resp = c.get(f"/backtest/{job['jobId']}/report")
+    assert report_resp.status_code == 200
+    assert report_resp.mimetype == "application/xml"
+
+
+def test_mode3_falls_back_to_symbols_xml_report(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_MODE3_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+
+    job_id = resp.get_json()["jobId"]
+    queued_job = jobs.load_job(job_id)
+    symbols_report_path = f"{os.path.splitext(queued_job['reportPath'])[0]}.symbols.xml"
+
+    def _fake_run(*args, **kwargs):
+        os.makedirs(os.path.dirname(symbols_report_path), exist_ok=True)
+        with open(symbols_report_path, "w", encoding="utf-8") as handle:
+            handle.write("<xml />")
+        return SimpleNamespace(returncode=0)
+
+    with patch.object(handler.subprocess, "run", side_effect=_fake_run), patch.object(
+        handler.cache_parser,
+        "parse_cache_details",
+        return_value={
+            "rows": [{"Result": 123.45}],
+            "cache": {"name": "cache.opt", "rowCount": 1},
+        },
+    ) as parse_cache, patch.object(
+        handler.optimization_parser,
+        "parse_optimization_report",
+        return_value=[{"Result": 999.99}],
+    ) as parse_report:
+        handler._execute_job(job_id)
+
+    job = jobs.load_job(job_id)
+    assert job["status"] == "completed"
+    assert job["reportPath"] == symbols_report_path
+    assert job["reportName"].endswith(".symbols.xml")
+    assert job["optimizationResults"] == [{"Result": 123.45}]
+    assert job["optimizationCache"] == {"name": "cache.opt", "rowCount": 1}
+    parse_cache.assert_called_once_with(queued_job["debugIniPath"], handler.TERMINAL_DIR, 50)
+    parse_report.assert_not_called()
+
+
+def test_non_mode3_falls_back_to_xml_when_cache_results_empty(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data=_multipart(ini_text=_OPTIMIZATION_INI),
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+
+    job_id = resp.get_json()["jobId"]
+    queued_job = jobs.load_job(job_id)
+
+    def _fake_run(*args, **kwargs):
+        os.makedirs(os.path.dirname(queued_job["reportPath"]), exist_ok=True)
+        with open(queued_job["reportPath"], "w", encoding="utf-8") as handle:
+            handle.write("<xml />")
+        return SimpleNamespace(returncode=0)
+
+    with patch.object(handler.subprocess, "run", side_effect=_fake_run), patch.object(
+        handler.cache_parser,
+        "parse_cache_details",
+        return_value={"rows": [], "cache": {"name": "cache.opt", "rowCount": 0}},
+    ) as parse_cache, patch.object(
+        handler.optimization_parser,
+        "parse_optimization_report",
+        return_value=[{"Result": 321.0}],
+    ) as parse_report:
+        handler._execute_job(job_id)
+
+    job = jobs.load_job(job_id)
+    assert job["status"] == "completed"
+    assert job["optimizationResults"] == [{"Result": 321.0}]
+    assert job["optimizationCache"] == {"name": "cache.opt", "rowCount": 0}
+    parse_cache.assert_called_once_with(queued_job["debugIniPath"], handler.TERMINAL_DIR, 50)
+    parse_report.assert_called_once_with(queued_job["reportPath"], 50)
 
 
 def test_build_ini_route_returns_text(client):

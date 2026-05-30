@@ -21,11 +21,28 @@ except ImportError:
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SHARED_DIR = os.path.dirname(_SCRIPTS_DIR)
 CONFIG_PATH = os.path.join(_SHARED_DIR, "config", "config.yaml")
+DEFAULT_INSTANCE = "default"
 
 
 def _load():
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _normalize_instance(value):
+    if value in (None, ""):
+        return DEFAULT_INSTANCE
+    return str(value).strip() or DEFAULT_INSTANCE
+
+
+def _route_prefixes(terminal):
+    broker = terminal["broker"]
+    account = terminal["account"]
+    instance = _normalize_instance(terminal.get("instance"))
+    prefixes = [f"/{broker}/{account}/{instance}/"]
+    if instance == DEFAULT_INSTANCE:
+        prefixes.append(f"/{broker}/{account}/")
+    return prefixes
 
 
 def main():
@@ -46,9 +63,10 @@ def main():
             utc = t.get("utc_offset")
             utc = "0" if utc is None else str(utc).replace(" ", "")
             mode = (t.get("mode") or "live").strip().lower() or "live"
+            instance = _normalize_instance(t.get("instance"))
             if mode not in ("live", "backtest"):
                 mode = "live"
-            print(t["broker"], t["account"], t["port"], utc, mode)
+            print(t["broker"], t["account"], instance, t["port"], utc, mode)
 
     elif cmd == "ports":
         ports = [t["port"] for t in (cfg.get("terminals") or [])]
@@ -107,15 +125,15 @@ def main():
         terms = cfg.get("terminals", [])
         locs = []
         for t in terms:
-            p = f"/{t['broker']}/{t['account']}/"
-            locs.append(
-                f"        location {p} {{\n"
-                f"            rewrite ^{p}(.*)$ /$1 break;\n"
-                f"            proxy_pass http://mt5:{t['port']};\n"
-                f"            proxy_set_header Host $host;\n"
-                f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
-                f"        }}"
-            )
+            for p in _route_prefixes(t):
+                locs.append(
+                    f"        location {p} {{\n"
+                    f"            rewrite ^{p}(.*)$ /$1 break;\n"
+                    f"            proxy_pass http://mt5:{t['port']};\n"
+                    f"            proxy_set_header Host $host;\n"
+                    f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
+                    f"        }}"
+                )
         nginx_conf = (
             "events {}\n"
             "http {\n"
@@ -133,7 +151,8 @@ def main():
 
     elif cmd == "show_terminals":
         for t in cfg.get("terminals", []):
-            print(f"  - /{t['broker']}/{t['account']}/")
+            instance = _normalize_instance(t.get("instance"))
+            print(f"  - /{t['broker']}/{t['account']}/{instance}/")
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)

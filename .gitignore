@@ -8,6 +8,7 @@ mt5installers/*
 # Binaries are user-provided; only the layout (and any tracked docs) belong in git.
 assets/experts/*
 !assets/experts/.gitkeep
+!assets/experts/MT5SystemWarmup.mq5
 assets/sets/*
 !assets/sets/.gitkeep
 config/config.yaml

@@ -26,7 +26,7 @@ import uuid
 
 from flask import Response, abort, jsonify, request, send_file
 
-from mt5api.backtest import ini_builder, jobs
+from mt5api.backtest import cache_parser, ini_builder, jobs, optimization_parser, set_builder
 from mt5api.config import (
     ACCOUNT,
     BROKER,
@@ -45,6 +45,8 @@ from mt5api.logger import log
 
 RUN_LOCK = threading.Lock()
 DIAGNOSTIC_TAIL_CHARS = 4000
+DEFAULT_TOP_PASSES = 50
+MAX_TOP_PASSES = 500
 
 
 # ── INI builder route ───────────────────────────────────────────────
@@ -58,6 +60,16 @@ def build_ini_route():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return Response(ini_text, mimetype="text/plain")
+
+
+def build_set_route():
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
+    try:
+        set_text = set_builder.build_set(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return Response(set_text, mimetype="text/plain")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -125,11 +137,31 @@ def _override_credentials(parser, creds):
     common["Server"] = str(creds["server"])
 
 
+def _optimization_type(parser):
+    raw = parser["Tester"].get("Optimization", "0").strip() or "0"
+    try:
+        optimization_type = int(raw)
+    except ValueError as exc:
+        raise ValueError("Tester Optimization must be an integer 0..3") from exc
+    if optimization_type not in (0, 1, 2, 3):
+        raise ValueError("Tester Optimization must be 0..3")
+    return optimization_type
+
+
 def _ensure_report_path(parser):
     tester = parser["Tester"]
     raw = tester.get("Report", "").strip()
-    name = raw.split("\\")[-1].split("/")[-1].strip() or f"backtest-{uuid.uuid4().hex}.htm"
-    if not name.lower().endswith((".htm", ".html")):
+    optimization_type = _optimization_type(parser)
+    default_name = (
+        f"optimization-{uuid.uuid4().hex}.xml"
+        if optimization_type
+        else f"backtest-{uuid.uuid4().hex}.htm"
+    )
+    name = raw.split("\\")[-1].split("/")[-1].strip() or default_name
+    if optimization_type:
+        if not name.lower().endswith(".xml"):
+            name += ".xml"
+    elif not name.lower().endswith((".htm", ".html")):
         name += ".htm"
     tester["Report"] = f"Reports\\{name}"
     tester["ReplaceReport"] = "1"
@@ -233,6 +265,19 @@ def _tail_terminal_log(lines=20):
     return "\n".join(tail_lines[-lines:])
 
 
+def _parse_top_passes(raw_value):
+    raw_value = (raw_value or "").strip()
+    if not raw_value:
+        return DEFAULT_TOP_PASSES
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("topPasses must be an integer 1..500") from exc
+    if value < 1 or value > MAX_TOP_PASSES:
+        raise ValueError("topPasses must be 1..500")
+    return value
+
+
 # ── Submit route ────────────────────────────────────────────────────
 
 
@@ -251,6 +296,7 @@ def run_backtest():
 
     try:
         timeout_value = (request.form.get("timeout") or "").strip()
+        top_passes = _parse_top_passes(request.form.get("topPasses"))
         timeout_seconds = (
             parse_duration_to_seconds(timeout_value)
             if timeout_value
@@ -277,6 +323,7 @@ def run_backtest():
         _override_credentials(parser, creds)
         _normalize_symbol(parser)
         _normalize_expert(parser, expert_filename)
+        optimization_type = _optimization_type(parser)
         report_name = _ensure_report_path(parser)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -330,6 +377,10 @@ def run_backtest():
         "exitCode": None,
         "error": None,
         "summary": None,
+        "optimizationType": optimization_type,
+        "optimizationResults": None,
+        "optimizationCache": None,
+        "topPasses": top_passes,
         "timeoutSeconds": timeout_seconds,
     }
     jobs.store_job(job)
@@ -417,7 +468,12 @@ def _execute_job(job_id):
                     )
                     return
         except Exception as exc:
-            log.exception("backtest crashed broker=%s account=%s job=%s", BROKER, ACCOUNT, job_id)
+            log.exception(
+                "backtest crashed broker=%s account=%s job=%s",
+                BROKER,
+                ACCOUNT,
+                job_id,
+            )
             jobs.update_job(
                 job_id,
                 status="failed",
@@ -451,6 +507,18 @@ def _execute_job(job_id):
         )
         return
 
+    if not os.path.exists(job["reportPath"]) and job.get("optimizationType") == 3:
+        # MT5 writes mode-3 optimization output to <base>.symbols.xml.
+        symbols_report_path = f"{os.path.splitext(job['reportPath'])[0]}.symbols.xml"
+        if os.path.exists(symbols_report_path):
+            job["reportPath"] = symbols_report_path
+            job["reportName"] = os.path.basename(symbols_report_path)
+            jobs.update_job(
+                job_id,
+                reportPath=symbols_report_path,
+                reportName=os.path.basename(symbols_report_path),
+            )
+
     if not os.path.exists(job["reportPath"]):
         jobs.update_job(
             job_id,
@@ -459,6 +527,43 @@ def _execute_job(job_id):
             exitCode=result.returncode,
             durationSeconds=duration,
             finishedAt=jobs.now_iso(),
+        )
+        return
+
+    if job.get("optimizationType"):
+        top_passes = job.get("topPasses", DEFAULT_TOP_PASSES)
+        cache_details = cache_parser.parse_cache_details(
+            job["debugIniPath"],
+            TERMINAL_DIR,
+            top_passes,
+        )
+        optimization_results = list(cache_details.get("rows") or [])
+        optimization_cache = cache_details.get("cache")
+        result_source = "cache" if optimization_results else "none"
+        if not optimization_results and job.get("optimizationType") != 3:
+            optimization_results = optimization_parser.parse_optimization_report(
+                job["reportPath"],
+                top_passes,
+            )
+            if optimization_results:
+                result_source = "xml"
+        jobs.update_job(
+            job_id,
+            status="completed",
+            exitCode=result.returncode,
+            durationSeconds=duration,
+            finishedAt=jobs.now_iso(),
+            optimizationResults=optimization_results,
+            optimizationCache=optimization_cache,
+        )
+        log.info(
+            "optimization done broker=%s account=%s job=%s duration=%.1fs passes=%s source=%s",
+            BROKER,
+            ACCOUNT,
+            job_id,
+            duration,
+            len(optimization_results),
+            result_source,
         )
         return
 
@@ -487,7 +592,13 @@ def _execute_job(job_id):
         finishedAt=jobs.now_iso(),
         summary=summary,
     )
-    log.info("backtest done broker=%s account=%s job=%s duration=%.1fs", BROKER, ACCOUNT, job_id, duration)
+    log.info(
+        "backtest done broker=%s account=%s job=%s duration=%.1fs",
+        BROKER,
+        ACCOUNT,
+        job_id,
+        duration,
+    )
 
 
 # ── Status / artifacts ──────────────────────────────────────────────
@@ -507,7 +618,8 @@ def get_report(job_id):
     path = job.get("reportPath")
     if not path or not os.path.exists(path):
         return jsonify({"error": "Report not available yet"}), 404
-    return send_file(path, mimetype="text/html", as_attachment=False, download_name=job["reportName"])
+    mimetype = "application/xml" if path.lower().endswith(".xml") else "text/html"
+    return send_file(path, mimetype=mimetype, as_attachment=False, download_name=job["reportName"])
 
 
 def get_log(job_id):
@@ -518,3 +630,67 @@ def get_log(job_id):
     if not path or not os.path.exists(path):
         return jsonify({"error": "Log not available yet"}), 404
     return send_file(path, mimetype="text/plain", as_attachment=False, download_name=f"{job_id}.log")
+
+
+def _tail_dir_log(log_dir, lines):
+    """Return (path_used, last N non-empty lines) from the newest .log in log_dir."""
+    if not os.path.isdir(log_dir):
+        return None, ""
+    try:
+        candidates = sorted(f for f in os.listdir(log_dir) if f.lower().endswith(".log"))
+    except OSError:
+        return None, ""
+    if not candidates:
+        return None, ""
+    path = os.path.join(log_dir, candidates[-1])
+    content = _read_text_best_effort(path)
+    tail_lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    return path, "\n".join(tail_lines[-lines:])
+
+
+def get_tail(job_id):
+    """Live log tail — works for queued/running/completed jobs.
+
+    Returns JSON with:
+      - terminalLog: last N lines of the MT5 terminal journal
+      - testerLog:   last N lines of the Strategy Tester sub-log (if present)
+      - runLog:      stdout/stderr captured from terminal64.exe (usually sparse)
+    """
+    try:
+        n_lines = int(request.args.get("lines", 200))
+        n_lines = max(10, min(n_lines, 1000))
+    except (TypeError, ValueError):
+        n_lines = 200
+
+    job = jobs.load_job(job_id)
+    if job is None:
+        return jsonify({"error": f"Backtest job not found: {job_id}"}), 404
+
+    # run.log — stdout/stderr of terminal64.exe (sparse but useful on errors)
+    run_log = ""
+    log_path = job.get("logPath")
+    if log_path:
+        content = _read_text_best_effort(log_path)
+        run_tail = [ln.strip() for ln in content.splitlines() if ln.strip()]
+        run_log = "\n".join(run_tail[-50:])
+
+    # MT5 terminal journal: <TERMINAL_DIR>/logs/YYYYMMDD.log
+    terminal_log_dir = os.path.join(TERMINAL_DIR, "logs")
+    terminal_log_file, terminal_log = _tail_dir_log(terminal_log_dir, n_lines)
+
+    # Strategy Tester sub-log: <TERMINAL_DIR>/Tester/logs/YYYYMMDD.log
+    tester_log_dir = os.path.join(TERMINAL_DIR, "Tester", "logs")
+    tester_log_file, tester_log = _tail_dir_log(tester_log_dir, n_lines)
+
+    return jsonify({
+        "jobId": job_id,
+        "status": job.get("status"),
+        "startedAt": job.get("startedAt"),
+        "finishedAt": job.get("finishedAt"),
+        "error": job.get("error"),
+        "runLog": run_log,
+        "terminalLog": terminal_log,
+        "testerLog": tester_log,
+        "terminalLogFile": os.path.basename(terminal_log_file) if terminal_log_file else None,
+        "testerLogFile": os.path.basename(tester_log_file) if tester_log_file else None,
+    })

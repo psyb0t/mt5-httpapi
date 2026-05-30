@@ -104,6 +104,28 @@ def _resolve_modelling(params):
     )
 
 
+def _resolve_optimization(params):
+    raw = params.get("optimization", 0)
+    if isinstance(raw, bool):
+        raw = int(raw)
+    if not isinstance(raw, int):
+        raise ValueError("optimization must be an integer 0..3")
+    if raw not in (0, 1, 2, 3):
+        raise ValueError("optimization must be 0..3")
+    return raw
+
+
+def _resolve_optimization_criterion(params):
+    raw = params.get("optimizationCriterion", 0)
+    if isinstance(raw, bool):
+        raw = int(raw)
+    if not isinstance(raw, int):
+        raise ValueError("optimizationCriterion must be an integer 0..7")
+    if raw not in range(8):
+        raise ValueError("optimizationCriterion must be 0..7")
+    return raw
+
+
 def _strip_ex5(name):
     return name[:-4] if name.lower().endswith(".ex5") else name
 
@@ -140,7 +162,8 @@ def build_ini(params: dict) -> str:
     Required: symbol, timeframe, expert, and a date window
     (fromDate+toDate OR lastYears OR lastDays).
     Optional: modelling, latencyMs, deposit, currency, leverage,
-    expertParameters, reportName, optimization, forwardMode, visual.
+    expertParameters, reportName, optimization, optimizationCriterion,
+    forwardMode, visual.
     """
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -163,6 +186,8 @@ def build_ini(params: dict) -> str:
 
     from_d, to_d = _resolve_dates(params)
     model = _resolve_modelling(params)
+    optimization = _resolve_optimization(params)
+    optimization_criterion = _resolve_optimization_criterion(params)
 
     deposit = _positive_number(params.get("deposit", 10000), "deposit", kind=float)
     leverage = _positive_number(params.get("leverage", 100), "leverage", kind=int)
@@ -174,14 +199,19 @@ def build_ini(params: dict) -> str:
         raise ValueError("currency must be a non-empty string")
     currency = currency.strip().upper()
 
-    report_name = params.get("reportName", "backtest-report.htm")
+    default_report_name = (
+        "optimization-report.xml" if optimization else "backtest-report.htm"
+    )
+    report_name = params.get("reportName", default_report_name)
     if not isinstance(report_name, str) or not report_name.strip():
         raise ValueError("reportName must be a non-empty string")
     report_name = report_name.strip()
-    if not report_name.lower().endswith((".htm", ".html")):
+    if optimization:
+        if not report_name.lower().endswith(".xml"):
+            report_name += ".xml"
+    elif not report_name.lower().endswith((".htm", ".html")):
         report_name += ".htm"
 
-    optimization = int(bool(params.get("optimization", 0)))
     forward_mode = params.get("forwardMode", 0)
     if forward_mode not in (0, 1, 2, 3, 4):
         raise ValueError("forwardMode must be 0..4")
@@ -214,6 +244,7 @@ def build_ini(params: dict) -> str:
         "Model": str(model),
         "ExecutionMode": str(latency_ms),
         "Optimization": str(optimization),
+        "OptimizationCriterion": str(optimization_criterion),
         "ForwardMode": str(forward_mode),
         "FromDate": from_d.strftime(_DATE_FMT_OUT),
         "ToDate": to_d.strftime(_DATE_FMT_OUT),

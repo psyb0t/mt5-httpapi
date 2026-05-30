@@ -212,14 +212,16 @@ goto status_loop
 
 :: ══════════════════════════════════════════════════════════════════
 :launch_terminal
-:: %1=broker %2=account %3=port %4=utc_offset %5=mode (live|backtest)
+:: %1=broker %2=account %3=instance %4=port %5=utc_offset %6=mode (live|backtest)
 set "LT_BROKER=%~1"
 set "LT_ACCOUNT=%~2"
-set "LT_PORT=%~3"
-set "LT_MODE=%~5"
+set "LT_INSTANCE=%~3"
+set "LT_PORT=%~4"
+set "LT_MODE=%~6"
+if "!LT_INSTANCE!"=="" set "LT_INSTANCE=default"
 if "!LT_MODE!"=="" set "LT_MODE=live"
 set "LT_BASEDIR=%BROKERS%\!LT_BROKER!\base"
-set "LT_DIR=%BROKERS%\!LT_BROKER!\!LT_ACCOUNT!"
+set "LT_DIR=%BROKERS%\!LT_BROKER!\!LT_ACCOUNT!\!LT_INSTANCE!"
 
 if not exist "!LT_BASEDIR!\terminal64.exe" (
     call :log "%START_LOG%" "ERROR: No base install for !LT_BROKER! at !LT_BASEDIR!"
@@ -227,10 +229,10 @@ if not exist "!LT_BASEDIR!\terminal64.exe" (
 )
 
 if not exist "!LT_DIR!\terminal64.exe" (
-    call :log "%START_LOG%" "Copying !LT_BROKER!\base to !LT_BROKER!\!LT_ACCOUNT!..."
+    call :log "%START_LOG%" "Copying !LT_BROKER!\base to !LT_BROKER!\!LT_ACCOUNT!\!LT_INSTANCE!..."
     xcopy "!LT_BASEDIR!\*" "!LT_DIR!\" /E /I /H /Y /Q >nul 2>&1
     if !errorlevel! neq 0 (
-        call :log "%START_LOG%" "ERROR: xcopy failed for !LT_BROKER!/!LT_ACCOUNT!"
+        call :log "%START_LOG%" "ERROR: xcopy failed for !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE!"
         exit /b 1
     )
 )
@@ -249,11 +251,11 @@ if exist "!LT_LOGFILE!" (
 )
 
 if /i "!LT_MODE!"=="backtest" (
-    call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT! mode=backtest -- portable dir prepared, terminal NOT launched (tester will spawn it on demand)."
+    call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE! mode=backtest -- portable dir prepared, terminal NOT launched (tester will spawn it on demand)."
     exit /b 0
 )
 
-call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT! (port !LT_PORT!) [log offset !LT_LOGSIZE!]"
+call :log "%START_LOG%" "Starting terminal: !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE! (port !LT_PORT!) [log offset !LT_LOGSIZE!]"
 powershell -Command "Start-Process '!LT_DIR!\terminal64.exe' -ArgumentList '/portable','/config:\"!LT_DIR!\mt5start.ini\"' -Verb RunAs -WindowStyle Normal"
 
 rem Wait for 'started for' in journal log (for /L avoids goto inside call)
@@ -264,30 +266,36 @@ for /L %%N in (1,1,120) do (
         if !errorlevel! equ 0 (
             set LT_STARTED=1
         ) else (
-            call :log "%START_LOG%" "  Waiting for !LT_BROKER!/!LT_ACCOUNT! to start (%%N)..."
+            call :log "%START_LOG%" "  Waiting for !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE! to start (%%N)..."
             timeout /t 5 /nobreak >nul
         )
     )
 )
 if !LT_STARTED! equ 0 (
-    call :log "%START_LOG%" "ERROR: !LT_BROKER!/!LT_ACCOUNT! failed to start after 10 minutes"
+    call :log "%START_LOG%" "ERROR: !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE! failed to start after 10 minutes"
     exit /b 1
 )
-call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT! started."
+call :log "%START_LOG%" "  !LT_BROKER!/!LT_ACCOUNT!/!LT_INSTANCE! started."
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════
 :launch_api_bg
 set "LA_BROKER=%~1"
 set "LA_ACCOUNT=%~2"
-set "LA_PORT=%~3"
-set "LA_OFFSET=%~4"
-set "LA_MODE=%~5"
+set "LA_INSTANCE=%~3"
+set "LA_PORT=%~4"
+set "LA_OFFSET=%~5"
+set "LA_MODE=%~6"
+if "!LA_INSTANCE!"=="" set "LA_INSTANCE=default"
 if "!LA_OFFSET!"=="" set "LA_OFFSET=0"
 if "!LA_MODE!"=="" set "LA_MODE=live"
 
-call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT! on port !LA_PORT! (utc_offset=!LA_OFFSET! mode=!LA_MODE!)"
-start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
+call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT!/!LA_INSTANCE! on port !LA_PORT! (utc_offset=!LA_OFFSET! mode=!LA_MODE!)"
+if "!LA_INSTANCE!"=="default" (
+    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
+) else (
+    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!/!LA_INSTANCE!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
+)
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

@@ -12,6 +12,7 @@ CONFIG_YAML = os.path.join(BASE_DIR, "config", "config.yaml")
 BROKERS_DIR = os.path.join(BASE_DIR, "terminals")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 DEFAULT_BACKTEST_TIMEOUT = "6h"
+DEFAULT_INSTANCE = "default"
 
 
 def load_yaml_config():
@@ -38,6 +39,7 @@ def _parse_args():
     parser = argparse.ArgumentParser(description="MT5 HTTP API")
     parser.add_argument("--broker", default=None)
     parser.add_argument("--account", default=None)
+    parser.add_argument("--instance", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--token", default=None)
     parser.add_argument(
@@ -105,6 +107,53 @@ def parse_duration_to_seconds(value):
     return int(round(total))
 
 
+def normalize_instance(value):
+    if value in (None, ""):
+        return DEFAULT_INSTANCE
+    return str(value).strip() or DEFAULT_INSTANCE
+
+
+def match_terminal_config(terms, broker=None, account=None, instance=None):
+    wanted_instance = normalize_instance(instance) if instance is not None else None
+    for terminal in terms:
+        if broker is not None and terminal.get("broker") != broker:
+            continue
+        if account is not None and terminal.get("account", "") != account:
+            continue
+        terminal_instance = normalize_instance(terminal.get("instance"))
+        if wanted_instance is not None and terminal_instance != wanted_instance:
+            continue
+        return {
+            "broker": terminal.get("broker", "default"),
+            "account": terminal.get("account", ""),
+            "instance": terminal_instance,
+            "port": terminal.get("port"),
+            "utc_offset": terminal.get("utc_offset", "0"),
+            "mode": (terminal.get("mode") or "live"),
+            "symbol_suffix": terminal.get("symbol_suffix"),
+        }
+    return None
+
+
+def terminal_dir_candidates(brokers_dir, broker, account="", instance=DEFAULT_INSTANCE):
+    candidates = []
+    normalized_instance = normalize_instance(instance)
+    if account:
+        candidates.append(
+            os.path.join(brokers_dir, broker, account, normalized_instance, "terminal64.exe")
+        )
+        candidates.append(os.path.join(brokers_dir, broker, account, "terminal64.exe"))
+    candidates.append(os.path.join(brokers_dir, broker, "base", "terminal64.exe"))
+    return candidates
+
+
+def make_identity(broker, account="", instance=DEFAULT_INSTANCE):
+    normalized_instance = normalize_instance(instance)
+    if account:
+        return f"{broker}/{account}/{normalized_instance}"
+    return broker
+
+
 def load_terminal_config():
     """Default broker/account when CLI args aren't supplied.
 
@@ -114,31 +163,28 @@ def load_terminal_config():
     """
     cfg = load_yaml_config()
     terms = cfg.get("terminals") or []
-    if _args.broker or _args.account:
-        for t in terms:
-            if t.get("broker") != (_args.broker or t.get("broker")):
-                continue
-            if t.get("account", "") != (_args.account or t.get("account", "")):
-                continue
-            return {
-                "broker": t.get("broker", "default"),
-                "account": t.get("account", ""),
-                "port": t.get("port"),
-                "utc_offset": t.get("utc_offset", "0"),
-                "mode": (t.get("mode") or "live"),
-                "symbol_suffix": t.get("symbol_suffix"),
-            }
+    if _args.broker or _args.account or _args.instance:
+        match = match_terminal_config(
+            terms,
+            broker=_args.broker,
+            account=_args.account,
+            instance=_args.instance,
+        )
+        if match:
+            return match
     if terms:
-        t = terms[0]
-        return {
-            "broker": t.get("broker", "default"),
-            "account": t.get("account", ""),
-            "port": t.get("port"),
-            "utc_offset": t.get("utc_offset", "0"),
-            "mode": (t.get("mode") or "live"),
-            "symbol_suffix": t.get("symbol_suffix"),
+        return match_terminal_config(terms) or {
+            "broker": "default",
+            "account": "",
+            "instance": DEFAULT_INSTANCE,
+            "mode": "live",
         }
-    return {"broker": "default", "account": "", "mode": "live"}
+    return {
+        "broker": "default",
+        "account": "",
+        "instance": DEFAULT_INSTANCE,
+        "mode": "live",
+    }
 
 
 _args = _parse_args()
@@ -146,6 +192,7 @@ _terminal_config = load_terminal_config()
 
 BROKER = _args.broker or _terminal_config.get("broker", "default")
 ACCOUNT = _args.account or _terminal_config.get("account", "")
+INSTANCE = normalize_instance(_args.instance or _terminal_config.get("instance"))
 PORT = _args.port or _terminal_config.get("port") or 6542
 API_TOKEN = _args.token or os.environ.get("API_TOKEN", "")
 UTC_OFFSET_RAW = _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
@@ -183,10 +230,7 @@ WICKWORKS_TIMEOUT_SECONDS = parse_duration_to_seconds(
 ) or 30
 
 # Resolve TERMINAL_PATH: account-specific copy first, then base install
-_candidates = []
-if ACCOUNT:
-    _candidates.append(os.path.join(BROKERS_DIR, BROKER, ACCOUNT, "terminal64.exe"))
-_candidates.append(os.path.join(BROKERS_DIR, BROKER, "base", "terminal64.exe"))
+_candidates = terminal_dir_candidates(BROKERS_DIR, BROKER, ACCOUNT, INSTANCE)
 
 TERMINAL_PATH = _candidates[0]
 for _c in _candidates:
@@ -196,7 +240,7 @@ for _c in _candidates:
 
 TERMINAL_DIR = os.path.dirname(TERMINAL_PATH)
 INI_FILE = os.path.join(TERMINAL_DIR, "mt5start.ini")
-IDENTITY = f"{BROKER}/{ACCOUNT}" if ACCOUNT else BROKER
+IDENTITY = make_identity(BROKER, ACCOUNT, INSTANCE)
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FULL_LOG = os.path.join(LOG_DIR, "full.log")
 BACKTEST_JOB_DIR = os.path.join(LOG_DIR, "backtest-jobs")

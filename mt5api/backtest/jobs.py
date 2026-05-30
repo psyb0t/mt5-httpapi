@@ -104,6 +104,9 @@ def public_payload(job: dict) -> dict:
         "logUrl": f"/backtest/{job['jobId']}/log",
         "statusUrl": f"/backtest/{job['jobId']}",
         "pollAfterSeconds": POLL_AFTER_SECONDS,
+        "optimizationType": job.get("optimizationType", 0),
+        "optimizationResults": job.get("optimizationResults"),
+        "optimizationCache": job.get("optimizationCache"),
     }
     pos = queue_position(job["jobId"])
     if pos is not None:

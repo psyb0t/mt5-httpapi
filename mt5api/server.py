@@ -96,7 +96,9 @@ app.get("/history/deals")(history.get_deals)
 
 # ── Backtest ─────────────────────────────────────────────────────
 app.post("/backtest/build-ini")(backtest_handler.build_ini_route)
+app.post("/backtest/build-set")(backtest_handler.build_set_route)
 app.post("/backtest")(backtest_handler.run_backtest)
 app.get("/backtest/<job_id>")(backtest_handler.get_status)
 app.get("/backtest/<job_id>/report")(backtest_handler.get_report)
 app.get("/backtest/<job_id>/log")(backtest_handler.get_log)
+app.get("/backtest/<job_id>/tail")(backtest_handler.get_tail)

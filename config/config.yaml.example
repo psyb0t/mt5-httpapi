@@ -44,6 +44,15 @@ accounts:
       password: "change-me"
 
 # Terminal instances — one API process per entry.
+# instance: optional terminal clone name. Use this to run multiple MT5
+#   terminals against the same broker/account login on different ports.
+#   Normal case: omit it entirely.
+#   Multi-instance case: if you define the SAME broker/account more than once,
+#   give each clone an explicit instance like "a", "b", "c".
+#   There is no queue field in config.yaml; choose a specific terminal clone by
+#   calling its /<broker>/<account>/<instance>/... route.
+#   Missing/empty = "default". Routes become /<broker>/<account>/<instance>/...
+#   and that default instance also keeps a legacy /<broker>/<account>/ alias.
 # utc_offset: broker wall-clock offset from real UTC.
 #   Accepts hours ("3"), duration strings ("3h30m", "-2h"), or "0".
 #   MT5 disguises broker local time as UTC; this corrects it on the wire.
@@ -61,9 +70,20 @@ terminals:
     utc_offset: "0"
     mode: live
     symbol_suffix: ""
+
+  # Same login cloned multiple times: every clone gets its own instance name
+  # and its own port.
   - broker: roboforex
     account: main
+    instance: a
     port: 5002
     utc_offset: "3"
-    mode: backtest
-    symbol_suffix: ".r"
+    mode: live
+    symbol_suffix: ""
+  - broker: roboforex
+    account: main
+    instance: b
+    port: 5003
+    utc_offset: "3"
+    mode: live
+    symbol_suffix: ""

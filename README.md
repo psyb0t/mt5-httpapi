@@ -19,6 +19,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [`config/setup.bat`](#configsetupbat)
   - [`mt5installers/`](#mt5installers)
 - [API](#api)
+  - [Backtest](#backtest)
   - [Health](#health)
   - [Terminal](#terminal)
   - [Account](#account)
@@ -29,6 +30,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Trade Result](#trade-result)
   - [History](#history)
 - [Examples](#examples)
+- [Optimization Guide](#optimization-guide)
 - [Go Client](#go-client)
 - [Technical Analysis](#technical-analysis) — server-side via wickworks, or client-side with pandas-ta
 - [Make Targets](#make-targets)
@@ -158,6 +160,7 @@ Per-field notes:
 - **`requirements`** — additional pip packages installed in the VM on every boot.
 - **`accounts.<broker>.<account>`** — `broker` must match the installer name (`mt5setup-<broker>.exe`) and the `broker` field in `terminals[]`. `account` must match the `account` field in `terminals[]`.
 - **`terminals[].port`** — container-internal port for this terminal's HTTP API. Only nginx and the mt5 container talk to it; not exposed to the host.
+- **`terminals[].instance`** — optional terminal clone name. Use this when the same `broker` / `account` appears more than once. There is no `queue` field in `config.yaml`; callers select a specific clone by routing requests to `/<broker>/<account>/<instance>/...`. Missing/empty = `default`, and that default instance also keeps the legacy `/<broker>/<account>/...` alias.
 - **`terminals[].utc_offset`** — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 - **`terminals[].mode`** — `live` (default) or `backtest`. `live` keeps `terminal64.exe` running so the MT5 SDK stays initialized for live trading endpoints. `backtest` prepares the same portable directory but does **not** launch `terminal64.exe`, leaving the data dir free for the Strategy Tester subprocess to grab — see [Backtest](#backtest). MT5 is single-instance per portable data dir, so a backtest cannot run against a `live` terminal.
 - **`terminals[].symbol_suffix`** — optional explicit symbol suffix for Strategy Tester remaps. If set, mt5-httpapi appends it when `[Tester].Symbol` does not already end with that suffix. Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
@@ -178,6 +181,12 @@ All terminals are served behind a single host port via nginx. Default entry poin
 
 ```
 http://localhost:8888/<broker>/<account>/...
+```
+
+When you configure explicit terminal instances, route to them like this:
+
+```
+http://localhost:8888/<broker>/<account>/<instance>/...
 ```
 
 Example: with a `roboforex/main` terminal in `config.yaml`'s `terminals:` list, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM.
@@ -764,8 +773,8 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 ### Backtest
 
-Run MT5 Strategy Tester jobs over the HTTP API. Backtest endpoints are served
-by every terminal, but they only **run** successfully on a terminal whose
+Run MT5 Strategy Tester backtests and optimizations over the HTTP API. These
+endpoints are served by every terminal, but they only **run** successfully on a terminal whose
 config.yaml entry has `mode: backtest`. The reason is structural: MT5 is
 single-instance per portable data directory, so if `terminal64.exe` is already
 running to back the live SDK, a Strategy Tester subprocess against the same
@@ -785,8 +794,134 @@ Two-stage flow:
    `tester.ini` (no credentials, no expert path resolution). Stateless helper;
    you can also write the INI yourself.
 2. `POST /backtest` — multipart upload of the INI plus the `.ex5` expert and
-   optional `.set` parameter file. Returns a `jobId`; poll for status; fetch
-   the HTML report and terminal log when complete.
+  optional `.set` parameter file. Returns a `jobId`; poll for status; fetch
+  the report and terminal log when complete.
+
+For a plain backtest, leave `[Tester].Optimization=0` or omit it. For an
+optimization, set `[Tester].Optimization` to one of:
+
+- `1` — slow complete algorithm
+- `2` — fast genetic algorithm
+- `3` — all symbols selected in Market Watch
+
+Optimization runs require a `.set` file whose input parameters already contain
+optimization ranges. mt5-httpapi can now either stage an MT5-saved `.set`
+directly or generate one from structured JSON via `POST /backtest/build-set`.
+
+Optimization modes do not all emit the same MT5 artifacts:
+
+| Mode | MT5 setting | Search scope | Primary parsed artifact | Report name written by MT5 |
+| ---- | ----------- | ------------ | ----------------------- | -------------------------- |
+| `1`  | slow complete | Single symbol in `[Tester].Symbol` | MT5 XML spreadsheet report | `<report>.xml` |
+| `2`  | genetic | Single symbol in `[Tester].Symbol` | MT5 XML spreadsheet report | `<report>.xml` |
+| `3`  | all Market Watch symbols | Symbols currently selected in Market Watch | `Tester/cache/*.opt` cache file | `<report>.symbols.xml` |
+
+Mode `3` is the odd one out. MT5 still writes a report file, but it is the
+header-only `.symbols.xml` variant and the actual pass rows live in the tester
+cache. mt5-httpapi parses that cache, recovers pass-to-symbol mappings from the
+agent logs, and exposes the discovered cache artifact in `optimizationCache`.
+If you want the full mode-by-mode request/response examples, see
+[`docs/backtest-optimization.md`](docs/backtest-optimization.md).
+
+MT5 `.set` files are plain parameter files, typically UTF-16 text. A normal
+saved set looks like this:
+
+```ini
+Properties_=------
+Magic_Number=1615044595
+Entry_Amount=0.01
+Stop_Loss=0
+Take_Profit=92
+___0______=------
+Ind0Param0=3
+Ind0Param1=1
+Ind0Param2=1
+Ind0Param3=8.0
+___1______=------
+Ind1Param0=20
+Ind1Param1=31
+Ind1Param2=5
+```
+
+That example matches the structure of the bundled preset under `assets/sets/`:
+simple `name=value` lines plus separator keys.
+
+For optimization, MT5 UI exports each optimizable input in this form:
+
+```ini
+property=value||start||step||stop||Y|N
+```
+
+Meaning:
+
+| Position | Meaning | Notes |
+| -------- | ------- | ----- |
+| 1 | Current value | Default or starting value |
+| 2 | Start | Optimization range start |
+| 3 | Step | Increment per pass |
+| 4 | Stop | Optimization range end |
+| 5 | Optimize | `Y` = enabled, `N` = disabled |
+
+Examples:
+
+```ini
+TakeProfit=50||10||5||100||Y
+StopLoss=30||10||5||80||Y
+LotSize=0.1||0||0||0||N
+```
+
+- `TakeProfit` and `StopLoss` are optimized because the `optimize` field is `Y`.
+- `LotSize` stays fixed because the `optimize` field is `N`.
+
+So a parameter you want optimized with a known range looks like this:
+
+```ini
+MyParam=50||10||5||200||Y
+```
+
+And a parameter you want fixed looks like this:
+
+```ini
+MyParam=50||0||0||0||N
+```
+
+Create the set file from the MT5 Strategy Tester "Inputs" tab after enabling
+optimization ranges for the parameters you want to vary, then save it.
+If you already have structured parameter metadata, `POST /backtest/build-set`
+accepts JSON and returns MT5-native `.set` text using the same `Y` / `N`
+markers.
+
+Example JSON for `POST /backtest/build-set`:
+
+```json
+{
+  "comments": [
+    "saved on 2026.05.15 08:30:02",
+    "this file contains input parameters for testing/optimizing MyEA"
+  ],
+  "parameters": [
+    {"name": "_Properties_", "value": "------"},
+    {
+      "name": "Take_Profit",
+      "value": 92,
+      "start": 80,
+      "step": 4,
+      "stop": 92,
+      "optimize": true
+    },
+    {
+      "name": "Stop_Loss",
+      "value": 0,
+      "start": 0,
+      "step": 1,
+      "stop": 10,
+      "optimize": false
+    }
+  ]
+}
+```
+
+The response is `text/plain` `.set` content ready to save or upload.
 
 Only one tester runs at a time per API process (serialized by an internal lock);
 additional submissions queue.
@@ -806,6 +941,50 @@ The `docker-compose.yml` mount `./assets:/shared/assets:ro` exposes them inside
 the VM so the API can read them. Path traversal in `expert_name` / `set_name`
 is rejected.
 
+The repo also ships a dedicated warm-up pair:
+
+```text
+assets/experts/MT5SystemWarmup.mq5
+assets/experts/MT5SystemWarmup.ex5
+```
+
+`MT5SystemWarmup.ex5` is the hard default expert used by the backtest-manager's
+historical warm-up flow. The `.mq5` file exists so you can regenerate the
+compiled `.ex5` inside the Windows VM when needed.
+
+#### Regenerating `MT5SystemWarmup.ex5`
+
+When the mt5-httpapi VM is running and `run.sh` has synced scripts into
+`data/shared/scripts/`, regenerate the compiled warm-up EA from inside the
+Windows guest:
+
+1. Open the VM over noVNC.
+2. Launch `cmd.exe` inside the guest.
+3. Run:
+
+```bat
+C:\Users\Docker\Desktop\Shared\scripts\compile-warmup-ea.bat
+```
+
+What the script does:
+
+- locates the first installed broker `base` terminal under
+  `C:\Users\Docker\Desktop\Shared\terminals\*\base`
+- copies `C:\Users\Docker\Desktop\Assets\experts\MT5SystemWarmup.mq5`
+  into that terminal's `MQL5\Experts\Advisors\`
+- runs `MetaEditor64.exe /compile:... /log:...`
+- copies the resulting `MT5SystemWarmup.ex5` back into
+  `C:\Users\Docker\Desktop\Assets\experts\`
+
+Compile log lands at:
+
+```text
+C:\Users\Docker\Desktop\Shared\logs\compile-warmup-ea.log
+```
+
+If the `Assets` folder is not exposed at `C:\Users\Docker\Desktop\Assets`,
+the script falls back to `C:\Users\Docker\Desktop\Shared\assets`.
+
 #### `POST /backtest/build-ini`
 
 Body (JSON):
@@ -824,9 +1003,27 @@ Body (JSON):
 | `currency`         | no       | default `USD`                                      |
 | `leverage`         | no       | default `100`, written as `1:N`                    |
 | `expertParameters` | no       | `.set` filename                                    |
-| `reportName`       | no       | default `backtest-report.htm`                      |
+| `optimization`     | no       | `0` off, `1` slow complete, `2` genetic, `3` Market Watch symbols |
+| `optimizationCriterion` | no  | `0..7`; default `0` (max balance)                 |
+| `reportName`       | no       | default `backtest-report.htm` for backtests, `optimization-report.xml` for optimizations |
 
 Returns `text/plain` with the generated INI.
+
+Example JSON for an optimization INI:
+
+```json
+{
+  "symbol": "GBPUSD",
+  "timeframe": "M15",
+  "expert": "MyEA.ex5",
+  "lastYears": 3,
+  "modelling": "open-prices",
+  "expertParameters": "myea-optimizer.set",
+  "optimization": 2,
+  "optimizationCriterion": 5,
+  "reportName": "gbpusd-m15-sharpe-search"
+}
+```
 
 #### `POST /backtest`
 
@@ -839,6 +1036,7 @@ Multipart form fields:
 | `expert_name`  | one of   | filename in `assets/experts/`                                  |
 | `set`          | no       | `.set` upload                                                  |
 | `set_name`     | no       | filename in `assets/sets/`                                     |
+| `topPasses`    | no       | For optimization jobs, keep the top `1..500` parsed XML passes in the status payload. Default `50`. |
 | `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`). Defaults to `backtest_timeout` from `config.yaml`, then hardcoded `6h`. |
 
 Responds `202 Accepted` with `Retry-After` header and the queued job payload:
@@ -854,6 +1052,9 @@ Responds `202 Accepted` with `Retry-After` header and the queued job payload:
   "reportUrl": "/backtest/b3f7…/report",
   "logUrl": "/backtest/b3f7…/log",
   "pollAfterSeconds": 60,
+  "optimizationType": 0,
+  "optimizationResults": null,
+  "optimizationCache": null,
   "queuePosition": 1
 }
 ```
@@ -870,9 +1071,96 @@ completed, includes a `summary` object parsed from the HTML report
 (`netProfit`, `profitFactor`, `recoveryFactor`, `expectedPayoff`, `sharpeRatio`,
 `maxDrawdown`, `totalTrades`, `profitTrades`, `lossTrades`, …).
 
+For optimization jobs, the payload instead includes:
+
+- `optimizationType` — the submitted MT5 optimization mode (`1`, `2`, or `3`)
+- `optimizationResults` — a parsed top-N list sorted by `Result` descending
+- `optimizationCache` — cache artifact metadata when results came from an MT5 `.opt` cache file
+
+Result source depends on the submitted mode:
+
+- Modes `1` and `2` parse the MT5 XML spreadsheet report first-class, and only use cache parsing if an `.opt` cache is available for the same job.
+- Mode `3` parses the MT5 tester cache first-class because the `.symbols.xml` report does not contain the optimization rows.
+
+The API keeps the MT5 column names as-is. If the XML export includes columns
+such as `Profit`, `Profit Factor`, `Expected Payoff`, `Drawdown`,
+`Recovery Factor`, `Sharpe Ratio`, or optimized input names, those same fields
+appear in each `optimizationResults` row.
+
+Example optimization status payload:
+
+```json
+{
+  "jobId": "8c2a…",
+  "status": "completed",
+  "broker": "darwinex",
+  "account": "tester",
+  "reportName": "gbpusd-m15-sharpe-search.xml",
+  "reportUrl": "/backtest/8c2a…/report",
+  "logUrl": "/backtest/8c2a…/log",
+  "optimizationType": 2,
+  "optimizationCache": null,
+  "optimizationResults": [
+    {
+      "Pass": 184,
+      "Result": 2.41,
+      "Profit": 1263.5,
+      "Profit Factor": 1.48,
+      "Expected Payoff": 13.02,
+      "Recovery Factor": 3.11,
+      "Total trades": 97,
+      "Sharpe Ratio": 2.41,
+      "FastPeriod": 12,
+      "SlowPeriod": 34
+    }
+  ]
+}
+```
+
+Example mode-3 optimization payload:
+
+```json
+{
+  "jobId": "b05643…",
+  "status": "completed",
+  "broker": "darwinex",
+  "account": "live",
+  "reportName": "mode3-gbpcad-m15-last5y-rerun5.symbols.xml",
+  "reportUrl": "/backtest/b05643…/report",
+  "logUrl": "/backtest/b05643…/log",
+  "optimizationType": 3,
+  "optimizationCache": {
+    "name": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.22.788ECDD113BA3097A58EF888EBEFF9CA.opt",
+    "pattern": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.*.opt",
+    "build": "22",
+    "cacheHash": "788ECDD113BA3097A58EF888EBEFF9CA",
+    "rowCount": 28,
+    "symbolComponent": "all_symbols",
+    "period": "M15"
+  },
+  "optimizationResults": [
+    {
+      "Pass": 21,
+      "Symbol": "GBPJPY",
+      "Result": 1657.54,
+      "Profit": 657.54,
+      "Profit Factor": 1.9,
+      "Expected Payoff": 2.57,
+      "Recovery Factor": 3.89,
+      "Sharpe Ratio": 0.75,
+      "Equity DD %": 11.22,
+      "Trades": 256,
+      "Custom": ""
+    }
+  ]
+}
+```
+
 #### `GET /backtest/<jobId>/report` & `/log`
 
-Stream the raw HTML report and terminal log file. `404` until the job finishes.
+Stream the raw report and terminal log file. Backtests return the MT5 HTML
+report. Optimizations return the MT5 XML spreadsheet export. `404` until the
+job finishes.
 
 #### Worked example
 
@@ -904,6 +1192,65 @@ done
 # 4. Fetch the report.
 curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB/report" -o report.htm
 ```
+
+#### Optimization example
+
+This assumes you already created a `.set` file in MT5 with optimization ranges
+enabled and placed it in `assets/sets/` or plan to upload it inline.
+
+```bash
+export URL=http://127.0.0.1:8888/darwinex/tester
+export TOK=changeme-mt5-httpapi-token
+
+# Build the INI, submit the multipart job, poll to completion, then print both
+# the parsed API summary and the first rows from the raw MT5 XML report.
+tmp_ini=$(mktemp) && \
+job_json=$(mktemp) && \
+trap 'rm -f "$tmp_ini" "$job_json"' EXIT && \
+curl -sS -X POST "$URL/backtest/build-ini" \
+  -H "Authorization: Bearer $TOK" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"GBPCAD","timeframe":"M15","expert":"EA Studio GBPCAD M15 1615044595.ex5","lastYears":1,"modelling":"open-prices","expertParameters":"ea studio gbpcad m15 1615044595.take-profit-opt-80-92-step4.set","optimization":1,"optimizationCriterion":0,"reportName":"gbpcad-m15-last1y-openprices-opt"}' \
+  > "$tmp_ini" && \
+curl -sS -X POST "$URL/backtest" \
+  -H "Authorization: Bearer $TOK" \
+  -F "ini=@$tmp_ini;filename=tester.ini" \
+  -F "expert_name=EA Studio GBPCAD M15 1615044595.ex5" \
+  -F "set_name=ea studio gbpcad m15 1615044595.take-profit-opt-80-92-step4.set" \
+  -F "topPasses=20" \
+  > "$job_json" && \
+JOB=$(jq -r '.jobId' "$job_json") && \
+echo "Submitted job: $JOB" && \
+while :; do \
+  STATUS_JSON=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB") && \
+  STATUS=$(printf '%s' "$STATUS_JSON" | jq -r '.status') && \
+  echo "Status: $STATUS" && \
+  [[ "$STATUS" == completed || "$STATUS" == failed ]] && break; \
+  sleep 10; \
+done && \
+echo && echo "Final API summary:" && \
+printf '%s\n' "$STATUS_JSON" | jq '{jobId,status,exitCode,durationSeconds,optimizationResults}' && \
+echo && echo "Report preview:" && \
+curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB/report" \
+  | grep -E '(<Row>|<Cell><Data ss:Type="String">|<Cell><Data ss:Type="Number">|<Cell ss:StyleID="[^"]+"><Data ss:Type="Number">)' \
+  | head -n 60
+```
+
+Notes:
+
+- Use a terminal configured with `mode: backtest`, not a live terminal namespace.
+- Optimization results depend on the ranges encoded in the `.set` file. If no ranges are enabled in MT5, optimization is not meaningful.
+- `optimizationResults` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimizationCache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
+- If a metric you expect is missing from `optimizationResults`, first check the raw XML report. The API preserves MT5's exported columns rather than remapping them to a fixed schema.
+
+## Optimization Guide
+
+See [`docs/backtest-optimization.md`](docs/backtest-optimization.md) for a dedicated guide covering:
+
+- how modes `1`, `2`, and `3` differ operationally
+- how to build INIs and `.set` files for each mode
+- complete `curl` examples for all optimization modes
+- how to interpret `optimizationResults`, `optimizationCache`, and the generated report artifacts
 
 If the API is restarted while a backtest is running, the orphaned job is marked
 `failed` (`API restarted before completion`) on the next startup.
