@@ -289,12 +289,20 @@ def init_mt5(login=None, password=None, server=None):
     return result
 
 
+# Last successful terminal_info snapshot, cached lock-free for cosmetic
+# readers (e.g. chartctl template build stamp). Never authoritative.
+LAST_TERMINAL_INFO = None
+
+
 def ensure_initialized():
     """Probe + reconnect helper. Caller must hold the MT5 lock."""
+    global LAST_TERMINAL_INFO
     try:
         info = m(mt5.terminal_info, _timeout=15)
     except MT5Timeout:
         info = None
+    if info is not None:
+        LAST_TERMINAL_INFO = info
     if info is None:
         log.warning("Terminal not responding, attempting full init...")
         account = get_first_account()

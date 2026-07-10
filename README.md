@@ -771,6 +771,54 @@ What comes back from POST/PUT/DELETE on orders and positions:
 
 `type`: 0 = buy, 1 = sell. `entry`: 0 = opening, 1 = closing. `profit` is 0 for entries, actual realized P&L for exits.
 
+### Chart Deployments
+
+Host live EAs: stage an `.ex5` + `.set`, declare "run this expert with this
+set on this symbol/timeframe," and a resident loader EA attaches it to a
+chart — no RDP, no terminal restart. The API holds *desired state*; the
+loader reconciles the terminal's charts to it and reports back what's
+actually running, so a deployment only reads `running` once the expert is
+confirmed live on a chart.
+
+This is a generic capability — no orchestrator required. Any client (a
+dashboard, a script, an agent) drives it over plain REST. Full contract and
+file formats: [`docs/chart-control-protocol.md`](docs/chart-control-protocol.md).
+
+**Setup: none.** On boot, provisioning auto-compiles the bundled loader EA
+(`assets/experts/MT5ChartLoader.mq5`) in every broker base and wires a
+`[StartUp] Expert=` line into each live terminal's `mt5start.ini`, so the
+loader attaches itself at launch — the whole path is API/config-driven, no
+RDP. Opt out per terminal with `chartctl: false`. Already have a resident
+utility EA on every terminal? Adopt the protocol into it instead with three
+calls — see `assets/experts/include/ChartControl.mqh` — and the standalone
+loader steps aside automatically (single-loader mutex).
+
+```bash
+# Stage artifacts
+curl -F "expert=@HappyGoldScalp.ex5" "$MT5_API_URL/experts"
+curl -F "set=@gold-m5.set"          "$MT5_API_URL/sets"   # returns parsed inputs
+
+# Deploy
+curl -X POST "$MT5_API_URL/deployments" -H "Content-Type: application/json" \
+  -d '{"expert":"HappyGoldScalp.ex5","set":"gold-m5.set","symbol":"XAUUSD","timeframe":"M5"}'
+# -> {"id":"dep_a1b2c3","status":"pending"}
+
+# Verify (status flips to "running" once the loader confirms attach)
+curl "$MT5_API_URL/deployments"
+curl "$MT5_API_URL/charts"        # live chart/EA inventory from inside the terminal
+
+# Change the set file in place (no restart), pause, or remove
+curl -X PATCH  "$MT5_API_URL/deployments/dep_a1b2c3" -d '{"set":"gold-m5-v2.set"}'
+curl -X PATCH  "$MT5_API_URL/deployments/dep_a1b2c3" -d '{"enabled":false}'
+curl -X DELETE "$MT5_API_URL/deployments/dep_a1b2c3"
+```
+
+Endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets`, `GET /sets/<name>`,
+`POST/GET /deployments`, `GET/PATCH/DELETE /deployments/<id>`,
+`POST /deployments/reconcile`, `GET /charts`, `GET /loader`,
+`POST /charts/<chart_id>/screenshot`. Live-mode terminals only; disable via
+`chartctl.enabled: false` in `config.yaml`.
+
 ### Backtest
 
 Run MT5 Strategy Tester backtests and optimizations over the HTTP API. These

@@ -6,6 +6,27 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [Unreleased] — Chart Deployments (chartctl)
+
+Remote EA deployment: attach Expert Advisors to charts with set files over the
+HTTP API, no RDP and no terminal restart.
+
+### Added
+
+- **Chart Deployments feature** (`mt5api/chartctl/`, `mt5api/handlers/chartctl.py`). Stage `.ex5`/`.set` artifacts, declare deployments (expert + set + symbol + timeframe) as desired state, and a resident loader EA reconciles the terminal's charts to it. New endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets` + `GET /sets/<name>`, `POST/GET /deployments` + `GET/PATCH/DELETE /deployments/<id>`, `POST /deployments/reconcile`, `GET /charts`, `GET /loader`, `POST /charts/<chart_id>/screenshot`.
+- **Chart Control Protocol v1** — a file-based contract in `MQL5\Files\chartctl\` (`desired.json` / `observed.json` / command channel). Documented in `docs/chart-control-protocol.md`. Deployments only report `running` once the loader confirms the expert is live on a chart; drift and failures surface in `observed.json`.
+- **Reference loader EA** `assets/experts/MT5ChartLoader.mq5` plus the portable include `assets/experts/include/ChartControl.mqh`, so an existing resident EA (e.g. an account tracker) can adopt the protocol with three calls instead of running a second EA. Single-loader mutex via a terminal GlobalVariable makes co-existence safe.
+- Config block `chartctl:` in `config.yaml` (enable flag, reconcile hint, staleness window, command timeout, upload cap). Live-mode terminals only; per-terminal `chartctl: false` override.
+- **Zero-touch loader bootstrap** — `scripts/compile-chartctl-loader.bat` auto-compiles the loader in every broker base on boot and propagates the `.ex5` to existing terminal instances; `config_helper.py write_ini` adds a `[StartUp] Expert=Advisors\MT5ChartLoader` section (honoring `symbol_suffix`) to live chartctl-enabled terminals, so the loader attaches itself at terminal launch. No RDP or manual attach anywhere in the deploy path. Duplicate loaders from re-fired `[StartUp]` lines self-close via the mutex.
+- Tests: `tests/test_chartctl_units.py`, `tests/test_chartctl_endpoints.py`, and a Python `tests/chartctl_fake_loader.py` that plays the EA side of the protocol so the full endpoint suite runs on Linux with no MT5.
+
+### Notes
+
+- All chartctl handlers are **lock-free** — pure file I/O against the terminal data dir — so they never queue behind the process-wide MT5 SDK lock.
+- Additive and gated on `chartctl.enabled`; with the block absent the API behaves exactly as before.
+
+---
+
 ## [v4.3.1] — 2026-05-17
 
 Critical trading-path fixes + integration test suite.

@@ -25,6 +25,19 @@ tailscale:
   auth_key: ""       # leave empty to disable the tailscale sidecar entirely
   login_server: ""   # Headscale login server URL; empty = Tailscale cloud
 
+# Chart Deployments (chartctl) — EA hosting primitives. Stage .ex5/.set
+# artifacts and declare "run expert X with set Y on symbol S timeframe T"
+# as desired state; a resident loader EA (assets/experts/MT5ChartLoader.mq5,
+# or your own EA using assets/experts/include/ChartControl.mqh) reconciles
+# the terminal's charts to it. Live-mode terminals only; backtest-mode
+# terminals ignore this entirely. See docs/chart-control-protocol.md.
+chartctl:
+  enabled: true                 # false = chartctl endpoints return 404
+  reconcile_hint_interval: "5s" # written into desired.json for the loader
+  observed_stale_after: "60s"   # observed.json older than this = loader stale
+  command_timeout: "30s"        # wait for screenshot/one-shot loader replies
+  max_upload_bytes: 16777216    # 16 MB cap on .ex5/.set uploads
+
 # Extra pip packages installed in the VM on every boot.
 # MetaTrader5, flask, waitress, and flask-compress are always installed.
 requirements: []
