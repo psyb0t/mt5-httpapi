@@ -18,7 +18,23 @@ if exist "%SHARED%\rebooting.flag" (
     rmdir "%SHARED%\install.running" 2>nul
 )
 
+:: A lock from a previous boot session is stale even without the flag —
+:: hard reboots (MT5AutoReboot, docker restart, power loss) give the
+:: holder no cleanup window. Boot-time stamp lives in a sibling file so
+:: the lock dir stays empty and plain rmdir release still works.
+set "BOOTID="
+for /f "delims=" %%B in ('powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('yyyyMMddHHmmss')" 2^>nul') do set "BOOTID=%%B"
+if defined BOOTID if exist "%LOCKDIR%" (
+    set "LOCK_BOOTID="
+    if exist "%LOCKDIR%.bootid" set /p LOCK_BOOTID=<"%LOCKDIR%.bootid"
+    if not "!LOCK_BOOTID!"=="!BOOTID!" (
+        call :log "Removing stale install.running lock from previous boot."
+        rmdir /s /q "%LOCKDIR%" 2>nul
+    )
+)
+
 :: ── Atomic lock ─────────────────────────────────────────────────────
+if defined BOOTID echo !BOOTID!>"%LOCKDIR%.bootid"
 mkdir "%LOCKDIR%" 2>nul
 if !errorlevel! neq 0 (
     call :log "Another install.bat is already running, exiting."

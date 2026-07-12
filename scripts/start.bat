@@ -16,7 +16,29 @@ set "LOCKDIR=%SHARED%\start.running"
 mkdir "%LOGDIR%" 2>nul
 rmdir "%FULL_LOG%.lock" 2>nul
 
+:: ── Stale lock cleanup ────────────────────────────────────────────
+:: The lock lives on the shared mount and survives reboots, but the
+:: holder can't always release it: install.bat's staged reboots leave
+:: only a 5s shutdown window (missable under TCG emulation), and
+:: MT5AutoReboot / docker restart / power loss leave none. A lock can
+:: only legitimately be held by a start.bat from THIS boot session, so
+:: it's stamped with the boot time (sibling file, so the lock dir stays
+:: empty and plain rmdir release still works) and any other stamp — or
+:: none — marks it stale.
+set "BOOTID="
+for /f "delims=" %%B in ('powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('yyyyMMddHHmmss')" 2^>nul') do set "BOOTID=%%B"
+if defined BOOTID if exist "%LOCKDIR%" (
+    set "LOCK_BOOTID="
+    if exist "%LOCKDIR%.bootid" set /p LOCK_BOOTID=<"%LOCKDIR%.bootid"
+    if not "!LOCK_BOOTID!"=="!BOOTID!" (
+        echo [%date% %time%] Removing stale start.running lock from previous boot. >> "%START_LOG%"
+        echo [%date% %time%] [start] Removing stale start.running lock from previous boot. >> "%FULL_LOG%"
+        rmdir /s /q "%LOCKDIR%" 2>nul
+    )
+)
+
 :: ── Atomic lock (only one start.bat instance at a time) ──────────
+if defined BOOTID echo !BOOTID!>"%LOCKDIR%.bootid"
 mkdir "%LOCKDIR%" 2>nul
 if !errorlevel! neq 0 (
     echo [%date% %time%] Another start.bat is already running, exiting.
@@ -154,7 +176,14 @@ if "!REBOOT_INTERVAL!"=="0" (
 :: mt5start.ini can auto-attach it at launch. Skipped when chartctl is
 :: disabled globally in config.yaml. Non-fatal: a compile failure only
 :: means chart deployments stay unavailable until fixed.
-for /f "delims=" %%C in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" chartctl_enabled 2^>nul') do set "CHARTCTL_ON=%%C"
+:: Tempfile read, NOT for /f ('command') — with both python.exe and the
+:: script path quoted, cmd's quote-stripping mangles the subshell command
+:: and it silently outputs nothing (same failure the api_token block
+:: documents; also why install.bat's ports lookup falls back to 6542).
+set "CHARTCTL_ON="
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" chartctl_enabled > "%SHARED%\mt5_cc.tmp" 2>nul
+for /f "usebackq delims=" %%C in ("%SHARED%\mt5_cc.tmp") do set "CHARTCTL_ON=%%C"
+del "%SHARED%\mt5_cc.tmp" 2>nul
 if "!CHARTCTL_ON!"=="1" (
     call :log "%START_LOG%" "Compiling chartctl loader EA (MT5ChartLoader)..."
     call "%SCRIPTS%\compile-chartctl-loader.bat" >> "%START_LOG%" 2>&1
