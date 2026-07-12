@@ -19,7 +19,7 @@
 #property strict
 
 #define CHARTCTL_PROTOCOL   1
-#define CHARTCTL_VERSION    "1.0.0"
+#define CHARTCTL_VERSION    "1.0.1"
 #define CHARTCTL_DIR        "chartctl"          // under MQL5\Files\
 #define CHARTCTL_MUTEX_GV   "chartctl_loader_owner"
 #define CHARTCTL_ID_INPUT   "__chartctl_id"
@@ -245,8 +245,11 @@ bool CChartControl::AttachDeployment(const ChartCtlDeployment &dep)
    for(int i = 0; i < 40; i++)
    {
       ChartRedraw(cid);
+      // CHART_EXPERT_NAME is NULL (not "") when no expert is attached,
+      // and NULL != "" is true in MQL5 — test length, or the very first
+      // iteration false-passes and an expert-less chart reports running.
       string en = ChartGetString(cid, CHART_EXPERT_NAME);
-      if(en != "")
+      if(StringLen(en) > 0)
       {
          // Stamp attribution into the chart comment so we can re-identify
          // this chart as ours after a terminal restart (MT5 persists the
@@ -482,9 +485,10 @@ bool CChartControl::WriteFileAtomic(const string relpath, const string content)
    }
    FileWriteString(h, content);
    FileClose(h);
-   // FileMove with rewrite flag = atomic-ish replace on Windows.
-   FileDelete(relpath);
-   if(!FileMove(tmp, 0, relpath, 0))
+   // FileMove with rewrite flag = atomic-ish replace on Windows. Without
+   // FILE_REWRITE the move needs the pre-delete to have worked, and that
+   // fails with 5020 whenever the API side has the file open for a read.
+   if(!FileMove(tmp, 0, relpath, FILE_REWRITE))
    {
       PrintFormat("ChartControl: FileMove %s->%s failed (err=%d)",
                   tmp, relpath, GetLastError());
