@@ -46,7 +46,7 @@ desired**, never as "the API copied some files."
     {
       "id": "dep_a1b2c3",
       "expert": "HappyGoldScalp",
-      "template": "chartctl\\dep_a1b2c3.tpl",
+      "template": "\\Files\\chartctl\\dep_a1b2c3.tpl",
       "symbol": "XAUUSD",
       "timeframe": "M5",
       "enabled": true
@@ -56,8 +56,13 @@ desired**, never as "the API copied some files."
 ```
 
 `revision` is a monotonic counter; the loader can skip a full parse when it
-hasn't changed. `template` is relative to the terminal's `templates\`
-directory — the API generates one `.tpl` per deployment.
+hasn't changed. `template` is passed verbatim to `ChartApplyTemplate()`;
+the leading backslash makes MT5 resolve it against `<data>\MQL5` — the
+only search root that doesn't depend on which EX5 hosts the loader
+(paths without a leading backslash resolve relative to the calling EX5's
+own folder, and the `templates\` GUI directory is never searched). The
+API generates one `.tpl` per deployment, written into the
+`MQL5\Files\chartctl\` protocol directory.
 
 ### `observed.json` — loader → API (rewritten every reconcile pass, ~5s)
 

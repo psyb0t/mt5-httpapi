@@ -5,8 +5,11 @@ All chartctl writes are confined to four roots under TERMINAL_DIR:
   MQL5/Experts/Uploaded/     staged .ex5 (shared with the backtest feature)
   chartctl/sets/             staged .set parameter files
   chartctl/registry.json     API-side desired-state registry
-  MQL5/Files/chartctl/       the EA-visible protocol directory
-  templates/chartctl/        generated per-deployment .tpl files
+  MQL5/Files/chartctl/       the EA-visible protocol directory, including
+                             the generated per-deployment .tpl files —
+                             ChartApplyTemplate only resolves paths under
+                             the MQL5 dir (leading backslash) or relative
+                             to the calling EX5, so templates must live here
 
 Every externally supplied filename passes safe_name() — same contract as
 the backtest handler's _safe_basename, factored here so both artifact
@@ -21,7 +24,7 @@ EXPERTS_DIR = os.path.join(TERMINAL_DIR, "MQL5", "Experts", "Uploaded")
 SETS_DIR = os.path.join(TERMINAL_DIR, "chartctl", "sets")
 REGISTRY_PATH = os.path.join(TERMINAL_DIR, "chartctl", "registry.json")
 PROTOCOL_DIR = os.path.join(TERMINAL_DIR, "MQL5", "Files", "chartctl")
-TEMPLATES_DIR = os.path.join(TERMINAL_DIR, "templates", "chartctl")
+TEMPLATES_DIR = PROTOCOL_DIR
 SCREENSHOTS_DIR = os.path.join(PROTOCOL_DIR, "shots")
 
 HOST_EXPERTS_DIR = os.path.join(ASSETS_DIR, "experts")

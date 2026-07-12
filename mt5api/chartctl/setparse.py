@@ -15,10 +15,22 @@ round-trip and diff files losslessly.
 
 
 def _decode(data: bytes) -> str:
-    for enc in ("utf-16", "utf-8-sig", "utf-8"):
+    # Never blind-try utf-16: the codec "succeeds" on any even-length
+    # ASCII input by pairing bytes into CJK garbage, which then parses to
+    # zero inputs — and the deployment silently runs on EA defaults.
+    # Decide by BOM (MT5 exports carry one), then by embedded NULs
+    # (BOM-less UTF-16), then plain 8-bit.
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16")
+    if b"\x00" in data:
+        try:
+            return data.decode("utf-16-le")
+        except (UnicodeDecodeError, UnicodeError):
+            pass
+    for enc in ("utf-8-sig", "utf-8"):
         try:
             return data.decode(enc)
-        except (UnicodeDecodeError, UnicodeError):
+        except UnicodeDecodeError:
             continue
     return data.decode("latin-1")
 

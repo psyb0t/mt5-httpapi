@@ -61,6 +61,26 @@ def test_parse_utf16_bytes():
     assert {"name": "Magic", "value": "12345"} in got
 
 
+def test_parse_ascii_bytes_even_length():
+    # Even-length ASCII input decodes "successfully" as utf-16 garbage if
+    # utf-16 is blind-tried first, silently yielding zero inputs — and the
+    # deployment would run on EA defaults. Regression for that decode bug.
+    from mt5api.chartctl.setparse import parse_set_bytes
+    raw = b"; comment\r\nLots=0.10\r\nMagic=99\r\n"
+    assert len(raw) % 2 == 0
+    got = parse_set_bytes(raw)
+    assert {"name": "Lots", "value": "0.10"} in got
+    assert {"name": "Magic", "value": "99"} in got
+
+
+def test_parse_bomless_utf16_bytes():
+    from mt5api.chartctl.setparse import parse_set_bytes
+    raw = "Lots=0.01\nMagic=12345\n".encode("utf-16-le")  # no BOM
+    got = parse_set_bytes(raw)
+    assert {"name": "Lots", "value": "0.01"} in got
+    assert {"name": "Magic", "value": "12345"} in got
+
+
 # ── tpl_builder ──────────────────────────────────────────────────────
 
 def test_tpl_text_structure():
@@ -120,7 +140,7 @@ def test_add_bumps_revision_and_writes_desired(reg):
     desired = json.loads((tmp / "desired.json").read_text())
     assert desired["revision"] == 1
     assert desired["deployments"][0]["symbol"] == "XAUUSD"
-    assert desired["deployments"][0]["template"].startswith("chartctl\\")
+    assert desired["deployments"][0]["template"].startswith("\\Files\\chartctl\\")
 
 
 def test_duplicate_enabled_chart_rejected(reg):

@@ -78,9 +78,12 @@ def tpl_filename(deployment_id: str) -> str:
 
 
 def tpl_relative_name(deployment_id: str) -> str:
-    """The name the loader passes to ChartApplyTemplate — relative to the
-    terminal's templates/ directory."""
-    return f"chartctl\\{tpl_filename(deployment_id)}"
+    """The name the loader passes to ChartApplyTemplate. The leading
+    backslash makes MT5 resolve it against <data>\\MQL5 — the only
+    host-EA-independent root ChartApplyTemplate searches (without it the
+    path is relative to the calling EX5's folder, which varies per host
+    EA and yields err 5019 file-not-found)."""
+    return f"\\Files\\chartctl\\{tpl_filename(deployment_id)}"
 
 
 def write_tpl(*, deployment_id: str, expert_name: str, expert_rel_path: str,

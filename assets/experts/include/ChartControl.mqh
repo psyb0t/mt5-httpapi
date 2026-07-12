@@ -29,7 +29,7 @@ struct ChartCtlDeployment
 {
    string id;
    string expert;      // expert short name (CHART_EXPERT_NAME match target)
-   string templ;       // template name relative to templates\  (e.g. chartctl\dep_x.tpl)
+   string templ;       // template path for ChartApplyTemplate; leading \ = relative to <data>\MQL5 (e.g. \Files\chartctl\dep_x.tpl)
    string symbol;
    string timeframe;
    bool   enabled;
