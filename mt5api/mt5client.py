@@ -420,6 +420,18 @@ def restart_terminal():
     if not killed:
         log.warning("No terminal process found, launching fresh.")
 
+    # Apply the WebRequest allowlist while the terminal is down. MT5 rewrites
+    # common.ini on exit, so this must happen after the kill and before launch.
+    # No-op unless this terminal has a desired allowlist set.
+    try:
+        from mt5api.chartctl import webrequest as _wr
+
+        applied = _wr.apply_from_desired(TERMINAL_DIR)
+        if applied is not None:
+            log.info("Applied WebRequest allowlist (%d URL(s)) to common.ini", applied)
+    except Exception:
+        log.exception("Failed to apply WebRequest allowlist; continuing restart")
+
     today = date.today().strftime("%Y%m%d")
     journal_log = os.path.join(TERMINAL_DIR, "logs", f"{today}.log")
     offset = 0

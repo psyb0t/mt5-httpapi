@@ -819,6 +819,28 @@ Endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets`, `GET /sets/<name>`,
 `POST /charts/<chart_id>/screenshot`. Live-mode terminals only; disable via
 `chartctl.enabled: false` in `config.yaml`.
 
+#### WebRequest allowlist
+
+EAs that call `WebRequest()` need their target hosts in the terminal's
+allowlist (Tools → Options → Expert Advisors → *Allow WebRequest for*).
+That list lives in `Config/common.ini` and MT5 only reads it at startup, so
+setting it is a dedicated, restart-bearing call rather than something on the
+deploy hot path (most deployments need no URLs):
+
+```bash
+curl "$MT5_API_URL/webrequest"                       # current allowlist
+curl -X PUT "$MT5_API_URL/webrequest" \
+  -H "Content-Type: application/json" \
+  -d '{"add":["https://api.telegram.org"]}'          # or {"urls":[...]} to replace
+# -> {"success":true,"urls":[...]}  (terminal restarts to apply)
+```
+
+The first call migrates whatever the terminal already has, so manually
+configured URLs are preserved. The list is persisted per terminal and
+re-applied automatically on every reboot (boot deletes `common.ini`), so it
+survives the periodic auto-restart. `GET`/`PUT /webrequest`; live-mode
+chartctl terminals only.
+
 ### Backtest
 
 Run MT5 Strategy Tester backtests and optimizations over the HTTP API. These

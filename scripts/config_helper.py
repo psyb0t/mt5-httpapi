@@ -142,6 +142,21 @@ def main():
         with open(outpath, "w", encoding="utf-8") as f:
             f.write(ini)
 
+        # WebRequest allowlist boot-seed: start.bat deletes Config/common.ini
+        # every boot, so re-emit it here (after the delete, before launch) from
+        # the persistent per-terminal desired file. No-op when this terminal has
+        # no allowlist set. Gated exactly like the loader [StartUp] block above.
+        if mode == "live" and chartctl_on and term_override is not False:
+            try:
+                sys.path.insert(0, _SHARED_DIR)
+                from mt5api.chartctl import webrequest as wr
+                cfg_dir = os.path.join(os.path.dirname(os.path.abspath(outpath)), "Config")
+                urls = wr.load_desired(cfg_dir)
+                if urls is not None:
+                    wr.write_common_ini(cfg_dir, urls)
+            except Exception as exc:  # non-fatal: never block terminal launch
+                print(f"WARN: WebRequest allowlist seed failed: {exc}", file=sys.stderr)
+
     elif cmd == "chartctl_enabled":
         chartctl_cfg = cfg.get("chartctl") or {}
         print("1" if bool(chartctl_cfg.get("enabled", True)) else "0")
