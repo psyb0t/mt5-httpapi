@@ -53,6 +53,7 @@ cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-wa
 cp "${DIR}/scripts/compile-chartctl-loader.bat" "${DIR}/data/shared/scripts/compile-chartctl-loader.bat"
 cp "${DIR}/scripts/check_health.py" "${DIR}/data/shared/scripts/check_health.py"
 cp "${DIR}/scripts/config_helper.py" "${DIR}/data/shared/scripts/config_helper.py"
+cp "${DIR}/scripts/webrequest_allowlist_codec.py" "${DIR}/data/shared/scripts/webrequest_allowlist_codec.py"
 cp "${DIR}/scripts/event-log-tailer.ps1" "${DIR}/data/shared/scripts/event-log-tailer.ps1"
 cp "${DIR}/scripts/healthcheck.sh" "${DIR}/data/shared/scripts/healthcheck.sh"
 chmod +x "${DIR}/data/shared/scripts/healthcheck.sh"
