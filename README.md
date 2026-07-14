@@ -823,23 +823,38 @@ Endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets`, `GET /sets/<name>`,
 
 EAs that call `WebRequest()` need their target hosts in the terminal's
 allowlist (Tools → Options → Expert Advisors → *Allow WebRequest for*).
-That list lives in `Config/common.ini` and MT5 only reads it at startup, so
-setting it is a dedicated, restart-bearing call rather than something on the
-deploy hot path (most deployments need no URLs):
+It's a dedicated call rather than something on the deploy hot path (most
+deployments need no URLs):
 
 ```bash
 curl "$MT5_API_URL/webrequest"                       # current allowlist
 curl -X PUT "$MT5_API_URL/webrequest" \
   -H "Content-Type: application/json" \
   -d '{"add":["https://api.telegram.org"]}'          # or {"urls":[...]} to replace
-# -> {"success":true,"urls":[...]}  (terminal restarts to apply)
+# -> {"success":true,"urls":[...],"applied_via":"autoit:OK"}
+curl -X POST "$MT5_API_URL/webrequest/apply"         # re-apply current list now
 ```
 
-The first call migrates whatever the terminal already has, so manually
-configured URLs are preserved. The list is persisted per terminal and
-re-applied automatically on every reboot (boot deletes `common.ini`), so it
-survives the periodic auto-restart. `GET`/`PUT /webrequest`; live-mode
-chartctl terminals only.
+Inside the Windows VM the allowlist is **not** stored in `common.ini` — it
+lives in the machine-bound `MQL5\experts.dat` and MT5 drops it on every
+restart. So the list is applied the way a user would: a bundled AutoIt
+interpreter (`assets/autoit/`) drives Tools → Options → Expert Advisors and
+types the URLs in. This takes effect immediately in-session (no restart), and
+because MT5 forgets it on restart, the API re-applies the persisted list
+automatically ~25 s after each terminal (re)start, so it survives the periodic
+auto-reboot. On a bare-metal terminal where `common.ini` *is* the store, it
+falls back to writing `common.ini` + restarting.
+
+The desired list is persisted per terminal (`Config/webrequest.json`); the
+first call migrates whatever the terminal already has, so manually configured
+URLs are preserved. `GET`/`PUT /webrequest`, `POST /webrequest/apply`;
+live-mode chartctl terminals only.
+
+Because desktop focus is shared, GUI applies are serialized across every
+terminal on a host by a named Windows kernel mutex (crash-safe — a dead holder
+is auto-released), and each terminal's boot re-apply is staggered by its port,
+so many terminals per VM can safely provision WebRequest URLs without their
+keystrokes colliding.
 
 ### Backtest
 

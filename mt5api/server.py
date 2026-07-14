@@ -118,11 +118,13 @@ if CHARTCTL_ENABLED:
     app.get("/loader")(chartctl.loader_status)
     app.post("/charts/<chart_id>/screenshot")(chartctl.screenshot)
 
-    # WebRequest allowlist — dedicated call; restarts the terminal to apply.
+    # WebRequest allowlist — dedicated call. Applied via AutoIt (VM) or a
+    # common.ini rewrite + restart (bare metal). /apply re-applies on demand.
     from mt5api.handlers import webrequest
 
     app.get("/webrequest")(webrequest.get_webrequest)
     app.put("/webrequest")(webrequest.put_webrequest)
+    app.post("/webrequest/apply")(webrequest.apply_webrequest)
 
 # ── Backtest ─────────────────────────────────────────────────────
 app.post("/backtest/build-ini")(backtest_handler.build_ini_route)

@@ -156,12 +156,18 @@ def client(monkeypatch, tmp_path):
 
     monkeypatch.setattr(handler, "restart_terminal", fake_restart)
 
+    # default: no AutoIt (bare-metal fallback path) unless a test flips it
+    from mt5api.chartctl import autoit_webrequest as autoit
+    monkeypatch.setattr(autoit, "available", lambda: False)
+
     app = Flask(__name__)
     app.get("/webrequest")(handler.get_webrequest)
     app.put("/webrequest")(handler.put_webrequest)
+    app.post("/webrequest/apply")(handler.apply_webrequest)
     c = app.test_client()
     c._term = term
     c._calls = calls
+    c._autoit = autoit
     return c
 
 
@@ -173,7 +179,9 @@ def test_get_empty(client):
 def test_put_replace_restarts_and_applies(client):
     r = client.put("/webrequest", json={"urls": REAL_URLS})
     assert r.status_code == 200
-    assert r.get_json() == {"success": True, "urls": REAL_URLS}
+    body = r.get_json()
+    assert body["success"] is True and body["urls"] == REAL_URLS
+    assert body["applied_via"] == "restart"        # bare-metal fallback path
     assert client._calls["restart"] == 1
     # persisted + written to common.ini
     assert wr.load_desired(wr.config_dir(client._term)) == REAL_URLS
@@ -194,6 +202,56 @@ def test_put_add_remove_migrates_from_current(client):
     assert r.get_json()["urls"] == [
         "https://tracker.algotradingspace.com", "https://new.example.com",
     ]
+
+
+def test_put_uses_autoit_when_available(client, monkeypatch):
+    """On the VM (AutoIt present) the allowlist is applied via the Options
+    dialog, not a terminal restart."""
+    seen = {}
+
+    def fake_apply(urls, timeout=120, use_runas=False):
+        seen["urls"] = list(urls)
+        return "OK", "log"
+
+    monkeypatch.setattr(client._autoit, "available", lambda: True)
+    monkeypatch.setattr(client._autoit, "apply_urls", fake_apply)
+
+    r = client.put("/webrequest", json={"urls": REAL_URLS})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True and body["applied_via"] == "autoit:OK"
+    assert seen["urls"] == REAL_URLS
+    assert client._calls["restart"] == 0            # no restart on the AutoIt path
+    assert wr.load_desired(wr.config_dir(client._term)) == REAL_URLS
+
+
+def test_put_autoit_failure_returns_500(client, monkeypatch):
+    monkeypatch.setattr(client._autoit, "available", lambda: True)
+    monkeypatch.setattr(client._autoit, "apply_urls", lambda urls, timeout=120, use_runas=False: ("FAIL", "boom"))
+    r = client.put("/webrequest", json={"urls": REAL_URLS})
+    assert r.status_code == 500
+    # desired still persisted so a later /apply or boot can retry
+    assert wr.load_desired(wr.config_dir(client._term)) == REAL_URLS
+
+
+def test_apply_endpoint_reapplies_desired(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(client._autoit, "available", lambda: True)
+    monkeypatch.setattr(
+        client._autoit, "apply_urls",
+        lambda urls, timeout=120, use_runas=False: (seen.update(urls=list(urls)) or ("OK", "")),
+    )
+    wr.save_desired(wr.config_dir(client._term), REAL_URLS)
+    r = client.post("/webrequest/apply")
+    assert r.status_code == 200
+    assert r.get_json()["urls"] == REAL_URLS
+    assert seen["urls"] == REAL_URLS
+
+
+def test_apply_endpoint_noop_when_empty(client):
+    r = client.post("/webrequest/apply")
+    assert r.status_code == 200
+    assert r.get_json()["urls"] == []
 
 
 def test_put_rejects_non_dict(client):
