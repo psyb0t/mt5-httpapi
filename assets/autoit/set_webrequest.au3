@@ -1,8 +1,13 @@
-; set_webrequest.au3  <window_match>  <urlfile>  <logpath>
+; set_webrequest.au3  <window_match>  [<pid>]  <urlfile>  <logpath>
 ; Adds the URLs in <urlfile> (one per line) to MT5's Tools->Options->Expert
 ; Advisors "Allow WebRequest for listed URL" list, for the terminal whose
 ; window title contains <window_match> (the login). NO #includes (an undefined
 ; include function pops a blocking error dialog).
+;
+; <pid> (optional, 0 = unknown) is the terminal64.exe process id. Cloned
+; terminals of the same account have IDENTICAL window titles, so the login is
+; ambiguous — the pid is the only thing that pins the right terminal. When
+; given, both the main window and the Options dialog are matched by owner pid.
 ;
 ; MT5's URL list is a SysListView32 with a greyed "add new URL like ..." row at
 ; the bottom; double-clicking it opens an inline edit. We type the URL + Enter,
@@ -45,15 +50,72 @@ Func DumpList($hWin, $tag)
    Return $cnt
 EndFunc
 
+; Visible top-level window for this terminal: by owner pid when known
+; (title as tie-break among the pid's windows), else by title substring.
+; WinList() alone is NOT enough — it returns hidden windows, and same-login
+; terminal clones share the exact same title.
+Func FindMainWindow($match, $pid)
+   Local $wl = WinList()
+   Local $best = 0
+   For $i = 1 To $wl[0][0]
+      Local $h = $wl[$i][1]
+      Local $title = $wl[$i][0]
+      If $title = "" Then ContinueLoop
+      If BitAND(WinGetState($h), 2) = 0 Then ContinueLoop   ; visible only
+      If $pid > 0 Then
+         If WinGetProcess($h) <> $pid Then ContinueLoop
+         If StringInStr($title, $match) > 0 Then Return $h
+         If $best = 0 Then $best = $h
+      Else
+         If StringInStr($title, $match) > 0 Then $best = $h
+      EndIf
+   Next
+   Return $best
+EndFunc
+
+; Focus the terminal and open Tools->Options (Ctrl+O), retrying, and only
+; accept an Options window owned by our pid (another terminal's dialog, or
+; any window with "Options" in its title, must not be driven).
+Func OpenOptions($hMT5, $pid)
+   For $try = 1 To 3
+      WinActivate($hMT5)
+      If WinWaitActive($hMT5, "", 3) = 0 Then
+         LogW("  activate attempt " & $try & " failed (active='" & WinGetTitle("[ACTIVE]") & "')")
+         ContinueLoop
+      EndIf
+      Send("^o")
+      Local $t = TimerInit()
+      While TimerDiff($t) < 5000
+         Local $hOpt = WinWait("Options", "", 1)
+         If $hOpt <> 0 Then
+            If $pid = 0 Or WinGetProcess($hOpt) = $pid Then Return $hOpt
+            LogW("  ignoring foreign Options window (pid=" & WinGetProcess($hOpt) & ")")
+         EndIf
+      WEnd
+      LogW("  ctrl+o attempt " & $try & ": no Options dialog")
+   Next
+   Return 0
+EndFunc
+
 ; ---- args ----
+; 4 args: match, pid, urlfile, logpath. 3 args (legacy caller): match,
+; urlfile, logpath with pid unknown.
 If $CmdLine[0] < 3 Then Exit 10
-Global $match   = $CmdLine[1]
-Global $urlfile = $CmdLine[2]
-Global $logpath = $CmdLine[3]
+Global $match = $CmdLine[1]
+Global $pid = 0
+Global $urlfile, $logpath
+If $CmdLine[0] >= 4 Then
+   $pid     = Int($CmdLine[2])
+   $urlfile = $CmdLine[3]
+   $logpath = $CmdLine[4]
+Else
+   $urlfile = $CmdLine[2]
+   $logpath = $CmdLine[3]
+EndIf
 
 $gLog = FileOpen($logpath, 2)
 If $gLog = -1 Then Exit 11
-LogW("=== set_webrequest match=" & $match & " ===")
+LogW("=== set_webrequest match=" & $match & " pid=" & $pid & " ===")
 
 ; ---- read urls ----
 Global $raw = FileRead($urlfile)
@@ -65,22 +127,16 @@ Next
 LogW("urls_in_file=" & $n_urls)
 
 ; ---- find + activate MT5 ----
-Local $wl = WinList()
-Local $hMT5 = 0
-For $i = 1 To $wl[0][0]
-   If $wl[$i][0] <> "" And StringInStr($wl[$i][0], $match) > 0 Then $hMT5 = $wl[$i][1]
-Next
+Local $hMT5 = FindMainWindow($match, $pid)
 If $hMT5 = 0 Then
    LogW("RESULT=FAIL reason=mt5_window_not_found")
    FileClose($gLog)
    Exit 2
 EndIf
-WinActivate($hMT5)
-Sleep(600)
+LogW("mt5='" & WinGetTitle($hMT5) & "' win_pid=" & WinGetProcess($hMT5))
 
 ; ---- open Options ----
-Send("^o")
-Local $hOpt = WinWait("Options", "", 10)
+Local $hOpt = OpenOptions($hMT5, $pid)
 If $hOpt = 0 Then
    LogW("RESULT=FAIL reason=options_not_found")
    FileClose($gLog)

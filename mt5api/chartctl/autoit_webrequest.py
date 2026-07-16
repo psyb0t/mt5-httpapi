@@ -25,7 +25,7 @@ import re
 import subprocess
 import time
 
-from mt5api.config import ASSETS_DIR, BROKER, INI_FILE, TERMINAL_DIR
+from mt5api.config import ACCOUNT, ASSETS_DIR, BROKER, INI_FILE, INSTANCE, TERMINAL_DIR
 from mt5api.logger import log
 
 AUTOIT_DIR = os.path.join(ASSETS_DIR, "autoit")
@@ -114,6 +114,35 @@ def _window_match() -> str:
     return BROKER
 
 
+def _terminal_pid() -> int:
+    """PID of THIS terminal's terminal64.exe, resolved by executable path.
+
+    The window title (login) is ambiguous — cloned terminals of the same
+    account have identical titles — so the pid is what actually pins the right
+    window for the AutoIt script. WMI via PowerShell, because it can read exe
+    paths of elevated processes. Returns 0 if not found (script falls back to
+    title matching)."""
+    if ACCOUNT:
+        path_filter = f"*\\{BROKER}\\{ACCOUNT}\\{INSTANCE}\\*"
+    else:
+        path_filter = f"*\\{BROKER}\\*"
+    ps_cmd = (
+        "Get-WmiObject Win32_Process -Filter \"Name='terminal64.exe'\" "
+        "| Where-Object { $_.ExecutablePath -like '" + path_filter + "' } "
+        "| Select-Object -First 1 -ExpandProperty ProcessId"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        pid = int(result.stdout.strip())
+        return pid if pid > 0 else 0
+    except (ValueError, subprocess.SubprocessError, OSError):
+        log.warning("WebRequest: terminal pid lookup failed; falling back to title match")
+        return 0
+
+
 def _config_path(name: str) -> str:
     return os.path.join(TERMINAL_DIR, "Config", name)
 
@@ -153,8 +182,11 @@ def _run_script(
         pass
 
     match = _window_match()
-    au3_args = [match, *extra_args, logpath]  # AutoIt argv: match, extra..., logpath
-    log.info("AutoIt: launching %s (match=%s, use_runas=%s)", script, match, use_runas)
+    pid = _terminal_pid()
+    # AutoIt argv: match, pid, extra..., logpath
+    au3_args = [match, str(pid), *extra_args, logpath]
+    log.info("AutoIt: launching %s (match=%s, pid=%d, use_runas=%s)",
+             script, match, pid, use_runas)
 
     # Hold the machine-wide GUI mutex for the whole run so no other terminal's
     # apply steals focus mid-type.

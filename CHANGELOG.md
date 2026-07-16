@@ -29,6 +29,8 @@ HTTP API, no RDP and no terminal restart.
 
 ### Fixed
 
+- **WebRequest AutoIt apply drove the wrong terminal window (`options_not_found` / silent wrong-terminal writes).** The scripts matched the MT5 main window by title substring (the login), but `WinList()` also returns hidden windows and cloned terminals of the same account have byte-identical titles — so the apply could target the wrong terminal or fail to activate one at all. The API now resolves its terminal64.exe PID by executable path (WMI) and passes it to the scripts, which match only visible windows owned by that PID and verify the Options dialog belongs to it too, with activation retries. Legacy 3-arg script invocation still works (title fallback).
+
 - **Loader v1.0.2 — duplicate-chart leak across terminal restarts.** The `chartctl:<id>` chart-comment stamp does not survive MT5's profile save/restore cycle, so every terminal restart (including the periodic auto-reboot) left the loader unable to recognize its own chart and it opened a fresh duplicate — accumulating until the terminal's chart cap. Reconcile now first **adopts** an unowned chart already running the deployment's exact expert + symbol + timeframe before opening a new one; comment stamps are verified by read-back (`ChartSetString` is async); a failed attach closes the chart it opened (previously an expert-less chart leaked per attempt) and backs off for 60 s; and errors are tracked per deployment instead of in a single shared slot (one deployment's failure no longer masks another's).
 
 ### Notes

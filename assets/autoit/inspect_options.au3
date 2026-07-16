@@ -41,19 +41,32 @@ Func DumpVisible($hWin, $tag)
 EndFunc
 
 ; ---- args ----
+; 3 args: match, pid, logpath. 2 args (legacy): match, logpath.
 If $CmdLine[0] < 2 Then Exit 10
-Global $match   = $CmdLine[1]
-Global $logpath = $CmdLine[2]
+Global $match = $CmdLine[1]
+Global $pid = 0
+Global $logpath
+If $CmdLine[0] >= 3 Then
+   $pid     = Int($CmdLine[2])
+   $logpath = $CmdLine[3]
+Else
+   $logpath = $CmdLine[2]
+EndIf
 
 $gLog = FileOpen($logpath, 2)
 If $gLog = -1 Then Exit 11
-LogW("=== inspect_options match=" & $match & " ===")
+LogW("=== inspect_options match=" & $match & " pid=" & $pid & " ===")
 
-; ---- find + activate MT5 ----
+; ---- find + activate MT5 (visible windows only; by owner pid when known —
+; same-login terminal clones share the exact same window title) ----
 Local $wl = WinList()
 Local $hMT5 = 0
 For $i = 1 To $wl[0][0]
-   If $wl[$i][0] <> "" And StringInStr($wl[$i][0], $match) > 0 Then $hMT5 = $wl[$i][1]
+   Local $h = $wl[$i][1]
+   If $wl[$i][0] = "" Then ContinueLoop
+   If BitAND(WinGetState($h), 2) = 0 Then ContinueLoop
+   If $pid > 0 And WinGetProcess($h) <> $pid Then ContinueLoop
+   If StringInStr($wl[$i][0], $match) > 0 Then $hMT5 = $h
 Next
 If $hMT5 = 0 Then
    LogW("RESULT=FAIL reason=mt5_window_not_found")
@@ -62,11 +75,12 @@ If $hMT5 = 0 Then
 EndIf
 WinActivate($hMT5)
 Sleep(600)
-LogW("mt5='" & WinGetTitle($hMT5) & "'")
+LogW("mt5='" & WinGetTitle($hMT5) & "' win_pid=" & WinGetProcess($hMT5))
 
 ; ---- open Options ----
 Send("^o")
 Local $hOpt = WinWait("Options", "", 10)
+If $hOpt <> 0 And $pid > 0 And WinGetProcess($hOpt) <> $pid Then $hOpt = 0
 If $hOpt = 0 Then
    LogW("RESULT=FAIL reason=options_not_found")
    FileClose($gLog)
