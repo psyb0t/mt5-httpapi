@@ -117,6 +117,7 @@ if CHARTCTL_ENABLED:
     app.get("/charts")(chartctl.charts)
     app.get("/loader")(chartctl.loader_status)
     app.post("/charts/<chart_id>/screenshot")(chartctl.screenshot)
+    app.post("/charts/<chart_id>/close")(chartctl.close_chart)
 
     # WebRequest allowlist — dedicated call. Applied via AutoIt (VM) or a
     # common.ini rewrite + restart (bare metal). /apply re-applies on demand.

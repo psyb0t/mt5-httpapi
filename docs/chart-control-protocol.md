@@ -92,8 +92,13 @@ is the only definition of a converged deployment. The API's
 ### `command.json` / `command_result.json` — one-shot imperatives
 
 For operations that produce an artifact rather than converge state
-(currently `screenshot`, and a `reconcile` nudge). One command in flight;
-the loader writes the result keyed by `command_id` and deletes the command.
+(currently `screenshot`, `close_chart`, and a `reconcile` nudge). One
+command in flight; the loader writes the result keyed by `command_id` and
+deletes the command.
+
+`close_chart` closes an arbitrary chart by `chart_id` (from the observed
+charts list) — the cleanup escape hatch for charts the loader cannot
+attribute. The loader refuses (`CLOSE_REFUSED`) to close its own chart.
 
 ---
 
@@ -103,13 +108,17 @@ Every pass (timer-driven, ~1s), the owning loader:
 
 1. Reads `desired.json`; if `revision` changed, reconciles.
 2. **Reconcile** = diff desired deployments against actual charts:
-   - Enabled deployment with no matching chart → `SymbolSelect` →
+   - Enabled deployment with no matching chart → first try to **adopt** an
+     unowned chart already running the exact expert + symbol + timeframe
+     (stamp it `chartctl:<id>`); only if none exists, `SymbolSelect` →
      `ChartOpen` → `ChartApplyTemplate` → verify `CHART_EXPERT_NAME`
-     within 10s → stamp `chartctl:<id>` into the chart comment for
-     cross-restart attribution.
+     within 10s → stamp `chartctl:<id>` into the chart comment. Stamps
+     are verified by read-back (`ChartSetString` is asynchronous); a
+     failed attach closes the chart it opened and backs off 60s.
    - A chart it owns (comment starts `chartctl:`) whose deployment is gone
      or disabled → `ChartClose`.
-   - Charts it doesn't own are **reported but never touched**.
+   - Charts it doesn't own are **reported but never touched** by
+     reconcile (an explicit `close_chart` command can close them).
 3. Writes `observed.json`.
 4. Answers any pending `command.json`.
 
@@ -121,8 +130,11 @@ Every pass (timer-driven, ~1s), the owning loader:
   the live mutex and stays passive, reclaiming only if the owner vanishes.
 - All file writes are atomic (temp + `FileMove`).
 - Attribution is by the `chartctl:<id>` chart comment the loader sets at
-  attach time; MT5 persists it with the saved chart, so after a restart the
-  loader re-identifies its charts and only repairs what's missing.
+  attach time. The comment does **not** reliably survive a terminal
+  restart (observed live: MT5's saved profile restores the chart and
+  expert but drops the comment, leaking one duplicate chart per reboot),
+  which is why reconcile adopts exact-match unowned charts instead of
+  trusting the comment alone.
 
 ---
 
@@ -208,6 +220,7 @@ already deploy.
 | `GET` | `/charts` | Live chart/EA inventory from the terminal |
 | `GET` | `/loader` | Loader presence/version/liveness |
 | `POST` | `/charts/<chart_id>/screenshot` | PNG of a chart |
+| `POST` | `/charts/<chart_id>/close` | Close a chart (incl. unattributed ones) |
 
 All routes sit behind the terminal's existing per-account route prefix and
 bearer-token auth. Nothing here touches the MT5 SDK lock.

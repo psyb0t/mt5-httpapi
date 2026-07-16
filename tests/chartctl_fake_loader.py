@@ -94,6 +94,12 @@ class FakeLoader:
             with open(os.path.join(self.dir, "shots", fname), "wb") as fh:
                 fh.write(b"\x89PNG\r\n\x1a\n")  # PNG magic, enough for a test
             result.update({"status": "ok", "file": fname})
+        elif cmd.get("action") == "close_chart":
+            if cmd.get("chart_id") == -1:  # sentinel: unknown chart
+                result.update({"status": "error", "error_code": "CLOSE_FAILED",
+                               "error_detail": "err=4101"})
+            else:
+                result.update({"status": "ok"})
         else:
             result.update({"status": "error", "error_code": "UNKNOWN_ACTION",
                            "error_detail": cmd.get("action", "")})

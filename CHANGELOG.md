@@ -25,6 +25,12 @@ HTTP API, no RDP and no terminal restart.
 
   Desired list persisted per terminal (`Config/webrequest.json`); first use migrates from the terminal's existing list, preserving manually-configured URLs. GUI applies are serialized host-wide by a named Windows kernel mutex (`Global\mt5_httpapi_webrequest_autoit`; crash-safe via `WAIT_ABANDONED`) since desktop focus is shared across terminals, and each terminal's boot re-apply is staggered by its port — so many terminals per VM can provision URLs without keystroke collisions. `inspect_options.au3`/`selftest.au3` ship as GUI-automation diagnostics (`POST /webrequest/apply?script=`). Tests: `tests/test_webrequest.py`. Live-mode chartctl terminals only.
 
+- `POST /charts/<chart_id>/close` + a `close_chart` loader command — close any chart by id, including charts the loader cannot attribute to a deployment. The loader refuses to close its own chart.
+
+### Fixed
+
+- **Loader v1.0.2 — duplicate-chart leak across terminal restarts.** The `chartctl:<id>` chart-comment stamp does not survive MT5's profile save/restore cycle, so every terminal restart (including the periodic auto-reboot) left the loader unable to recognize its own chart and it opened a fresh duplicate — accumulating until the terminal's chart cap. Reconcile now first **adopts** an unowned chart already running the deployment's exact expert + symbol + timeframe before opening a new one; comment stamps are verified by read-back (`ChartSetString` is async); a failed attach closes the chart it opened (previously an expert-less chart leaked per attempt) and backs off for 60 s; and errors are tracked per deployment instead of in a single shared slot (one deployment's failure no longer masks another's).
+
 ### Notes
 
 - All chartctl handlers are **lock-free** — pure file I/O against the terminal data dir — so they never queue behind the process-wide MT5 SDK lock.

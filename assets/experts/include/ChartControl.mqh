@@ -19,7 +19,7 @@
 #property strict
 
 #define CHARTCTL_PROTOCOL   1
-#define CHARTCTL_VERSION    "1.0.1"
+#define CHARTCTL_VERSION    "1.0.2"
 #define CHARTCTL_DIR        "chartctl"          // under MQL5\Files\
 #define CHARTCTL_MUTEX_GV   "chartctl_loader_owner"
 #define CHARTCTL_ID_INPUT   "__chartctl_id"
@@ -54,9 +54,12 @@ private:
    long     m_applied_revision;   // last desired revision we reconciled
    long     m_last_revision_seen;
    datetime m_started;
-   string   m_last_error_id;
-   string   m_last_error_code;
-   string   m_last_error_detail;
+   // Per-deployment error slots (parallel arrays keyed by deployment id).
+   // A single shared slot let one deployment's error mask another's.
+   string   m_err_ids[];
+   string   m_err_codes[];
+   string   m_err_details[];
+   datetime m_err_times[];        // drives the failed-attach retry cooldown
 
    //--- file helpers -------------------------------------------------
    bool     ReadFile(const string relpath, string &out);
@@ -72,11 +75,14 @@ private:
    //--- reconcile ----------------------------------------------------
    void     ScanCharts(ChartCtlChart &out[]);
    long     FindChartFor(const string dep_id, ChartCtlChart &charts[]);
+   long     FindAdoptableChart(const ChartCtlDeployment &dep, ChartCtlChart &charts[]);
+   bool     StampChart(const long cid, const string dep_id);
    bool     AttachDeployment(const ChartCtlDeployment &dep);
    void     DetachChart(const long chart_id);
    ENUM_TIMEFRAMES TF(const string s);
    void     RecordError(const string id, const string code, const string detail);
-   void     ClearError();
+   void     ClearError(const string id);
+   bool     InRetryCooldown(const string id);
 
    //--- observed + command output -----------------------------------
    void     WriteObserved(ChartCtlDeployment &desired[], ChartCtlChart &charts[]);
@@ -173,8 +179,33 @@ void CChartControl::Tick(void)
          if(!desired[i].enabled)
             continue;
          long cid = FindChartFor(desired[i].id, charts);
-         if(cid < 0)
-            AttachDeployment(desired[i]);
+         if(cid >= 0)
+            continue;
+         // Adopt before opening: an unowned chart already running this
+         // exact expert/symbol/timeframe is almost certainly a previous
+         // incarnation of this deployment whose comment stamp was lost
+         // (comments do NOT reliably survive terminal restarts). Claiming
+         // it instead of opening a fresh chart is what stops duplicates
+         // from accumulating one-per-reboot.
+         cid = FindAdoptableChart(desired[i], charts);
+         if(cid >= 0)
+         {
+            if(StampChart(cid, desired[i].id))
+            {
+               ClearError(desired[i].id);
+               PrintFormat("ChartControl: adopted chart %I64d for %s (%s %s)",
+                           cid, desired[i].id, desired[i].symbol,
+                           desired[i].timeframe);
+            }
+            else
+               RecordError(desired[i].id, "STAMP_FAILED",
+                           "adoption stamp on chart "
+                           + IntegerToString(cid) + " did not read back");
+            continue;
+         }
+         if(InRetryCooldown(desired[i].id))
+            continue;   // recent failure — don't hammer ChartOpen every pass
+         AttachDeployment(desired[i]);
       }
 
       // 2) Detach charts we own whose deployment is gone or disabled.
@@ -251,12 +282,17 @@ bool CChartControl::AttachDeployment(const ChartCtlDeployment &dep)
       string en = ChartGetString(cid, CHART_EXPERT_NAME);
       if(StringLen(en) > 0)
       {
-         // Stamp attribution into the chart comment so we can re-identify
-         // this chart as ours after a terminal restart (MT5 persists the
-         // comment with the saved chart).
-         ChartSetString(cid, CHART_COMMENT, "chartctl:" + dep.id);
-         ChartRedraw(cid);
-         ClearError();
+         if(!StampChart(cid, dep.id))
+         {
+            // Without the stamp we could never re-identify the chart and
+            // would open a duplicate next pass — better to fail visibly.
+            RecordError(dep.id, "STAMP_FAILED",
+                        "expert attached but CHART_COMMENT stamp did not "
+                        "read back; closing chart");
+            ChartClose(cid);
+            return false;
+         }
+         ClearError(dep.id);
          PrintFormat("ChartControl: attached %s on %s %s (chart %I64d)",
                      en, dep.symbol, dep.timeframe, cid);
          return true;
@@ -264,10 +300,60 @@ bool CChartControl::AttachDeployment(const ChartCtlDeployment &dep)
       Sleep(250);
    }
 
+   // Leaving the chart open here leaks an expert-less chart per pass (the
+   // expert may still load later, but then adoption reclaims a closed-and-
+   // reopened one just as well). Close what we opened.
+   ChartClose(cid);
    RecordError(dep.id, "EXPERT_NOT_ATTACHED",
                "template applied but CHART_EXPERT_NAME empty after 10s; "
                "GetLastError=" + IntegerToString(GetLastError()));
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Stamp attribution into the chart comment and verify it stuck.    |
+//| ChartSetString is asynchronous — the write is only queued — so   |
+//| read it back (with retries) before trusting it.                  |
+//+------------------------------------------------------------------+
+bool CChartControl::StampChart(const long cid, const string dep_id)
+{
+   string want = "chartctl:" + dep_id;
+   for(int i = 0; i < 12; i++)
+   {
+      ChartSetString(cid, CHART_COMMENT, want);
+      ChartRedraw(cid);
+      Sleep(250);
+      if(ChartGetString(cid, CHART_COMMENT) == want)
+         return true;
+   }
+   PrintFormat("ChartControl: CHART_COMMENT stamp failed on chart %I64d (%s)",
+               cid, dep_id);
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| An unowned chart matching a deployment's expert+symbol+timeframe |
+//| (a prior incarnation whose stamp was lost, or a verify-timeout   |
+//| chart whose expert loaded late).                                 |
+//+------------------------------------------------------------------+
+long CChartControl::FindAdoptableChart(const ChartCtlDeployment &dep,
+                                       ChartCtlChart &charts[])
+{
+   for(int i = 0; i < ArraySize(charts); i++)
+   {
+      if(charts[i].deployment_id != "")
+         continue;   // owned by another deployment
+      if(!charts[i].expert_enabled)
+         continue;
+      if(charts[i].expert != dep.expert)
+         continue;
+      if(charts[i].symbol != dep.symbol)
+         continue;
+      if(charts[i].timeframe != "PERIOD_" + dep.timeframe)
+         continue;
+      return charts[i].chart_id;
+   }
+   return -1;
 }
 
 //+------------------------------------------------------------------+
@@ -298,11 +384,13 @@ void CChartControl::ScanCharts(ChartCtlChart &out[])
       c.deployment_id  = "";   // attribution below
 
       // Attribution is by the chart comment we set at attach time
-      // (ChartSetString CHART_COMMENT = "chartctl:<id>"). MT5 persists the
-      // comment with the saved chart, so this survives terminal restarts.
-      // We cannot read a foreign expert's inputs from MQL5, which is why
-      // the comment — not the template's __chartctl_id input — is the
-      // authoritative marker.
+      // (ChartSetString CHART_COMMENT = "chartctl:<id>"). We cannot read
+      // a foreign expert's inputs from MQL5, which is why the comment —
+      // not the template's __chartctl_id input — is the marker. The
+      // comment does NOT reliably survive a terminal restart (observed
+      // live 2026-07-16: one duplicate chart accumulated per reboot), so
+      // reconcile also adopts unowned exact-match charts (see
+      // FindAdoptableChart) instead of trusting this alone.
       string cmt = ChartGetString(cid, CHART_COMMENT);
       int p = StringFind(cmt, "chartctl:");
       if(p >= 0)
@@ -363,6 +451,19 @@ void CChartControl::HandleCommand(void)
    {
       m_applied_revision = -1;   // force a full reconcile next pass
       result += "\"status\":\"ok\"";
+   }
+   else if(action == "close_chart")
+   {
+      long cid = JsonNum("chart_id", body);
+      if(cid == ChartID())
+         result += "\"status\":\"error\",\"error_code\":\"CLOSE_REFUSED\","
+                 + "\"error_detail\":\"refusing to close the loader's own chart\"";
+      else if(ChartClose(cid))
+         result += "\"status\":\"ok\"";
+      else
+         result += "\"status\":\"error\",\"error_code\":\"CLOSE_FAILED\","
+                 + "\"error_detail\":\"err="
+                 + IntegerToString(GetLastError()) + "\"";
    }
    else
    {
@@ -426,14 +527,15 @@ void CChartControl::WriteObserved(ChartCtlDeployment &desired[],
    }
    j += "],";
 
-   // errors[] — last error only, cleared on success
+   // errors[] — one entry per failing deployment, cleared on its success
    j += "\"errors\":[";
-   if(m_last_error_id != "")
+   for(int e = 0; e < ArraySize(m_err_ids); e++)
    {
-      j += "{\"id\":\"" + JsonEscape(m_last_error_id) + "\",";
+      if(e) j += ",";
+      j += "{\"id\":\"" + JsonEscape(m_err_ids[e]) + "\",";
       j += "\"status\":\"failed\",";
-      j += "\"code\":\"" + JsonEscape(m_last_error_code) + "\",";
-      j += "\"detail\":\"" + JsonEscape(m_last_error_detail) + "\"}";
+      j += "\"code\":\"" + JsonEscape(m_err_codes[e]) + "\",";
+      j += "\"detail\":\"" + JsonEscape(m_err_details[e]) + "\"}";
    }
    j += "]";
 
@@ -445,17 +547,51 @@ void CChartControl::WriteObserved(ChartCtlDeployment &desired[],
 void CChartControl::RecordError(const string id, const string code,
                                 const string detail)
 {
-   m_last_error_id = id;
-   m_last_error_code = code;
-   m_last_error_detail = detail;
+   int slot = -1;
+   for(int i = 0; i < ArraySize(m_err_ids); i++)
+      if(m_err_ids[i] == id) { slot = i; break; }
+   if(slot < 0)
+   {
+      slot = ArraySize(m_err_ids);
+      ArrayResize(m_err_ids, slot + 1);
+      ArrayResize(m_err_codes, slot + 1);
+      ArrayResize(m_err_details, slot + 1);
+      ArrayResize(m_err_times, slot + 1);
+   }
+   m_err_ids[slot] = id;
+   m_err_codes[slot] = code;
+   m_err_details[slot] = detail;
+   m_err_times[slot] = TimeCurrent();
    PrintFormat("ChartControl ERROR [%s] %s: %s", id, code, detail);
 }
 
-void CChartControl::ClearError(void)
+void CChartControl::ClearError(const string id)
 {
-   m_last_error_id = "";
-   m_last_error_code = "";
-   m_last_error_detail = "";
+   for(int i = 0; i < ArraySize(m_err_ids); i++)
+   {
+      if(m_err_ids[i] != id)
+         continue;
+      int last = ArraySize(m_err_ids) - 1;
+      m_err_ids[i] = m_err_ids[last];
+      m_err_codes[i] = m_err_codes[last];
+      m_err_details[i] = m_err_details[last];
+      m_err_times[i] = m_err_times[last];
+      ArrayResize(m_err_ids, last);
+      ArrayResize(m_err_codes, last);
+      ArrayResize(m_err_details, last);
+      ArrayResize(m_err_times, last);
+      return;
+   }
+}
+
+// A deployment that just failed to attach gets a 60s cooldown so the
+// loader doesn't churn ChartOpen/ChartClose on every reconcile pass.
+bool CChartControl::InRetryCooldown(const string id)
+{
+   for(int i = 0; i < ArraySize(m_err_ids); i++)
+      if(m_err_ids[i] == id)
+         return (TimeCurrent() - m_err_times[i]) < 60;
+   return false;
 }
 
 //+------------------------------------------------------------------+

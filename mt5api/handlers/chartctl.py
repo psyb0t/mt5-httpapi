@@ -354,6 +354,21 @@ def loader_status():
     return jsonify(payload)
 
 
+def close_chart(chart_id):
+    try:
+        result = cmd.run_command("close_chart", {"chart_id": int(chart_id)})
+    except ValueError:
+        return _err(400, "BAD_REQUEST", "chart_id must be an int")
+    except cmd.LoaderBusy as exc:
+        return _err(409, "LOADER_BUSY", str(exc))
+    except cmd.LoaderTimeout as exc:
+        return _err(504, "LOADER_TIMEOUT", str(exc))
+    if result.get("status") != "ok":
+        return _err(502, result.get("error_code", "LOADER_ERROR"),
+                    result.get("error_detail", "loader reported failure"))
+    return jsonify({"closed": int(chart_id)})
+
+
 def screenshot(chart_id):
     try:
         result = cmd.run_command("screenshot", {

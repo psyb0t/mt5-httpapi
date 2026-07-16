@@ -73,6 +73,7 @@ def client(monkeypatch, tmp_path):
     app.get("/charts")(chartctl.charts)
     app.get("/loader")(chartctl.loader_status)
     app.post("/charts/<chart_id>/screenshot")(chartctl.screenshot)
+    app.post("/charts/<chart_id>/close")(chartctl.close_chart)
 
     c = app.test_client()
     c._proto_dir = str(proto)   # stash for the fake loader
@@ -257,3 +258,48 @@ def test_screenshot_via_command_channel(client, monkeypatch):
     t.join()
     assert r.status_code == 200
     assert r.mimetype == "image/png"
+
+
+def _run_with_fake_loader(client, loader, method, url):
+    """Issue a command-channel request while the fake loader answers."""
+    import threading
+    import time
+
+    def answer():
+        for _ in range(20):
+            if loader.handle_command():
+                return
+            time.sleep(0.05)
+
+    t = threading.Thread(target=answer)
+    t.start()
+    r = getattr(client, method)(url)
+    t.join()
+    return r
+
+
+def test_close_chart_via_command_channel(client):
+    _upload_expert(client)
+    client.post("/deployments", json={
+        "expert": "EA.ex5", "symbol": "XAUUSD", "timeframe": "M5"})
+    loader = FakeLoader(client._proto_dir)
+    loader.reconcile()
+    chart_id = client.get("/charts").get_json()["charts"][0]["chart_id"]
+
+    r = _run_with_fake_loader(client, loader, "post", f"/charts/{chart_id}/close")
+    assert r.status_code == 200
+    assert r.get_json() == {"closed": chart_id}
+
+
+def test_close_chart_loader_failure(client):
+    loader = FakeLoader(client._proto_dir)
+    loader.reconcile()
+    # chart_id -1 is the fake loader's CLOSE_FAILED sentinel
+    r = _run_with_fake_loader(client, loader, "post", "/charts/-1/close")
+    assert r.status_code == 502
+    assert r.get_json()["code"] == "CLOSE_FAILED"
+
+
+def test_close_chart_bad_id(client):
+    r = client.post("/charts/notanint/close")
+    assert r.status_code == 400

@@ -816,8 +816,9 @@ curl -X DELETE "$MT5_API_URL/deployments/dep_a1b2c3"
 Endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets`, `GET /sets/<name>`,
 `POST/GET /deployments`, `GET/PATCH/DELETE /deployments/<id>`,
 `POST /deployments/reconcile`, `GET /charts`, `GET /loader`,
-`POST /charts/<chart_id>/screenshot`. Live-mode terminals only; disable via
-`chartctl.enabled: false` in `config.yaml`.
+`POST /charts/<chart_id>/screenshot`, `POST /charts/<chart_id>/close`.
+Live-mode terminals only; disable via `chartctl.enabled: false` in
+`config.yaml`.
 
 #### WebRequest allowlist
 
