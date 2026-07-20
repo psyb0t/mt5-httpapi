@@ -244,6 +244,17 @@ IDENTITY = make_identity(BROKER, ACCOUNT, INSTANCE)
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FULL_LOG = os.path.join(LOG_DIR, "full.log")
 BACKTEST_JOB_DIR = os.path.join(LOG_DIR, "backtest-jobs")
+_COMMON_FILES_ENV = os.environ.get("MT5_COMMON_FILES_DIR")
+_APPDATA_ENV = os.environ.get("APPDATA")
+COMMON_FILES_DIR = (
+    os.path.abspath(_COMMON_FILES_ENV)
+    if _COMMON_FILES_ENV
+    else (
+        os.path.join(_APPDATA_ENV, "MetaQuotes", "Terminal", "Common", "Files")
+        if _APPDATA_ENV
+        else None
+    )
+)
 
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,

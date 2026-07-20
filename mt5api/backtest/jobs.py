@@ -20,8 +20,9 @@ JOB_LOCK = threading.Lock()
 BACKTEST_JOBS: dict = {}
 
 POLL_AFTER_SECONDS = 60
-TERMINAL_STATUSES = frozenset({"completed", "failed"})
-ACTIVE_STATUSES = frozenset({"queued", "running"})
+PROJECT_POLL_AFTER_SECONDS = 2
+TERMINAL_STATUSES = frozenset({"completed", "failed", "canceled"})
+ACTIVE_STATUSES = frozenset({"queued", "running", "canceling"})
 
 
 def now_iso() -> str:
@@ -103,11 +104,32 @@ def public_payload(job: dict) -> dict:
         "reportUrl": f"/backtest/{job['jobId']}/report",
         "logUrl": f"/backtest/{job['jobId']}/log",
         "statusUrl": f"/backtest/{job['jobId']}",
-        "pollAfterSeconds": POLL_AFTER_SECONDS,
+        "pollAfterSeconds": (
+            PROJECT_POLL_AFTER_SECONDS if job.get("projectMode") else POLL_AFTER_SECONDS
+        ),
         "optimizationType": job.get("optimizationType", 0),
         "optimizationResults": job.get("optimizationResults"),
         "optimizationCache": job.get("optimizationCache"),
     }
+    if job.get("projectMode"):
+        payload.update({
+            "projectMode": True,
+            "projectId": job.get("projectId"),
+            "externalRunId": job.get("externalRunId"),
+            "planFingerprint": job.get("planFingerprint"),
+            "submittedIniUrl": f"/backtest/{job['jobId']}/submitted-ini",
+            "projectManifestUrl": f"/backtest/{job['jobId']}/project-manifest",
+            "projectBundleUrl": f"/backtest/{job['jobId']}/project-bundle",
+            "executionManifestUrl": f"/backtest/{job['jobId']}/execution-manifest",
+            "materializationAuditUrl": f"/backtest/{job['jobId']}/materialization",
+            "outputManifestUrl": f"/backtest/{job['jobId']}/output-manifest",
+            "outputArtifactsUrl": f"/backtest/{job['jobId']}/artifacts",
+            "logDeltaManifestUrl": f"/backtest/{job['jobId']}/log-deltas-manifest",
+            "logDeltaArtifactsUrl": f"/backtest/{job['jobId']}/log-deltas",
+            "cancelUrl": f"/backtest/{job['jobId']}",
+            "cancelRequested": bool(job.get("cancelRequested")),
+            "materializationStatus": job.get("materializationStatus"),
+        })
     pos = queue_position(job["jobId"])
     if pos is not None:
         payload["queuePosition"] = pos
