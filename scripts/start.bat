@@ -17,6 +17,15 @@ mkdir "%LOGDIR%" 2>nul
 rmdir "%FULL_LOG%.lock" 2>nul
 
 :: ── Atomic lock (only one start.bat instance at a time) ──────────
+:: Self-heal a stale lock from an interrupted previous run before acquiring.
+:: start.bat holds this lock for its whole launch window; a forced reboot in
+:: that window (the MT5AutoReboot task, a `docker restart`, or a manual reboot)
+:: kills the script before it can rmdir the lock, leaving the dir behind. On the
+:: next boot the leftover lock makes start.bat exit as "already running" and the
+:: VM comes up with NO terminals until the lock is deleted by hand. A fresh boot
+:: guarantees no prior start.bat survives (Windows autologon runs this once per
+:: boot), so clearing our own lock here is safe.
+rmdir "%LOCKDIR%" 2>nul
 mkdir "%LOCKDIR%" 2>nul
 if !errorlevel! neq 0 (
     echo [%date% %time%] Another start.bat is already running, exiting.
