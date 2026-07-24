@@ -1,0 +1,21 @@
+name: pipeline
+
+# mt5-httpapi ships as a docker-compose / Windows-VM stack, not a single
+# pushable image, so there's no docker-image build in CI. This pipeline exists
+# solely to publish the skill(s) under .agents/skills/ to ClawHub on tag pushes.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # Publish the skills under .agents/skills/ to ClawHub, one ClawHub slug per
+  # subdir. Tag pushes only (see the trigger above).
+  publish-skills-to-clawhub:
+    uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-skills-publish-workflow.yml@master
+
+    with:
+      skills_dir: .agents/skills
+
+    secrets:
+      clawhub_token: ${{ secrets.CLAWHUB_TOKEN }}

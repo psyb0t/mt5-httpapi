@@ -351,11 +351,34 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB/log   
 (`USD`), `leverage` (100, written as `1:N`), `expertParameters` (`.set`),
 `reportName` (`backtest-report.htm`).
 
+`POST /backtest/build-set` generates MT5-native `.set` parameter text from
+structured JSON. Body: `comments` (array of strings) and `parameters` (array
+of `{name, value, start?, step?, stop?, optimize?}`). `optimize: true` emits
+the optimization form `value||start||step||stop||Y`; `optimize: false` (or
+omitted) emits `value||0||0||0||N`. Response is `text/plain` `.set` content
+ready to save or upload as the `set` file.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  $MT5_API_URL/backtest/build-set \
+  -d '{
+    "comments": ["saved on 2026.05.15 08:30:02"],
+    "parameters": [
+      {"name": "_Properties_", "value": "------"},
+      {"name": "Take_Profit", "value": 92, "start": 80, "step": 4, "stop": 92, "optimize": true},
+      {"name": "Stop_Loss", "value": 0, "start": 0, "step": 1, "stop": 10, "optimize": false}
+    ]
+  }' > myea.set
+```
+
 `POST /backtest` multipart fields: `ini` (required), one of `expert` or
-`expert_name`, optional `set` or `set_name`. Returns `202` with `jobId`,
-`statusUrl`, `reportUrl`, `logUrl`, `pollAfterSeconds`, `queuePosition`. The
-INI's `[Common]` `Login`/`Password`/`Server` are always overwritten with the
-URL-selected account's credentials. Path traversal in `*_name` is rejected.
+`expert_name`, optional `set` or `set_name`. Optional `topPasses` — for
+optimization jobs, keep the top `1..500` parsed XML passes in the status
+payload (default `50`). Returns `202` with `jobId`, `statusUrl`, `reportUrl`,
+`logUrl`, `pollAfterSeconds`, `queuePosition`. The INI's `[Common]`
+`Login`/`Password`/`Server` are always overwritten with the URL-selected
+account's credentials. Path traversal in `*_name` is rejected.
 
 `GET /backtest/<jobId>` returns the job state. When `status: completed`, the
 payload includes a `summary` parsed from the HTML (`netProfit`, `profitFactor`,
