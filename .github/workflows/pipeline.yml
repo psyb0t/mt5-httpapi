@@ -12,10 +12,7 @@ jobs:
   # Publish the skills under .agents/skills/ to ClawHub, one ClawHub slug per
   # subdir. Tag pushes only (see the trigger above).
   publish-skills-to-clawhub:
-    uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-skills-publish-workflow.yml@master
-
-    with:
-      skills_dir: .agents/skills
+    uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-publish.yml@master
 
     secrets:
       clawhub_token: ${{ secrets.CLAWHUB_TOKEN }}
