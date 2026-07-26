@@ -1246,13 +1246,15 @@ Notes:
 
 ## MCP Interface
 
-Every terminal also mounts a [Model Context Protocol](https://modelcontextprotocol.io) server (streamable-HTTP) at `/mcp`, alongside the REST API, in the same process. It exposes three tools that mirror the REST surface:
+Every terminal also mounts a [Model Context Protocol](https://modelcontextprotocol.io) server (streamable-HTTP) at `/mcp`, alongside the REST API, in the same process. It exposes **dedicated, typed tools** grouped by family — each tool's name, typed params, and description are what the agent reads (no guessing at raw paths). Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP request.
 
-| Tool | Args | Returns |
-| ---- | ---- | ------- |
-| `ping` | — | lock-free liveness (`GET /ping`) |
-| `endpoints` | — | the full REST route catalog (method + path) |
-| `request` | `method`, `path`, `query?`, `body?` | JSON response of any REST endpoint — the exact same handler, auth, and MT5 locking as a real HTTP request |
+- **Market data** — `list_symbols`, `get_symbol`, `get_tick`, `get_rates(symbol, timeframe, count?)`, `get_ticks`, `get_rates_ta`
+- **Account / positions** — `get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`
+- **Orders** — `list_orders`, `get_order`, `create_order(symbol, type, volume, price?, sl?, tp?)`, `modify_order`, `cancel_order`
+- **History / terminal / backtest** — `get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`, `get_backtest`, `ping`
+- **Escape hatch** — `request(method, path, query?, body?)` + `endpoints` (route catalog) for anything without a dedicated tool
+
+The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible live-account actions and say so in their tool descriptions.
 
 Same bearer auth as REST: an empty `api_token` disables auth on `/mcp` too; a configured token requires `Authorization: Bearer <token>` on every MCP call.
 

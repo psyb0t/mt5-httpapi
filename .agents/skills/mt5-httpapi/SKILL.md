@@ -53,13 +53,9 @@ Auth is optional server-side — if no token is configured on the server, all re
 
 ## MCP interface
 
-Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.io) (streamable-HTTP) at `/mcp`, mirroring the same REST surface via three tools:
+Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.io) (streamable-HTTP) at `/mcp`, exposing the REST surface as **dedicated typed tools** whose names + params + descriptions are the agent's documentation. Families: market data (`list_symbols`, `get_symbol`, `get_tick`, `get_rates`, `get_ticks`, `get_rates_ta`), account/positions (`get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`), orders (`list_orders`, `get_order`, `create_order`, `modify_order`, `cancel_order`), history/terminal (`get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`), backtest (`get_backtest`), and `ping`. A generic `request` + `endpoints` catalog remain as a fallback for routes without a dedicated tool. Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP call.
 
-- **`ping`** — lock-free liveness check (`GET /ping`).
-- **`endpoints`** — the full REST route catalog (method + path), so an agent can discover routes instead of guessing.
-- **`request`** — call any REST endpoint by `method`, `path`, `query`, `body`; runs the exact same handler, auth, and MT5 locking as a real HTTP call.
-
-Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/main/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. Order/position mutations reached via `request` carry the same irreversible-on-a-live-account risk as calling those routes directly — see Security & safety above.
+Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/main/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account — see Security & safety above.
 
 ## How It Works
 

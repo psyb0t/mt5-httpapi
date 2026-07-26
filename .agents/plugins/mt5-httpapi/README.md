@@ -18,17 +18,18 @@ requires one.
 
 ## Tools
 
-The mt5-httpapi MCP tools become available to your agent:
+The mt5-httpapi MCP tools become available to your agent — **dedicated typed
+tools** grouped by family (each with typed params + a description the agent
+reads): market data (`list_symbols`, `get_symbol`, `get_tick`, `get_rates`,
+`get_ticks`, `get_rates_ta`), account/positions (`get_account`,
+`list_positions`, `get_position`, `modify_position`, `close_position`), orders
+(`list_orders`, `get_order`, `create_order`, `modify_order`, `cancel_order`),
+history/terminal/backtest (`get_history_orders`, `get_history_deals`,
+`get_terminal`, `terminal_control`, `get_backtest`), and `ping`. A generic
+`request` + `endpoints` catalog cover anything without a dedicated tool.
 
-- **`ping`** — lock-free liveness check (`GET /ping`).
-- **`endpoints`** — the full REST route catalog (method + path) so an agent
-  can discover every route instead of guessing paths.
-- **`request`** — call any REST endpoint (`method`, `path`, `query`, `body`)
-  and get its JSON response back. The single generic interface over the whole
-  API — the same handler, auth, and MT5 locking as a real HTTP request.
-
-Order and position mutations reached through `request` (`POST`/`PUT`/`DELETE`
-on `/orders` and `/positions`) are real, irreversible actions on a live
+The order/position tools (`create_order`, `modify_order`, `cancel_order`,
+`modify_position`, `close_position`) are real, irreversible actions on a live
 trading account — confirm the parameters before calling them.
 
 ## Configuration
