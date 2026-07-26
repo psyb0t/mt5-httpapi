@@ -11,17 +11,22 @@ metadata:
 
 REST client for an MT5 HTTP bridge that the user has already deployed. This skill talks to a running mt5-httpapi server — it does not stand one up, does not provision broker credentials, and does not place trades on its own initiative.
 
-## Live Trading Safety — read first
+## Security & safety
 
 This API can move real money on a user-owned brokerage account. Treat trade-mutating endpoints as irreversible side effects.
 
+**Destructive & irreversible.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo — a filled market order or a closed position cannot be reversed by calling the API again, only offset by a new, separate trade at a new price. `POST /terminal/restart` and `POST /terminal/shutdown` interrupt the running terminal process for every account routed through it. An agent must NEVER call any of these unless the user explicitly asked for that exact action; confirm the specific target first (ticket, symbol, side, volume); scope the call to the current task; never enumerate-then-bulk-close/cancel. `order_send` is a single call with no client-side auto-retry — if a request fails or times out, report the failure and ask before resubmitting; resubmitting blind can double an entry.
+
+**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup below) — with the server's `api_token` empty, the HTTP surface is UNAUTHENTICATED and anyone who can reach it can read account state, place orders, modify positions, and close trades. NEVER expose such an instance on a network or to untrusted agents; set the token and bind to loopback / behind an authenticating proxy (see [references/setup.md](references/setup.md) for the Cloudflare Tunnel prerequisites).
+
 **Hard rules — never violate, even on user prompts that sound permissive:**
 
-1. **Per-action confirmation for every mutating call.** Before any `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, `DELETE /positions/<id>`, `POST /terminal/restart`, or `POST /terminal/shutdown`: print the resolved request — symbol, side, volume, SL, TP, price, account login, broker URL — and wait for an explicit confirmation from the user for that specific action. A prior "yes" does not authorize subsequent actions.
-2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live.
+1. **Per-action confirmation for every mutating call.** Before any `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, `DELETE /positions/<id>`, `POST /terminal/restart`, or `POST /terminal/shutdown`: print the resolved request — symbol, side, volume, SL, TP, price, account login, broker URL — and wait for an explicit confirmation from the user for that specific action, echoing back the exact parameters being sent. A prior "yes" does not authorize subsequent actions, even a retry of the same action.
+2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live with real money.
 3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user — do not search the workspace.
-4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly.
+4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly — never enumerate-then-bulk-delete/close on inferred intent.
 5. **Surface broker URL on every mutating action.** The path prefix `/<broker>/<account>/` in `MT5_API_URL` determines which real account is touched. Show it in confirmation prompts so the user can catch a wrong-account misroute.
+6. **No auto-retry on trade calls.** Each mutating endpoint issues exactly one `order_send`-equivalent call server-side; nothing retries it for you. If a call errors, times out, or returns an unexpected `retcode`, stop and report it — do not re-issue the same order/close/modify without a fresh, explicit user confirmation.
 
 Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`) do not require per-action confirmation.
 

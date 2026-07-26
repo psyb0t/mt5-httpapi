@@ -6,6 +6,10 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.4.3] — 2026-07-26
+
+Docs: hardened the `mt5-httpapi` agent skill with explicit destructive-operation guardrails and an auth/exfil-style warning. Renamed the safety section to `## Security & safety`, spelled out that trade/order/position mutations are irreversible with no client-side auto-retry, and made the "empty `api_token` = unauthenticated" warning more explicit. No behavior, endpoint, or API change.
+
 ## [v4.4.2] — 2026-07-25
 
 CI: switch the ClawHub skill publish to `clawhub-publish.yml` directly — the `clawhub-skills-publish-workflow.yml` shim was removed upstream. No trading-path or API change.
