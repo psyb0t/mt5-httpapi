@@ -6,6 +6,20 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.7.0] — 2026-07-26
+
+New MCP interface — the API is now also driveable over the Model Context Protocol.
+
+### Added
+
+- **MCP server mounted at `/mcp`** (streamable-HTTP), in the same process as the REST API on every terminal. Three tools mirror the whole REST surface: `ping` (lock-free liveness), `endpoints` (the route catalog), and `request(method, path, query, body)` — call any REST endpoint, running the exact same handler + auth + MT5 locking as a real HTTP request. Same bearer auth as REST (empty `api_token` = auth off; a configured token requires `Authorization: Bearer <token>` on `/mcp` too). See `mt5api/mcp_server.py`.
+- **`@psyb0t/mt5-httpapi` ClawHub plugin** (`.agents/plugins/mt5-httpapi/`) — a stdio↔HTTP MCP bridge (`mcp-remote`) so an OpenClaw/MCP agent can drive a running terminal. Point `MT5_API_URL` at the terminal's base (+ `MT5_API_TOKEN` if auth is on); the reachable endpoint is `$MT5_API_URL/mcp/`. CI publishes it to ClawHub alongside the skill.
+- README and the `mt5-httpapi` skill gain an **MCP interface** section.
+
+### Note
+
+- mt5api is a Flask/WSGI app; the ASGI MCP app is bridged in via `a2wsgi` behind `/mcp` (there's a `TODO` to migrate mt5api to FastAPI and drop the bridge). New runtime deps `mcp` + `a2wsgi` are installed by `scripts/start.bat` on boot and tracked in `requirements-api.txt`. No REST endpoint or trading-path change.
+
 ## [v4.6.0] — 2026-07-26
 
 Hotfix for a boot-blocking regression introduced in v4.5.0, plus a `make lint` / `make format` gate so that class of bug cannot reach the VM again.

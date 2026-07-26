@@ -29,6 +29,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Orders](#orders)
   - [Trade Result](#trade-result)
   - [History](#history)
+- [MCP Interface](#mcp-interface)
 - [Examples](#examples)
 - [Optimization Guide](#optimization-guide)
 - [Go Client](#go-client)
@@ -1242,6 +1243,38 @@ Notes:
 - Optimization results depend on the ranges encoded in the `.set` file. If no ranges are enabled in MT5, optimization is not meaningful.
 - `optimizationResults` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimizationCache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
 - If a metric you expect is missing from `optimizationResults`, first check the raw XML report. The API preserves MT5's exported columns rather than remapping them to a fixed schema.
+
+## MCP Interface
+
+Every terminal also mounts a [Model Context Protocol](https://modelcontextprotocol.io) server (streamable-HTTP) at `/mcp`, alongside the REST API, in the same process. It exposes three tools that mirror the REST surface:
+
+| Tool | Args | Returns |
+| ---- | ---- | ------- |
+| `ping` | — | lock-free liveness (`GET /ping`) |
+| `endpoints` | — | the full REST route catalog (method + path) |
+| `request` | `method`, `path`, `query?`, `body?` | JSON response of any REST endpoint — the exact same handler, auth, and MT5 locking as a real HTTP request |
+
+Same bearer auth as REST: an empty `api_token` disables auth on `/mcp` too; a configured token requires `Authorization: Bearer <token>` on every MCP call.
+
+The reachable URL is the terminal's normal base plus `/mcp/` — nginx strips `/<broker>/<account>/` and proxies the rest straight through, so:
+
+```
+$MT5_API_URL/mcp/
+# e.g. http://localhost:8888/roboforex/main/mcp/
+```
+
+```bash
+# Raw JSON-RPC — call the request tool directly
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  "$MT5_API_URL/mcp/" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}'
+```
+
+Order/position mutations reached through `request` are the same live, irreversible trading actions as calling those REST routes directly — confirm parameters before invoking them.
+
+For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to this endpoint.
 
 ## Optimization Guide
 

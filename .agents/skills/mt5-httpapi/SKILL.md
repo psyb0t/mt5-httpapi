@@ -51,6 +51,16 @@ A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The pat
 
 Auth is optional server-side — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it. From the agent's side, never assume the server is auth-disabled; always pass the token the user provided if there is one.
 
+## MCP interface
+
+Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.io) (streamable-HTTP) at `/mcp`, mirroring the same REST surface via three tools:
+
+- **`ping`** — lock-free liveness check (`GET /ping`).
+- **`endpoints`** — the full REST route catalog (method + path), so an agent can discover routes instead of guessing.
+- **`request`** — call any REST endpoint by `method`, `path`, `query`, `body`; runs the exact same handler, auth, and MT5 locking as a real HTTP call.
+
+Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/main/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. Order/position mutations reached via `request` carry the same irreversible-on-a-live-account risk as calling those routes directly — see Security & safety above.
+
 ## How It Works
 
 GET for reading, POST for creating, PUT for modifying, DELETE for closing/canceling. All bodies are JSON.
