@@ -19,8 +19,8 @@ MODE="local"
 PYTEST_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --docker) MODE="docker" ;;
-        *) PYTEST_ARGS+=("$arg") ;;
+    --docker) MODE="docker" ;;
+    *) PYTEST_ARGS+=("$arg") ;;
     esac
 done
 

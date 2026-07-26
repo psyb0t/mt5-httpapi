@@ -34,7 +34,7 @@ rotate_once() {
         # partial sits as .tmp and gets retried/overwritten next cycle —
         # never leaves a half-written archive blocking rotation.
         if cp "$f" "${archive}.tmp" && mv "${archive}.tmp" "$archive"; then
-            : > "$f"
+            : >"$f"
             log "rotated $(basename "$f") -> $(basename "$archive")"
         else
             rm -f "${archive}.tmp"
@@ -48,8 +48,8 @@ rotate_once() {
         [ -f "$old" ] || continue
         suffix="${old##*.}"
         case "$suffix" in
-            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
-            *) continue ;;
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+        *) continue ;;
         esac
         if [ "$suffix" -lt "$cutoff" ]; then
             rm -f "$old"

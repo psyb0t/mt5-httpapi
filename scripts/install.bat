@@ -35,9 +35,21 @@ if exist "%LOCK_OUT%" (
     for /f "usebackq delims=" %%A in ("%LOCK_OUT%") do call :log "lock: %%A"
 )
 del "%LOCK_OUT%" 2>nul
-if !LOCK_EC! neq 0 (
+rem Exit 10 = a live instance from THIS boot holds it. Anything else non-zero
+rem means the helper itself failed; fall back to the plain mkdir lock rather
+rem than concluding "held", which is what deadlocked boot when a parse error
+rem in the helper made PowerShell exit 1.
+if !LOCK_EC! equ 10 (
     call :log "install.bat already running this boot, exiting."
     exit /b 0
+)
+if !LOCK_EC! neq 0 (
+    call :log "WARN acquire_lock.ps1 failed (exit !LOCK_EC!), falling back to mkdir lock"
+    mkdir "%LOCKDIR%" 2>nul
+    if !errorlevel! neq 0 (
+        call :log "fallback lock held, exiting."
+        exit /b 0
+    )
 )
 
 call :log "============================================"

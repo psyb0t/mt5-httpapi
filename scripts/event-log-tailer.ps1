@@ -18,7 +18,7 @@ if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-# Single-instance check — if lock exists and that PID is alive, bail.
+# Single-instance check -- if lock exists and that PID is alive, bail.
 if (Test-Path $lockFile) {
     $oldPid = Get-Content $lockFile -ErrorAction SilentlyContinue
     if ($oldPid) {
@@ -38,14 +38,24 @@ $since = (Get-Date).AddMinutes(-5)
 # full.log is written concurrently by start.bat, install.bat, and
 # api_runner.bat via cmd's `>>`. Wrap our appends in try/silent-continue
 # so a transient lock contention from one of those writers doesn't kill
-# the tailer loop — the canonical copy is in windows-events.log anyway.
-function Append-Full($line) {
-    try { Add-Content -Path $fullLog -Value $line -ErrorAction Stop } catch {}
+# the tailer loop -- the canonical copy is in windows-events.log anyway.
+function Add-FullLogLine($line) {
+    try {
+        Add-Content -Path $fullLog -Value $line -ErrorAction Stop
+    } catch {
+        # Deliberately non-fatal, but NOT silent. Report into $logFile
+        # (windows-events.log) rather than $fullLog -- $fullLog is the file
+        # that just failed, so retrying it would hit the same lock.
+        Add-Content -Path $logFile -Value (
+            "[" + (Get-Date).ToString('s') + "] [tailer] full.log append failed: " +
+            $_.Exception.Message
+        ) -ErrorAction SilentlyContinue
+    }
 }
 
 $startMsg = "[" + (Get-Date).ToString('s') + "] [tailer] starting (pid=$PID, since=$since)"
 Add-Content -Path $logFile -Value $startMsg
-Append-Full ("[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [winevt] tailer starting (pid=$PID)")
+Add-FullLogLine ("[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [winevt] tailer starting (pid=$PID)")
 
 while ($true) {
     $now = Get-Date
@@ -67,12 +77,12 @@ while ($true) {
                 $detailed = "[$ts] [$log/$lvl] [$prov] $id $msg"
                 $condensed = "[$ts] [winevt] [$log/$lvl] [$prov] $id $msg"
                 Add-Content -Path $logFile -Value $detailed
-                Append-Full $condensed
+                Add-FullLogLine $condensed
             }
     } catch {
         $errMsg = "[" + (Get-Date).ToString('s') + "] [tailer] poll error: $_"
         Add-Content -Path $logFile -Value $errMsg
-        Append-Full ("[" + (Get-Date).ToString('s') + "] [winevt] tailer poll error: $_")
+        Add-FullLogLine ("[" + (Get-Date).ToString('s') + "] [winevt] tailer poll error: $_")
     }
     $since = $now
     Start-Sleep -Seconds 15

@@ -1436,9 +1436,19 @@ make up          Fire up the VM (downloads ISO if needed)
 make down        Shut it down
 make logs        Tail the logs
 make status      Check VM and API status
+make lint        Lint every .ps1/.sh script in a throwaway Docker image
+make format      Apply shfmt formatting to the .sh files in place
+make test        Run unit tests in a throwaway Docker image
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
+
+`make lint` covers the scripts that run inside the VM as well as the host-side
+shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;
+`.sh` gets shellcheck and shfmt. The ASCII rule is not cosmetic — Windows
+PowerShell 5.1 reads `.ps1` as ANSI unless the file has a UTF-8 BOM, so a
+multi-byte character inside a string literal gets mangled into a parse error you
+won't see until the VM boots. `make format` fixes whatever shfmt flags.
 
 ## Ports
 

@@ -44,11 +44,27 @@ if exist "%LOCK_OUT%" (
     )
 )
 del "%LOCK_OUT%" 2>nul
-if !LOCK_EC! neq 0 (
+rem Exit 10 means a live instance from THIS boot holds the lock -- bail.
+if !LOCK_EC! equ 10 (
     echo [%date% %time%] start.bat already running this boot, exiting.
     echo [%date% %time%] start.bat already running this boot, exiting. >> "%START_LOG%"
     echo [%date% %time%] [start] start.bat already running this boot, exiting. >> "%FULL_LOG%"
     exit /b 0
+)
+rem Any other non-zero means acquire_lock.ps1 ITSELF failed (parse error,
+rem missing cmdlet, unwritable mount). Do NOT treat that as "held" -- that is
+rem precisely what deadlocked the stack when a syntax error in the helper made
+rem PowerShell exit 1 and every boot concluded the lock was taken. Fall back to
+rem the plain mkdir lock so boot still proceeds with single-instance safety.
+if !LOCK_EC! neq 0 (
+    echo [%date% %time%] WARN acquire_lock.ps1 failed ^(exit !LOCK_EC!^), falling back to mkdir lock >> "%START_LOG%"
+    echo [%date% %time%] [start] WARN acquire_lock.ps1 failed ^(exit !LOCK_EC!^), falling back to mkdir lock >> "%FULL_LOG%"
+    mkdir "%LOCKDIR%" 2>nul
+    if !errorlevel! neq 0 (
+        echo [%date% %time%] fallback lock held, exiting. >> "%START_LOG%"
+        echo [%date% %time%] [start] fallback lock held, exiting. >> "%FULL_LOG%"
+        exit /b 0
+    )
 )
 
 call :log "%START_LOG%" "====== Boot ======"
