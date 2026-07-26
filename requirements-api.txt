@@ -1,0 +1,25 @@
+# Python dependencies for the mt5api HTTP server that runs inside the Windows VM.
+#
+# Tracked in git ON PURPOSE. This replaces the retired, gitignored
+# config/requirements.txt that Dockerfile.test still pointed at long after it
+# was removed, which broke `make test` with a Docker COPY error.
+#
+# scripts/start.bat installs this same set inline on every boot.
+# tests/test_requirements_sync.py asserts the two lists stay identical, so the
+# next person to add a dependency can't let them drift apart again.
+#
+# Dockerfile.test strips MetaTrader5 before installing — that wheel is
+# Windows-only. tests/conftest.py injects a stub for it at import time.
+#
+# numpy<2 pin: MetaTrader5 5.0.5735 was built against numpy 1.x and breaks
+# silently under numpy 2.x. Read calls (account_info, copy_rates, ...) keep
+# working, but order_send fails immediately with
+# (-2, 'Unnamed arguments not allowed'). Drop the pin once MetaQuotes ships a
+# wheel rebuilt for numpy 2.x.
+pyyaml
+MetaTrader5
+numpy<2
+flask
+waitress
+flask-compress
+psutil

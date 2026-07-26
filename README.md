@@ -1543,7 +1543,11 @@ config/                      Your config shit
 scripts/                     Scripts that run inside the Windows VM
   oem-install.bat            First-boot OEM script (creates startup entry)
   install.bat                Setup (Python, MT5, firewall) — runs every boot
-  start-mt5.bat              Boot entrypoint (install + start terminals + APIs)
+  start.bat                  Boot entrypoint (install + start terminals + APIs)
+  reboot.bat                 The only reboot path — writes rebooting.flag and
+                             releases both lock dirs before shutting down
+  acquire_lock.ps1           Boot-stamped lock acquire for start.bat and
+                             install.bat; auto-clears reboot-orphaned locks
   debloat.bat                Windows debloat script
   defender-remover/          Windows Defender removal tool
 
@@ -1587,7 +1591,7 @@ If you see persistent 503/504 from a single terminal, check `data/shared/logs/ap
 Inside the VM's shared folder (`data/shared/logs/`):
 
 - `install.log` - MT5 installation progress (install.bat)
-- `start-mt5.log` - Boot sequence log (start-mt5.bat)
+- `start.log` - Boot sequence log (start.bat)
 - `pip.log` - Python package installation
 - `api-<broker>-<account>.log` - Per-terminal API logs
 - `windows-events.log` - Tailed Windows System + Application event logs (Warning/Error/Critical level only). Catches OOM kills (`Microsoft-Windows-Resource-Exhaustion-Detector`), terminal64.exe crashes (`Application Error`), BSODs (`BugCheck`), service failures, etc.

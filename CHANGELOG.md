@@ -6,6 +6,29 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.5.0] — 2026-07-26
+
+Boot-lock and reboot hardening for the Windows VM, a critical healthcheck false-positive fix, and a `make test` build fix. Also adds third-party license notices for the vendored Windows Defender removal tool.
+
+### Fixed
+
+- **Healthcheck reported dead terminals as healthy.** `scripts/healthcheck.sh` probed each terminal with `curl … -w '%{http_code}' … || echo 000`. curl already prints `000` on a failed connection, so the `|| echo 000` fallback appended a second one — yielding `000000`, which compared unequal to `000` and marked the port UP. A full outage could sit behind a green Docker healthcheck indefinitely. The probe now whitelists a valid HTTP status shape (`[1-5][0-9][0-9]`) and fails closed; any real status, including 4xx/5xx, proves the process is listening.
+- **Reboot-orphaned boot locks deadlocked the stack.** `%SHARED%\start.running` (and install.bat's lock) live on the host-mounted volume and survive a VM reboot. The auto-reboot task fires `shutdown /r /t 0 /f` with no grace period and can land mid-run, stranding the lock so every later boot bailed on the orphan forever. New `scripts/acquire_lock.ps1` stamps each lock with the OS boot time, so a lock from a previous boot is provably ownerless and is cleared automatically; a live same-boot instance still blocks. `scripts/start.bat` and `scripts/install.bat` acquire through it and release via a single `release_lock`.
+- **`make test` was dead on a clean checkout.** `Dockerfile.test` COPYed `config/requirements.txt`, which had been retired and is gitignored, so the build failed with `"/config/requirements.txt": not found`. Tests now install from the tracked `requirements-api.txt`, additionally COPY `scripts/config_helper.py` (loaded by `tests/test_terminal_instances.py`), and skip the live-deployment `tests/real/` suite in the default offline run.
+
+### Added
+
+- `scripts/reboot.bat` — the single reboot path for the VM. Writes `rebooting.flag` and releases both lock dirs in one place, replacing three separate inline flag+shutdown+rmdir sequences that had to be kept in sync.
+- `requirements-api.txt` — tracked source of truth for the mt5api HTTP server's Python dependencies (replacing the retired, gitignored `config/requirements.txt`). `scripts/start.bat` installs the same set inline on every boot. Retains the documented `numpy<2` pin — the MetaTrader5 `5.0.5735` wheel is built against numpy 1.x, and under numpy 2.x `order_send` fails with `(-2, 'Unnamed arguments not allowed')`.
+
+### Changed
+
+- Renamed the boot entrypoint `start-mt5.bat` → `start.bat` and its log `start-mt5.log` → `start.log`; README file-tree and log references updated to match.
+
+### Licensing
+
+- Added `THIRD_PARTY.md` and `scripts/defender-remover/LICENSE` (GPL-3.0). `scripts/defender-remover/` is a verbatim vendored copy of the third-party windows-defender-remover tool, which is GPL-3.0-licensed; the rest of mt5-httpapi stays WTFPL. Documents the licensing of what the repo actually distributes.
+
 ## [v4.4.3] — 2026-07-26
 
 Docs: hardened the `mt5-httpapi` agent skill with explicit destructive-operation guardrails and an auth/exfil-style warning. Renamed the safety section to `## Security & safety`, spelled out that trade/order/position mutations are irreversible with no client-side auto-retry, and made the "empty `api_token` = unauthenticated" warning more explicit. No behavior, endpoint, or API change.

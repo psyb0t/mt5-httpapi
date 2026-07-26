@@ -12,16 +12,31 @@ set "LOCKDIR=%SHARED%\install.running"
 set "DEBLOAT_DONE=%SHARED%\debloat.done"
 mkdir "%LOGDIR%" 2>nul
 
-:: ── Stale lock cleanup after reboot ────────────────────────────────
+:: ── Stale lock cleanup after a protocol reboot ─────────────────────
+:: reboot.bat writes this flag before every reboot. /s /q is REQUIRED now
+:: that acquire_lock.ps1 stamps a boot.id file inside the lock dir -- a bare
+:: rmdir fails on a non-empty directory and would leave the lock behind.
 if exist "%SHARED%\rebooting.flag" (
     del "%SHARED%\rebooting.flag" 2>nul
-    rmdir "%SHARED%\install.running" 2>nul
+    rmdir /s /q "%SHARED%\install.running" 2>nul
 )
 
-:: ── Atomic lock ─────────────────────────────────────────────────────
-mkdir "%LOCKDIR%" 2>nul
-if !errorlevel! neq 0 (
-    call :log "Another install.bat is already running, exiting."
+:: ── Boot-scoped lock ───────────────────────────────────────────────
+:: The flag above only covers reboots that went through reboot.bat. An abrupt
+:: kill -- container OOM, `docker kill`, host power loss -- writes no flag, and
+:: %LOCKDIR% lives on the host-mounted %SHARED% volume so it outlives the VM.
+:: That stranded lock would block every later boot exactly the way the
+:: start.bat one did. The boot stamp makes an ownerless lock self-evident.
+set "LOCK_OUT=%TEMP%\mt5_install_lock_result.txt"
+del "%LOCK_OUT%" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\acquire_lock.ps1" -LockDir "%LOCKDIR%" > "%LOCK_OUT%" 2>&1
+set "LOCK_EC=!errorlevel!"
+if exist "%LOCK_OUT%" (
+    for /f "usebackq delims=" %%A in ("%LOCK_OUT%") do call :log "lock: %%A"
+)
+del "%LOCK_OUT%" 2>nul
+if !LOCK_EC! neq 0 (
+    call :log "install.bat already running this boot, exiting."
     exit /b 0
 )
 
@@ -64,7 +79,7 @@ call :log "[1/4] Creating scheduled task and disabling UAC..."
 schtasks /create /tn "MT5Start" /tr "cmd /c \"%SCRIPTS%\start.bat\"" /sc onlogon /ru "Docker" /rl HIGHEST /f >nul 2>&1
 if !errorlevel! neq 0 (
     call :log "ERROR: Failed to create MT5Start scheduled task"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 call :log "  MT5Start task created."
@@ -104,21 +119,21 @@ call :log "[3/4] Installing Python 3.12..."
 curl -L -o C:\python-installer.exe https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe >> "%INSTALL_LOG%" 2>&1
 if not exist C:\python-installer.exe (
     call :log "ERROR: Failed to download Python installer"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 C:\python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_test=0
 if !errorlevel! neq 0 (
     call :log "ERROR: Python installer failed (exit code !errorlevel!)"
     del C:\python-installer.exe 2>nul
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 timeout /t 10 /nobreak >nul
 del C:\python-installer.exe 2>nul
 if not exist "%PYDIR%\python.exe" (
     call :log "ERROR: python.exe not found after installation"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 for /f "delims=" %%V in ('"%PYDIR%\python.exe" --version 2^>^&1') do call :log "  %%V installed."
@@ -127,7 +142,7 @@ call :log "  Installing MetaTrader5 pip package..."
 "%PYDIR%\python.exe" -m pip install --upgrade pip >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
     call :log "ERROR: pip upgrade failed"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 rem MetaTrader5 5.0.5735 was built against numpy 1.x. With numpy 2.x installed,
@@ -137,7 +152,7 @@ rem Pin numpy<2 until MetaQuotes ships a wheel rebuilt for numpy 2.x.
 "%PYDIR%\python.exe" -m pip install MetaTrader5 "numpy<2" pyyaml >> "%INSTALL_LOG%" 2>&1
 if !errorlevel! neq 0 (
     call :log "ERROR: Failed to install MetaTrader5 / numpy / pyyaml"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 call :log "  MetaTrader5 + numpy<2 + pyyaml installed."
@@ -188,7 +203,7 @@ for %%F in ("%BROKERS%\mt5setup-*.exe") do (
     set "BNAME=!FNAME:mt5setup-=!"
     call :install_one "!BNAME!" "%%~F"
     if !errorlevel! neq 0 (
-        rmdir "%LOCKDIR%" 2>nul
+        call :release_lock
         exit /b 1
     )
 )
@@ -201,7 +216,7 @@ for /d %%D in ("%BROKERS%\*") do (
 )
 if !HAS_TERMINALS! equ 0 (
     call :log "ERROR: No MT5 terminals installed and no installers found!"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 
@@ -227,7 +242,7 @@ call :log "[4/4] All terminals present."
 call :log "============================================"
 call :log " Setup complete!"
 call :log "============================================"
-rmdir "%LOCKDIR%" 2>nul
+call :release_lock
 exit /b 0
 
 
@@ -276,10 +291,19 @@ exit /b 0
 
 
 :: ══════════════════════════════════════════════════════════════════
+:release_lock
+:: /s /q is REQUIRED: the lock dir contains acquire_lock.ps1's boot.id stamp,
+:: so a bare `rmdir` fails on a non-empty directory and would strand the lock.
+rmdir /s /q "%LOCKDIR%" 2>nul
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
 :do_reboot
-echo rebooting > "%SHARED%\rebooting.flag"
-shutdown /r /t 5 /f
-:: lock intentionally NOT released — rebooting.flag cleans it on next boot
+:: Routed through reboot.bat so there is exactly ONE reboot implementation in
+:: the stack. It writes rebooting.flag (which this script consumes on the next
+:: boot to clear a stale lock) AND releases both lock dirs up front, so the
+:: previous "lock intentionally NOT released" contract still holds either way.
+call "%SCRIPTS%\reboot.bat" install-requested
 exit /b 0
 
 

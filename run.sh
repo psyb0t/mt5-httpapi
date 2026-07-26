@@ -48,6 +48,11 @@ echo "Syncing scripts to mount points..."
 cp "${DIR}/scripts/oem-install.bat" "${DIR}/data/oem/install.bat"
 cp "${DIR}/scripts/install.bat" "${DIR}/data/shared/scripts/install.bat"
 cp "${DIR}/scripts/start.bat" "${DIR}/data/shared/scripts/start.bat"
+# Single reboot path for the stack — always writes rebooting.flag and releases
+# both lock dirs, so a reboot can never strand a lock the way it used to.
+cp "${DIR}/scripts/reboot.bat" "${DIR}/data/shared/scripts/reboot.bat"
+# Boot-stamped lock acquire used by both start.bat and install.bat.
+cp "${DIR}/scripts/acquire_lock.ps1" "${DIR}/data/shared/scripts/acquire_lock.ps1"
 cp "${DIR}/scripts/api_runner.bat" "${DIR}/data/shared/scripts/api_runner.bat"
 cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-warmup-ea.bat"
 cp "${DIR}/scripts/check_health.py" "${DIR}/data/shared/scripts/check_health.py"
