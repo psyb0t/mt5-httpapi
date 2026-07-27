@@ -16,35 +16,55 @@ set "LOCKDIR=%SHARED%\start.running"
 mkdir "%LOGDIR%" 2>nul
 rmdir "%FULL_LOG%.lock" 2>nul
 
-:: ── Stale lock cleanup ────────────────────────────────────────────
-:: The lock lives on the shared mount and survives reboots, but the
-:: holder can't always release it: install.bat's staged reboots leave
-:: only a 5s shutdown window (missable under TCG emulation), and
-:: MT5AutoReboot / docker restart / power loss leave none. A lock can
-:: only legitimately be held by a start.bat from THIS boot session, so
-:: it's stamped with the boot time (sibling file, so the lock dir stays
-:: empty and plain rmdir release still works) and any other stamp — or
-:: none — marks it stale.
-set "BOOTID="
-for /f "delims=" %%B in ('powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('yyyyMMddHHmmss')" 2^>nul') do set "BOOTID=%%B"
-if defined BOOTID if exist "%LOCKDIR%" (
-    set "LOCK_BOOTID="
-    if exist "%LOCKDIR%.bootid" set /p LOCK_BOOTID=<"%LOCKDIR%.bootid"
-    if not "!LOCK_BOOTID!"=="!BOOTID!" (
-        echo [%date% %time%] Removing stale start.running lock from previous boot. >> "%START_LOG%"
-        echo [%date% %time%] [start] Removing stale start.running lock from previous boot. >> "%FULL_LOG%"
-        rmdir /s /q "%LOCKDIR%" 2>nul
+:: ── Boot-scoped lock (only one start.bat instance per boot) ──────
+:: A bare `mkdir %LOCKDIR%` used to deadlock the stack permanently. %LOCKDIR%
+:: lives on the host-mounted %SHARED% volume, so it survives a VM reboot; the
+:: MT5AutoReboot task fires `shutdown /r /t 0 /f` with no grace period and can
+:: land anywhere inside this script's run (which legitimately spans from
+:: seconds to over an hour). Killed mid-run, the lock outlived the process and
+:: every later boot bailed on the orphan forever.
+::
+:: acquire_lock.ps1 stamps the lock with the OS boot time, so a lock from a
+:: previous boot is provably ownerless and gets cleared automatically.
+:: Exit 0 = acquired, exit 1 = a live instance from THIS boot holds it.
+::
+:: Deliberately does NOT consume %SHARED%\rebooting.flag — install.bat (called
+:: below) owns that flag for its own lock, and eating it here would break it.
+:: Tempfile rather than `for /f` because errorlevel after a for/f loop is the
+:: loop body's exit code, not the invoked command's -- the lock verdict would
+:: be silently lost. Same reason the API-token block below uses a tempfile.
+set "LOCK_OUT=%TEMP%\mt5_lock_result.txt"
+del "%LOCK_OUT%" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\acquire_lock.ps1" -LockDir "%LOCKDIR%" > "%LOCK_OUT%" 2>&1
+set "LOCK_EC=!errorlevel!"
+if exist "%LOCK_OUT%" (
+    for /f "usebackq delims=" %%A in ("%LOCK_OUT%") do (
+        echo [%date% %time%] [start] lock: %%A >> "%FULL_LOG%"
+        echo [%date% %time%] lock: %%A >> "%START_LOG%"
     )
 )
-
-:: ── Atomic lock (only one start.bat instance at a time) ──────────
-if defined BOOTID echo !BOOTID!>"%LOCKDIR%.bootid"
-mkdir "%LOCKDIR%" 2>nul
-if !errorlevel! neq 0 (
-    echo [%date% %time%] Another start.bat is already running, exiting.
-    echo [%date% %time%] Another start.bat is already running, exiting. >> "%START_LOG%"
-    echo [%date% %time%] [start] Another start.bat is already running, exiting. >> "%FULL_LOG%"
+del "%LOCK_OUT%" 2>nul
+rem Exit 10 means a live instance from THIS boot holds the lock -- bail.
+if !LOCK_EC! equ 10 (
+    echo [%date% %time%] start.bat already running this boot, exiting.
+    echo [%date% %time%] start.bat already running this boot, exiting. >> "%START_LOG%"
+    echo [%date% %time%] [start] start.bat already running this boot, exiting. >> "%FULL_LOG%"
     exit /b 0
+)
+rem Any other non-zero means acquire_lock.ps1 ITSELF failed (parse error,
+rem missing cmdlet, unwritable mount). Do NOT treat that as "held" -- that is
+rem precisely what deadlocked the stack when a syntax error in the helper made
+rem PowerShell exit 1 and every boot concluded the lock was taken. Fall back to
+rem the plain mkdir lock so boot still proceeds with single-instance safety.
+if !LOCK_EC! neq 0 (
+    echo [%date% %time%] WARN acquire_lock.ps1 failed ^(exit !LOCK_EC!^), falling back to mkdir lock >> "%START_LOG%"
+    echo [%date% %time%] [start] WARN acquire_lock.ps1 failed ^(exit !LOCK_EC!^), falling back to mkdir lock >> "%FULL_LOG%"
+    mkdir "%LOCKDIR%" 2>nul
+    if !errorlevel! neq 0 (
+        echo [%date% %time%] fallback lock held, exiting. >> "%START_LOG%"
+        echo [%date% %time%] [start] fallback lock held, exiting. >> "%FULL_LOG%"
+        exit /b 0
+    )
 )
 
 call :log "%START_LOG%" "====== Boot ======"
@@ -55,12 +75,12 @@ call :log "%START_LOG%" "Running install.bat..."
 call "%SCRIPTS%\install.bat"
 if !errorlevel! equ 3 (
     call :log "%START_LOG%" "Reboot scheduled by install.bat, stopping."
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 0
 )
 if !errorlevel! neq 0 (
     call :log "%START_LOG%" "ERROR: install.bat failed (exit code !errorlevel!)"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 call :log "%START_LOG%" "install.bat done."
@@ -81,7 +101,7 @@ set "PIP_CHANGED=0"
 
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
-"%PYDIR%\python.exe" -m pip install pyyaml MetaTrader5 "numpy<2" flask waitress flask-compress psutil > "%PIP_TMP%" 2>&1
+"%PYDIR%\python.exe" -m pip install pyyaml MetaTrader5 "numpy<2" flask waitress flask-compress psutil mcp a2wsgi > "%PIP_TMP%" 2>&1
 set "PIP_EC=!errorlevel!"
 type "%PIP_TMP%" >> "%PIP_LOG%"
 findstr /C:"Successfully installed" "%PIP_TMP%" >nul 2>&1 && set "PIP_CHANGED=1"
@@ -89,7 +109,7 @@ del "%PIP_TMP%" 2>nul
 if !PIP_EC! neq 0 (
     call :log "%START_LOG%" "ERROR: pip install (base) failed (exit code !PIP_EC!), aborting."
     call :log "%PIP_LOG%" "ERROR: pip install (base) failed"
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 :: Extra packages from config.yaml requirements list.
@@ -105,12 +125,12 @@ for /f "delims=" %%R in ('"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" requ
 call :log "%START_LOG%" "pip done."
 call :log "%PIP_LOG%" "pip done."
 
+:: Routed through reboot.bat so the flag write + lock release happen in one
+:: place. Previously this inlined its own flag+shutdown+rmdir sequence, which
+:: was correct but meant three separate reboot implementations to keep in sync.
 if "!PIP_CHANGED!"=="1" (
     call :log "%START_LOG%" "pip changed packages -> rebooting so api_runners pick up new libs"
-    call :log "%FULL_LOG%" "[start] pip changed packages -> rebooting"
-    echo rebooting > "%SHARED%\rebooting.flag"
-    shutdown /r /t 5 /f
-    rmdir "%LOCKDIR%" 2>nul
+    call "%SCRIPTS%\reboot.bat" pip-changed
     exit /b 0
 )
 
@@ -132,7 +152,7 @@ tasklist /fi "imagename eq terminal64.exe" 2>nul | find /i "terminal64.exe" >nul
 :: ── Verify config.yaml exists ───────────────────────────────────
 if not exist "%CONFIG%\config.yaml" (
     call :log "%START_LOG%" "ERROR: config.yaml not found! Copy config/config.yaml.example and re-run."
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 
@@ -143,7 +163,7 @@ if !errorlevel! neq 0 (
     call :log "%START_LOG%" "ERROR: Failed to parse config.yaml:"
     type "%TEMP%\mt5_parse_err.txt" >> "%START_LOG%"
     del "%TERM_LIST%" 2>nul
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 
@@ -154,6 +174,15 @@ if !errorlevel! neq 0 (
 :: minutes to flush GPU/desktop state before it rots.
 :: Configured via config.yaml reboot_interval (minutes). 0 = disabled.
 :: Default: 30. /f on schtasks is idempotent -- overwrites existing task.
+::
+:: The task calls reboot.bat, NOT `shutdown` directly. Calling shutdown here
+:: was the root cause of the permanent-deadlock outage: it killed start.bat
+:: mid-run without writing rebooting.flag and without releasing
+:: %SHARED%\start.running, and that orphaned lock (living on the host mount)
+:: blocked every subsequent boot. reboot.bat always does both.
+::
+:: No inner quotes in /tr -- schtasks quote-escaping is fragile, and %SCRIPTS%
+:: has no spaces (C:\Users\Docker\Desktop\Shared\scripts).
 set "REBOOT_INTERVAL=30"
 "%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_interval > "%SHARED%\mt5_ri.tmp" 2>nul
 for /f "usebackq delims=" %%V in ("%SHARED%\mt5_ri.tmp") do set "REBOOT_INTERVAL=%%V"
@@ -162,7 +191,7 @@ if "!REBOOT_INTERVAL!"=="0" (
     schtasks /delete /tn "MT5AutoReboot" /f >nul 2>&1
     call :log "%START_LOG%" "Auto-reboot disabled (reboot_interval=0)."
 ) else (
-    schtasks /create /tn "MT5AutoReboot" /tr "shutdown /r /t 0 /f /d p:0:0" /sc minute /mo !REBOOT_INTERVAL! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
+    schtasks /create /tn "MT5AutoReboot" /tr "cmd.exe /c %SCRIPTS%\reboot.bat scheduled" /sc minute /mo !REBOOT_INTERVAL! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
     if !errorlevel! equ 0 (
         call :log "%START_LOG%" "MT5AutoReboot task ensured (every !REBOOT_INTERVAL! min)."
     ) else (
@@ -204,7 +233,7 @@ for /f "usebackq delims=" %%L in ("%TERM_LIST%") do (
     if !errorlevel! neq 0 (
         call :log "%START_LOG%" "ERROR: Failed to launch terminal, aborting."
         del "%TERM_LIST%" 2>nul
-        rmdir "%LOCKDIR%" 2>nul
+        call :release_lock
         exit /b 1
     )
     set /a TERM_COUNT+=1
@@ -213,7 +242,7 @@ for /f "usebackq delims=" %%L in ("%TERM_LIST%") do (
 if !TERM_COUNT! equ 0 (
     call :log "%START_LOG%" "ERROR: No terminals configured in config.yaml"
     del "%TERM_LIST%" 2>nul
-    rmdir "%LOCKDIR%" 2>nul
+    call :release_lock
     exit /b 1
 )
 
@@ -242,7 +271,7 @@ for /f "usebackq delims=" %%L in ("%TERM_LIST%") do (
     call :launch_api_bg %%L
 )
 del "%TERM_LIST%" 2>nul
-rmdir "%LOCKDIR%" 2>nul
+call :release_lock
 call :log "%START_LOG%" "All !TERM_COUNT! API(s) running in background."
 
 :: ── Foreground: status + health monitor ──────────────────────────
@@ -370,6 +399,14 @@ if errorlevel 1 (
     echo [Email]>> "!WI_CFG!"
     echo Enable=0>> "!WI_CFG!"
 )
+exit /b 0
+
+:: ══════════════════════════════════════════════════════════════════
+:release_lock
+:: /s /q is REQUIRED: the lock dir contains acquire_lock.ps1's boot.id stamp,
+:: so a bare `rmdir` fails on a non-empty directory and would leave the lock
+:: behind -- reintroducing the deadlock this whole mechanism removes.
+rmdir /s /q "%LOCKDIR%" 2>nul
 exit /b 0
 
 :: ══════════════════════════════════════════════════════════════════

@@ -61,6 +61,11 @@ wickworks:
 
 `broker` matches both the `mt5setup-<broker>.exe` installer name and the key in `accounts`. Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't conflict.
 
+Optional per-terminal fields:
+
+- `instance` — clone name for running multiple terminals of the same `broker`/`account`. Route to a specific clone via `/<broker>/<account>/<instance>/...`. Missing/empty = `default`, which also keeps the legacy `/<broker>/<account>/...` alias.
+- `symbol_suffix` — Strategy Tester symbol remap. If set, mt5-httpapi appends it when `[Tester].Symbol` doesn't already end with it (e.g. `EURUSD` -> `EURUSDp`). Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
+
 > **`api_token` must be set to a strong random value before this server is reachable by anything other than localhost.** An empty `api_token` disables auth entirely — any process that can reach the listening socket can read account state, place orders, modify positions, and close trades. Generate one with `openssl rand -hex 32` (or equivalent) and keep it out of git. Do not skip this when planning to bind to a non-loopback interface, expose via a tunnel (see below), or run on a shared host.
 
 ## Ports

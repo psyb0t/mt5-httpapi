@@ -40,6 +40,9 @@ HTTP API, no RDP and no terminal restart.
 
 ---
 
+
+---
+
 ## [v4.3.1] — 2026-05-17
 
 Critical trading-path fixes + integration test suite.

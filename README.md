@@ -1,5 +1,9 @@
 # mt5-httpapi
 
+[![CI](https://github.com/psyb0t/mt5-httpapi/actions/workflows/pipeline.yml/badge.svg?branch=master)](https://github.com/psyb0t/mt5-httpapi/actions/workflows/pipeline.yml)
+[![version](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/version.svg)](https://github.com/psyb0t/mt5-httpapi/releases)
+[![license](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/license.svg)](LICENSE)
+
 MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with a REST API slapped on top for programmatic trading. No Wine bullshit, no janky workarounds - a legit Windows environment running the full MT5 terminal in portable mode.
 
 Supports multiple brokers and multiple accounts on the same VM simultaneously. Each terminal gets its own Python API process inside the VM, and an always-on nginx sidecar fronts them all behind a single host port at `http://localhost:8888/<broker>/<account>/...`. Run two FTMO challenges at once, or mix brokers - whatever you need.
@@ -29,6 +33,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Orders](#orders)
   - [Trade Result](#trade-result)
   - [History](#history)
+- [MCP Interface](#mcp-interface)
 - [Examples](#examples)
 - [Optimization Guide](#optimization-guide)
 - [Go Client](#go-client)
@@ -1329,6 +1334,40 @@ Notes:
 - `optimizationResults` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimizationCache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
 - If a metric you expect is missing from `optimizationResults`, first check the raw XML report. The API preserves MT5's exported columns rather than remapping them to a fixed schema.
 
+## MCP Interface
+
+Every terminal also mounts a [Model Context Protocol](https://modelcontextprotocol.io) server (streamable-HTTP) at `/mcp`, alongside the REST API, in the same process. It exposes **dedicated, typed tools** grouped by family — each tool's name, typed params, and description are what the agent reads (no guessing at raw paths). Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP request.
+
+- **Market data** — `list_symbols`, `get_symbol`, `get_tick`, `get_rates(symbol, timeframe, count?)`, `get_ticks`, `get_rates_ta`
+- **Account / positions** — `get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`
+- **Orders** — `list_orders`, `get_order`, `create_order(symbol, type, volume, price?, sl?, tp?)`, `modify_order`, `cancel_order`
+- **History / terminal / backtest** — `get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`, `get_backtest`, `ping`
+- **Escape hatch** — `request(method, path, query?, body?)` + `endpoints` (route catalog) for anything without a dedicated tool
+
+The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible live-account actions and say so in their tool descriptions.
+
+Same bearer auth as REST: an empty `api_token` disables auth on `/mcp` too; a configured token requires `Authorization: Bearer <token>` on every MCP call.
+
+The reachable URL is the terminal's normal base plus `/mcp/` — nginx strips `/<broker>/<account>/` and proxies the rest straight through, so:
+
+```
+$MT5_API_URL/mcp/
+# e.g. http://localhost:8888/roboforex/main/mcp/
+```
+
+```bash
+# Raw JSON-RPC — call the request tool directly
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  "$MT5_API_URL/mcp/" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}'
+```
+
+Order/position mutations reached through `request` are the same live, irreversible trading actions as calling those REST routes directly — confirm parameters before invoking them.
+
+For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to this endpoint.
+
 ## Optimization Guide
 
 See [`docs/backtest-optimization.md`](docs/backtest-optimization.md) for a dedicated guide covering:
@@ -1522,9 +1561,19 @@ make up          Fire up the VM (downloads ISO if needed)
 make down        Shut it down
 make logs        Tail the logs
 make status      Check VM and API status
+make lint        Lint every .ps1/.sh script in a throwaway Docker image
+make format      Apply shfmt formatting to the .sh files in place
+make test        Run unit tests in a throwaway Docker image
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
+
+`make lint` covers the scripts that run inside the VM as well as the host-side
+shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;
+`.sh` gets shellcheck and shfmt. The ASCII rule is not cosmetic — Windows
+PowerShell 5.1 reads `.ps1` as ANSI unless the file has a UTF-8 BOM, so a
+multi-byte character inside a string literal gets mangled into a parse error you
+won't see until the VM boots. `make format` fixes whatever shfmt flags.
 
 ## Ports
 
@@ -1629,7 +1678,11 @@ config/                      Your config shit
 scripts/                     Scripts that run inside the Windows VM
   oem-install.bat            First-boot OEM script (creates startup entry)
   install.bat                Setup (Python, MT5, firewall) — runs every boot
-  start-mt5.bat              Boot entrypoint (install + start terminals + APIs)
+  start.bat                  Boot entrypoint (install + start terminals + APIs)
+  reboot.bat                 The only reboot path — writes rebooting.flag and
+                             releases both lock dirs before shutting down
+  acquire_lock.ps1           Boot-stamped lock acquire for start.bat and
+                             install.bat; auto-clears reboot-orphaned locks
   debloat.bat                Windows debloat script
   defender-remover/          Windows Defender removal tool
 
@@ -1673,7 +1726,7 @@ If you see persistent 503/504 from a single terminal, check `data/shared/logs/ap
 Inside the VM's shared folder (`data/shared/logs/`):
 
 - `install.log` - MT5 installation progress (install.bat)
-- `start-mt5.log` - Boot sequence log (start-mt5.bat)
+- `start.log` - Boot sequence log (start.bat)
 - `pip.log` - Python package installation
 - `api-<broker>-<account>.log` - Per-terminal API logs
 - `windows-events.log` - Tailed Windows System + Application event logs (Warning/Error/Critical level only). Catches OOM kills (`Microsoft-Windows-Resource-Exhaustion-Detector`), terminal64.exe crashes (`Application Error`), BSODs (`BugCheck`), service failures, etc.

@@ -48,6 +48,11 @@ echo "Syncing scripts to mount points..."
 cp "${DIR}/scripts/oem-install.bat" "${DIR}/data/oem/install.bat"
 cp "${DIR}/scripts/install.bat" "${DIR}/data/shared/scripts/install.bat"
 cp "${DIR}/scripts/start.bat" "${DIR}/data/shared/scripts/start.bat"
+# Single reboot path for the stack — always writes rebooting.flag and releases
+# both lock dirs, so a reboot can never strand a lock the way it used to.
+cp "${DIR}/scripts/reboot.bat" "${DIR}/data/shared/scripts/reboot.bat"
+# Boot-stamped lock acquire used by both start.bat and install.bat.
+cp "${DIR}/scripts/acquire_lock.ps1" "${DIR}/data/shared/scripts/acquire_lock.ps1"
 cp "${DIR}/scripts/api_runner.bat" "${DIR}/data/shared/scripts/api_runner.bat"
 cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-warmup-ea.bat"
 cp "${DIR}/scripts/compile-chartctl-loader.bat" "${DIR}/data/shared/scripts/compile-chartctl-loader.bat"
@@ -112,26 +117,26 @@ API_PORTS=$(python3 "$CFG" port_list)
 echo "Configured terminal ports (container-internal): ${API_PORTS}"
 
 # Generate fresh .env each run.
-: > "${DIR}/.env"
+: >"${DIR}/.env"
 
 API_TOKEN=$(python3 "$CFG" api_token)
 if [ -n "${API_TOKEN}" ]; then
-    echo "API_TOKEN=${API_TOKEN}" >> "${DIR}/.env"
+    echo "API_TOKEN=${API_TOKEN}" >>"${DIR}/.env"
     echo "API token loaded from config.yaml"
 else
     echo "WARNING: api_token is empty in config.yaml — API will run without auth"
 fi
 
 TS_AUTHKEY=$(python3 "$CFG" ts_auth_key)
-TS_AUTHKEY="${TS_AUTHKEY//[$'\t\r\n ']}"
+TS_AUTHKEY="${TS_AUTHKEY//[$'\t\r\n ']/}"
 if [ -n "${TS_AUTHKEY}" ]; then
-    echo "TS_AUTHKEY=${TS_AUTHKEY}" >> "${DIR}/.env"
+    echo "TS_AUTHKEY=${TS_AUTHKEY}" >>"${DIR}/.env"
     echo "Tailscale auth key loaded from config.yaml"
 fi
 TS_LOGIN_SERVER=$(python3 "$CFG" ts_login_server)
-TS_LOGIN_SERVER="${TS_LOGIN_SERVER//[$'\t\r\n ']}"
+TS_LOGIN_SERVER="${TS_LOGIN_SERVER//[$'\t\r\n ']/}"
 if [ -n "${TS_LOGIN_SERVER}" ]; then
-    echo "TS_EXTRA_ARGS=--accept-dns=false --login-server=${TS_LOGIN_SERVER}" >> "${DIR}/.env"
+    echo "TS_EXTRA_ARGS=--accept-dns=false --login-server=${TS_LOGIN_SERVER}" >>"${DIR}/.env"
     echo "Headscale login server: ${TS_LOGIN_SERVER}"
 fi
 
@@ -237,8 +242,8 @@ if [ -n "${TS_AUTHKEY}" ] && docker compose -f "${DIR}/docker-compose.yml" ps --
         docker compose -f "${DIR}/docker-compose.yml" exec -T tailscale sh -c '
             tailscale serve reset >/dev/null 2>&1 || true
             tailscale serve --bg --http=80 http://nginx:80
-        ' >/dev/null && echo "Tailscale Serve wired: tailnet :80 → nginx:80" \
-                     || echo "WARNING: tailscale serve setup failed; check 'docker compose logs tailscale'"
+        ' >/dev/null && echo "Tailscale Serve wired: tailnet :80 → nginx:80" ||
+            echo "WARNING: tailscale serve setup failed; check 'docker compose logs tailscale'"
     else
         echo "WARNING: Tailscale didn't authenticate in time; serve not wired."
         echo "  After it comes up, run:"

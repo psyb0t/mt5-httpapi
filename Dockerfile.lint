@@ -1,0 +1,49 @@
+# Lint image for the scripts this stack runs: the .ps1 files that execute inside
+# the Windows VM, plus the host-side and container-side .sh files.
+# Built, run, and deleted by `make lint` -- never published, never pushed.
+#
+# PowerShell is in here because a .ps1 parse error is invisible until the VM
+# boots: start.bat only sees a non-zero exit code. An em-dash in a string
+# literal in acquire_lock.ps1 mojibaked under Windows PowerShell 5.1, produced
+# a parse error, and start.bat read that as "lock held" -- deadlocking the
+# entire stack. `make lint` exists so that class of bug fails on the host.
+
+# shfmt has no bookworm apt package. Take the binary from the upstream image
+# rather than curl-plus-checksum, so there is no hand-maintained hash to get
+# wrong and the provenance is the maintainer's own published image.
+FROM mvdan/shfmt:v3.8.0 AS shfmt
+
+FROM mcr.microsoft.com/powershell:7.4-debian-12
+
+COPY --from=shfmt /bin/shfmt /usr/local/bin/shfmt
+
+# shellcheck writes its findings through a locale-aware encoder and dies with
+# `commitBuffer: invalid argument (invalid character)` if the locale cannot
+# represent a non-ASCII byte it read from a script. The base image has no
+# en_US.UTF-8, so pin C.UTF-8 which is always present and is a superset.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# git is here so lint.sh can ask `git ls-files` which scripts are TRACKED --
+# linting gitignored local scratch (commit.sh, git-update.sh, fix.sh) produces
+# findings nobody can act on.
+# PSScriptAnalyzer covers .ps1 style/correctness; the parse check in lint.sh
+# covers the syntax errors that actually broke production.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends shellcheck git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pwsh -NoProfile -Command \
+        "Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.22.0 -Force -Scope AllUsers" \
+    && shfmt --version \
+    && shellcheck --version \
+    && git --version
+
+# The bind-mounted repo is owned by the host user, not root, so git refuses to
+# read it as "dubious ownership" without this.
+RUN git config --global --add safe.directory /work
+
+COPY scripts/lint.sh /usr/local/bin/lint.sh
+RUN chmod +x /usr/local/bin/lint.sh
+
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/lint.sh"]
