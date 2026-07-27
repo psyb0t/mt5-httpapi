@@ -1,0 +1,11 @@
+{
+  "name": "mt5-httpapi",
+  "version": "4.8.3",
+  "description": "MetaTrader 5 trading via REST — market data, orders, positions, history, and server-side technical analysis",
+  "author": { "name": "psyb0t", "url": "https://github.com/psyb0t" },
+  "homepage": "https://github.com/psyb0t/mt5-httpapi",
+  "repository": "https://github.com/psyb0t/mt5-httpapi",
+  "license": "WTFPL",
+  "keywords": ["metatrader", "mt5", "trading", "rest-api", "forex", "mcp", "technical-analysis"],
+  "skills": "./skills/"
+}

@@ -34,6 +34,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Trade Result](#trade-result)
   - [History](#history)
 - [MCP Interface](#mcp-interface)
+- [Agent integrations](#agent-integrations)
 - [Examples](#examples)
 - [Optimization Guide](#optimization-guide)
 - [Go Client](#go-client)
@@ -1282,14 +1283,42 @@ Order/position mutations reached through `request` are the same live, irreversib
 
 For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to this endpoint.
 
+## Agent integrations
+
+The [skill](.agents/skills/mt5-httpapi) works in any agent that reads `.agents/skills/`, and installs natively in the clients below.
+
 ### Claude Code
 
 ```bash
-claude plugin marketplace add psyb0t/mt5-httpapi
+claude plugin marketplace add psyb0t/agents
 claude plugin install mt5-httpapi@psyb0t
 ```
 
-Claude Code prompts for the terminal-scoped API URL (e.g. `http://localhost:8888/roboforex/main`) and, if your terminal requires a bearer token, the token. The token is stored in the OS keychain, never in a settings file.
+Claude Code prompts for the terminal-scoped API URL (e.g. `http://localhost:8888/roboforex/main`) and, if your terminal requires a bearer token, the token — the token is stored in your OS keychain.
+
+### Codex
+
+```bash
+codex plugin marketplace add psyb0t/agents
+```
+
+Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and invokes it as `$mt5-httpapi`.
+
+### OpenClaw
+
+The skill is published to ClawHub on every release:
+
+```bash
+openclaw skills install @psyb0t/mt5-httpapi
+```
+
+For MCP clients that speak local stdio, the [`@psyb0t/mt5-httpapi`](.agents/plugins/mt5-httpapi) plugin bridges to the terminal's `/mcp` endpoint:
+
+```bash
+openclaw plugins install clawhub:@psyb0t/mt5-httpapi
+```
+
+Then set `MT5_API_URL` (and `MT5_API_TOKEN` if your terminal has auth enabled).
 
 ## Optimization Guide
 

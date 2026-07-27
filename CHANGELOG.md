@@ -6,6 +6,21 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.8.3] — 2026-07-27
+
+### Added
+
+- **Codex plugin manifest** (`.agents/.codex-plugin/plugin.json`) — points `skills` at `.agents/skills/`, so mt5-httpapi installs as a distribution channel via `codex plugin marketplace add psyb0t/agents`. The skill itself already worked in Codex with zero files (native `.agents/skills/` scanning); this only adds discovery.
+- **`## Agent integrations` README section** with copy-pasteable install commands for Claude Code, Codex, and the OpenClaw skill + MCP-bridge plugin, linked from the Table of Contents.
+
+### Fixed
+
+- The README's prior Claude Code install snippet pointed `claude plugin marketplace add` at this repo directly, which has no `marketplace.json` and would fail. It now points at the shared catalog, `psyb0t/agents`.
+
+### Removed
+
+- Deleted the stray `.claude-plugin/marketplace.json` from this repo — marketplaces register by name and collide across repos; the catalog now lives solely in `psyb0t/agents`.
+
 ## [v4.8.2] — 2026-07-27
 
 ### Added
