@@ -802,6 +802,13 @@ Two-stage flow:
   optional `.set` parameter file. Returns a `jobId`; poll for status; fetch
   the report and terminal log when complete.
 
+`POST /backtest` also accepts an auditable project mode used by `mt5-cli`:
+upload `ini`, `project_manifest`, and `project_bundle` together. In that mode
+the API validates every declared path, size, SHA-256, and ZIP entry, replaces
+the terminal's project modules only while the job owns the run lock, captures
+outputs and log deltas, and restores the exact pre-run trees before publishing
+the final status. Project mode never falls back to the ad-hoc expert/set flow.
+
 For a plain backtest, leave `[Tester].Optimization=0` or omit it. For an
 optimization, set `[Tester].Optimization` to one of:
 
@@ -1044,6 +1051,36 @@ Multipart form fields:
 | `topPasses`    | no       | For optimization jobs, keep the top `1..500` parsed XML passes in the status payload. Default `50`. |
 | `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`). Defaults to `backtest_timeout` from `config.yaml`, then hardcoded `6h`. |
 
+Project-mode multipart fields are a separate, complete contract:
+
+| Field              | Required | Notes |
+| ------------------ | -------- | ----- |
+| `ini`              | yes      | UTF-8 runtime INI. `[Common]` credentials are replaced by this API's configured account before launch. |
+| `project_manifest` | yes      | JSON schema `MT5-CLI-PROJECT-MATERIALIZATION-001` with `projectId`, external `runId`, `planFingerprint`, exact Expert/preset paths, and the complete artifact inventory. |
+| `project_bundle`   | yes      | ZIP containing exactly one byte payload for every manifest artifact. Extra, missing, duplicate, unsafe, or hash-divergent entries are rejected. |
+| `timeout`          | no       | Same real duration override used by the ad-hoc mode. |
+
+Each artifact declares `module`, project-relative `relativePath`, unique
+`bundleEntry`, `size`, and `sha256`. Supported modules and their physical
+remote destinations are:
+
+| Module | Remote destination |
+| ------ | ------------------ |
+| `EXP` | `MQL5/Experts/<EXP-project-directory>` |
+| `IND` | `MQL5/Indicators/<IND-project-directory>` |
+| `SCR` | `MQL5/Scripts/<SCR-project-directory>` |
+| `SRV` | `MQL5/Services/<SRV-project-directory>` |
+| `INC` | `MQL5/Include/<INC-project-directory>` |
+| `LBR` | `MQL5/Libraries/<LBR-project-directory>` |
+| `PRS` | `MQL5/Presets/<PRS-project-directory>` |
+| `TPL` | `Profiles/Templates/<TPL-project-directory>` |
+| `FLS` | terminal Common `Files/<FLS-project-directory>` |
+
+Only one project directory per module is accepted. Physical existing module
+trees are backed up and compared byte for byte after restoration. Reparse
+points, symlinks, junctions, physical conflicts that cannot be restored, and
+undeclared files are explicit failures.
+
 Responds `202 Accepted` with `Retry-After` header and the queued job payload:
 
 ```json
@@ -1068,6 +1105,29 @@ Responds `202 Accepted` with `Retry-After` header and the queued job payload:
 overwritten with the credentials from `config.yaml` for the request's
 broker/account. The expert path is rewritten to `Uploaded\<basename>` and the
 set file is namespaced per job to avoid collisions.
+
+In project mode, the Expert and preset paths are not rewritten to `Uploaded`.
+They must match `expertRelativePath` and `presetRelativePath` from the validated
+project manifest. The submitted credential-free INI remains available as raw
+evidence, while the normalized launch INI is generated inside the job stage.
+
+Project-mode responses use `pollAfterSeconds: 2` and expose the exact evidence
+URLs below in addition to the normal status/report/log fields:
+
+- `submittedIniUrl`
+- `projectManifestUrl`
+- `projectBundleUrl`
+- `executionManifestUrl`
+- `materializationAuditUrl`
+- `outputManifestUrl`
+- `outputArtifactsUrl`
+- `logDeltaManifestUrl`
+- `logDeltaArtifactsUrl`
+- `cancelUrl`
+
+The output archive contains only created or modified `FLS` files. Its manifest
+preserves every path, classification, size, SHA-256, and ZIP entry; unchanged
+files remain explicitly classified rather than copied as new output.
 
 #### `GET /backtest/<jobId>`
 
@@ -1166,6 +1226,34 @@ Example mode-3 optimization payload:
 Stream the raw report and terminal log file. Backtests return the MT5 HTML
 report. Optimizations return the MT5 XML spreadsheet export. `404` until the
 job finishes.
+
+#### Project evidence and cancellation endpoints
+
+For a project-mode job, raw evidence is available through:
+
+```text
+GET    /backtest/<jobId>/submitted-ini
+GET    /backtest/<jobId>/project-manifest
+GET    /backtest/<jobId>/project-bundle
+GET    /backtest/<jobId>/execution-manifest
+GET    /backtest/<jobId>/materialization
+GET    /backtest/<jobId>/output-manifest
+GET    /backtest/<jobId>/artifacts
+GET    /backtest/<jobId>/log-deltas-manifest
+GET    /backtest/<jobId>/log-deltas
+GET    /backtest/<jobId>/tail?lines=200
+DELETE /backtest/<jobId>
+```
+
+`DELETE` is accepted only for project-mode ownership and targets only that
+job's recorded subprocess. It sets `cancelRequested`, attempts termination of
+the exact owned process, and records every termination action. It never kills a
+terminal by executable name or adopts another job.
+
+The project worker always attempts output capture, log-delta capture, project
+restoration, and report restoration before final status. Any failure in those
+phases is preserved in the execution manifest and prevents a false successful
+completion.
 
 #### Worked example
 
