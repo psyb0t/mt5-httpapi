@@ -1300,9 +1300,10 @@ Claude Code prompts for the terminal-scoped API URL (e.g. `http://localhost:8888
 
 ```bash
 codex plugin marketplace add psyb0t/agents
+codex plugin add mt5-httpapi@psyb0t
 ```
 
-Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and invokes it as `$mt5-httpapi`.
+Installed via the marketplace, the skill invokes as `$mt5-httpapi:mt5-httpapi`. Codex also picks the skill up automatically with no install in any repo containing `.agents/skills/`, where it invokes as plain `$mt5-httpapi`.
 
 ### OpenClaw
 

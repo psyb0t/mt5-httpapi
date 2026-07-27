@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.8.4] — 2026-07-27
+
+### Fixed
+
+- The README's Codex subsection under `## Agent integrations` stopped after `codex plugin marketplace add psyb0t/agents` and never told the reader how to actually install the plugin. Added the missing command, `codex plugin add mt5-httpapi@psyb0t`.
+- Clarified that skill invocation differs by install path: a marketplace-installed skill invokes as `$mt5-httpapi:mt5-httpapi`, while a skill Codex picks up automatically from a repo's own `.agents/skills/` invokes as plain `$mt5-httpapi`.
+
 ## [v4.8.3] — 2026-07-27
 
 ### Added
