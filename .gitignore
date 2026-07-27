@@ -2,6 +2,10 @@ CLAUDE.md
 .research_files
 data/*
 !data/.gitkeep
+# Terminal data tree scaffolded at repo root when mt5api runs outside the VM
+# (config.py resolves BROKERS_DIR relative to the repo). Never commit it —
+# a real terminal dir contains account artifacts.
+/terminals/
 mt5installers/*
 !mt5installers/.gitkeep
 # Host-managed backtest assets — referenced by /backtest via expert_name/set_name.
@@ -9,6 +13,9 @@ mt5installers/*
 assets/experts/*
 !assets/experts/.gitkeep
 !assets/experts/MT5SystemWarmup.mq5
+!assets/experts/MT5ChartLoader.mq5
+!assets/experts/include
+!assets/experts/include/ChartControl.mqh
 assets/sets/*
 !assets/sets/.gitkeep
 config/config.yaml

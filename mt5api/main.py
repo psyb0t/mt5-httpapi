@@ -38,6 +38,52 @@ WSGI_CHANNEL_TIMEOUT = 60
 
 RETRY_INTERVAL = 30
 
+# Seconds to let the terminal GUI settle before re-applying the WebRequest
+# allowlist via AutoIt on boot (see _reapply_webrequest_once).
+WEBREQUEST_BOOT_DELAY = 25
+_webrequest_reapplied = threading.Event()
+
+
+def _reapply_webrequest_once():
+    """Re-apply this terminal's desired WebRequest allowlist via AutoIt after a
+    (re)start. MT5 on the VM drops the list every restart, so the API re-sets it
+    once the terminal GUI is up. No-op unless AutoIt is present (the VM) AND a
+    desired allowlist has been configured. Runs in a daemon thread so it never
+    blocks startup; guarded to run only once per process."""
+    if _webrequest_reapplied.is_set():
+        return
+    _webrequest_reapplied.set()
+
+    def _work():
+        try:
+            from mt5api.chartctl import autoit_webrequest as autoit
+            from mt5api.chartctl import webrequest as wr
+            from mt5api.config import TERMINAL_DIR
+
+            if not autoit.available():
+                return
+            urls = wr.effective_urls(wr.config_dir(TERMINAL_DIR))
+            if not urls:
+                return
+            # Let charts/loader finish attaching, plus a per-terminal stagger
+            # (from the port) so multiple terminals on one host don't all pile
+            # onto the machine-wide GUI mutex at once.
+            time.sleep(WEBREQUEST_BOOT_DELAY + (PORT % 10) * 3)
+            for attempt in range(1, 4):        # brief retry: GUI may still be busy
+                status, _log = autoit.apply_urls(urls)
+                log.info(
+                    "Boot WebRequest re-apply attempt %d: %d url(s) -> %s",
+                    attempt, len(urls), status,
+                )
+                if status == "OK":
+                    break
+                time.sleep(15)
+        except Exception:
+            log.exception("Boot WebRequest re-apply failed")
+
+    threading.Thread(target=_work, daemon=True).start()
+
+
 # --- MCP interface -----------------------------------------------------------
 # TODO: change to fastapi or smth. This WSGI<->ASGI bridge is a stopgap. mt5api
 # is a Flask/WSGI app (served by waitress), but the MCP server is an ASGI
@@ -121,6 +167,7 @@ def _background_init():
             connected = False
         if connected:
             log.info("MT5 connected on attempt %d.", attempt)
+            _reapply_webrequest_once()
             return
         log.warning("MT5 not ready, retrying in %ds...", RETRY_INTERVAL)
         time.sleep(RETRY_INTERVAL)
@@ -160,6 +207,7 @@ def main():
 
         if connected:
             log.info("MT5 connected.")
+            _reapply_webrequest_once()
         else:
             log.warning(
                 "MT5 not ready yet, retrying every %ds in background...",

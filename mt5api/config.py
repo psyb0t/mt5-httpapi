@@ -240,6 +240,29 @@ for _c in _candidates:
 
 TERMINAL_DIR = os.path.dirname(TERMINAL_PATH)
 INI_FILE = os.path.join(TERMINAL_DIR, "mt5start.ini")
+
+# Chart Deployments (chartctl) — live-mode only feature. Global default from
+# config.yaml `chartctl:` block; per-terminal `chartctl: false` in terminals[]
+# overrides it. Backtest-mode terminals never enable it: there is no running
+# terminal64.exe to manage charts on.
+_chartctl_cfg = load_yaml_config().get("chartctl") or {}
+_chartctl_terminal_override = _terminal_config.get("chartctl")
+_chartctl_global_enabled = bool(_chartctl_cfg.get("enabled", True))
+CHARTCTL_ENABLED = (
+    MODE == "live"
+    and _chartctl_global_enabled
+    and (_chartctl_terminal_override is not False)
+)
+CHARTCTL_RECONCILE_HINT_SECONDS = parse_duration_to_seconds(
+    str(_chartctl_cfg.get("reconcile_hint_interval") or "5s")
+) or 5
+CHARTCTL_OBSERVED_STALE_SECONDS = parse_duration_to_seconds(
+    str(_chartctl_cfg.get("observed_stale_after") or "60s")
+) or 60
+CHARTCTL_COMMAND_TIMEOUT_SECONDS = parse_duration_to_seconds(
+    str(_chartctl_cfg.get("command_timeout") or "30s")
+) or 30
+CHARTCTL_MAX_UPLOAD_BYTES = int(_chartctl_cfg.get("max_upload_bytes") or 16 * 1024 * 1024)
 IDENTITY = make_identity(BROKER, ACCOUNT, INSTANCE)
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FULL_LOG = os.path.join(LOG_DIR, "full.log")

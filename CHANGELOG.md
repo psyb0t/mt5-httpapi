@@ -6,93 +6,39 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
-## [v4.8.2] — 2026-07-27
+## [Unreleased] — Chart Deployments (chartctl)
+
+Remote EA deployment: attach Expert Advisors to charts with set files over the
+HTTP API, no RDP and no terminal restart.
 
 ### Added
 
-- Added a GitHub Actions CI status badge to the README.
+- **Chart Deployments feature** (`mt5api/chartctl/`, `mt5api/handlers/chartctl.py`). Stage `.ex5`/`.set` artifacts, declare deployments (expert + set + symbol + timeframe) as desired state, and a resident loader EA reconciles the terminal's charts to it. New endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets` + `GET /sets/<name>`, `POST/GET /deployments` + `GET/PATCH/DELETE /deployments/<id>`, `POST /deployments/reconcile`, `GET /charts`, `GET /loader`, `POST /charts/<chart_id>/screenshot`.
+- **Chart Control Protocol v1** — a file-based contract in `MQL5\Files\chartctl\` (`desired.json` / `observed.json` / command channel). Documented in `docs/chart-control-protocol.md`. Deployments only report `running` once the loader confirms the expert is live on a chart; drift and failures surface in `observed.json`.
+- **Reference loader EA** `assets/experts/MT5ChartLoader.mq5` plus the portable include `assets/experts/include/ChartControl.mqh`, so an existing resident EA (e.g. an account tracker) can adopt the protocol with three calls instead of running a second EA. Single-loader mutex via a terminal GlobalVariable makes co-existence safe.
+- Config block `chartctl:` in `config.yaml` (enable flag, reconcile hint, staleness window, command timeout, upload cap). Live-mode terminals only; per-terminal `chartctl: false` override.
+- **Zero-touch loader bootstrap** — `scripts/compile-chartctl-loader.bat` auto-compiles the loader in every broker base on boot and propagates the `.ex5` to existing terminal instances; `config_helper.py write_ini` adds a `[StartUp] Expert=Advisors\MT5ChartLoader` section (honoring `symbol_suffix`) to live chartctl-enabled terminals, so the loader attaches itself at terminal launch. No RDP or manual attach anywhere in the deploy path. Duplicate loaders from re-fired `[StartUp]` lines self-close via the mutex.
+- Tests: `tests/test_chartctl_units.py`, `tests/test_chartctl_endpoints.py`, and a Python `tests/chartctl_fake_loader.py` that plays the EA side of the protocol so the full endpoint suite runs on Linux with no MT5.
+- **WebRequest allowlist provisioning** (`GET`/`PUT /webrequest`, `POST /webrequest/apply`; `mt5api/chartctl/webrequest.py`, `mt5api/chartctl/autoit_webrequest.py`, `mt5api/handlers/webrequest.py`). Set the terminal's `WebRequest()` allowed-URL list over the API instead of the Options dialog. A dedicated call (not a deployment field) since it's rarely needed. Two apply paths, chosen at runtime:
+  - **Windows VM (default here):** the allowlist is *not* stored in `common.ini` on this terminal build — it lives in the machine-bound `MQL5\experts.dat` and MT5 drops it on every restart. So it's set the way a user would: a bundled portable AutoIt interpreter (`assets/autoit/AutoIt3_x64.exe` + `set_webrequest.au3`) drives Tools → Options → Expert Advisors and types the URLs in. Takes effect immediately in-session (verified: a probe EA's `WebRequest()` returns HTTP 200 right after). Since MT5 forgets it on restart, `main.py` re-applies the persisted list automatically ~25 s after each terminal (re)start, surviving the periodic auto-reboot.
+  - **Bare metal:** where `common.ini` *is* the store, falls back to encoding the list into `common.ini` (`scripts/webrequest_allowlist_codec.py`, format reverse-engineered from `terminal64.exe`, verified byte-identical against 18 real broker blobs) + a terminal restart.
 
-## [v4.8.1] — 2026-07-27
+  Desired list persisted per terminal (`Config/webrequest.json`); first use migrates from the terminal's existing list, preserving manually-configured URLs. GUI applies are serialized host-wide by a named Windows kernel mutex (`Global\mt5_httpapi_webrequest_autoit`; crash-safe via `WAIT_ABANDONED`) since desktop focus is shared across terminals, and each terminal's boot re-apply is staggered by its port — so many terminals per VM can provision URLs without keystroke collisions. `inspect_options.au3`/`selftest.au3` ship as GUI-automation diagnostics (`POST /webrequest/apply?script=`). Tests: `tests/test_webrequest.py`. Live-mode chartctl terminals only.
 
-### Added
-
-- Added self-hosted version and license badges; wired a badges job into pipeline.yml.
-
-## [v4.8.0] — 2026-07-26
-
-MCP interface reworked from a single generic passthrough to dedicated, typed tools.
-
-### Changed
-
-- **`/mcp` now exposes ~24 dedicated typed tools** grouped by family (market data, account, positions, orders, history, terminal, backtest) instead of the lone generic `request` passthrough. Each tool has typed params + a description the agent reads — e.g. `create_order(symbol, type, volume, price?, sl?, tp?)`, `get_rates(symbol, timeframe, count?)`, `close_position(ticket, volume?)` — so the tool schema IS the documentation. Order/position mutation tools carry an explicit irreversible-live-account note. A generic `request` + `endpoints` catalog remain as a fallback for routes without a dedicated tool. Every tool still runs the same handler + auth + MT5 locking as a real HTTP call (in-process). README + skill + plugin docs updated.
-- Submitting a backtest (`POST /backtest`) is **not** exposed as a tool — that route takes a multipart file upload; `get_backtest` polls status/report/log/tail, and new runs are submitted via the REST API.
-
-## [v4.7.0] — 2026-07-26
-
-New MCP interface — the API is now also driveable over the Model Context Protocol.
-
-### Added
-
-- **MCP server mounted at `/mcp`** (streamable-HTTP), in the same process as the REST API on every terminal. Three tools mirror the whole REST surface: `ping` (lock-free liveness), `endpoints` (the route catalog), and `request(method, path, query, body)` — call any REST endpoint, running the exact same handler + auth + MT5 locking as a real HTTP request. Same bearer auth as REST (empty `api_token` = auth off; a configured token requires `Authorization: Bearer <token>` on `/mcp` too). See `mt5api/mcp_server.py`.
-- **`@psyb0t/mt5-httpapi` ClawHub plugin** (`.agents/plugins/mt5-httpapi/`) — a stdio↔HTTP MCP bridge (`mcp-remote`) so an OpenClaw/MCP agent can drive a running terminal. Point `MT5_API_URL` at the terminal's base (+ `MT5_API_TOKEN` if auth is on); the reachable endpoint is `$MT5_API_URL/mcp/`. CI publishes it to ClawHub alongside the skill.
-- README and the `mt5-httpapi` skill gain an **MCP interface** section.
-
-### Note
-
-- mt5api is a Flask/WSGI app; the ASGI MCP app is bridged in via `a2wsgi` behind `/mcp` (there's a `TODO` to migrate mt5api to FastAPI and drop the bridge). New runtime deps `mcp` + `a2wsgi` are installed by `scripts/start.bat` on boot and tracked in `requirements-api.txt`. No REST endpoint or trading-path change.
-
-## [v4.6.0] — 2026-07-26
-
-Hotfix for a boot-blocking regression introduced in v4.5.0, plus a `make lint` / `make format` gate so that class of bug cannot reach the VM again.
+- `POST /charts/<chart_id>/close` + a `close_chart` loader command — close any chart by id, including charts the loader cannot attribute to a deployment. The loader refuses to close its own chart.
 
 ### Fixed
 
-- **v4.5.0's `scripts/acquire_lock.ps1` deadlocked every boot.** The file contained em-dashes in comments *and in string literals*, with no UTF-8 BOM. Windows PowerShell 5.1 reads `.ps1` as ANSI, so those bytes were mangled, the string literals terminated early, and the script died with `Unexpected token` / `The hash literal was incomplete`. The script is now pure ASCII, which needs no BOM to stay stable.
-- **A failing lock helper was indistinguishable from a held lock.** `acquire_lock.ps1` used exit 1 for "another instance holds the lock" — the same code PowerShell returns for a parse error. So the syntax error above made `start.bat` conclude the lock was taken and exit, on every boot, which is the exact deadlock the lock rewrite was meant to remove. Exit codes are now distinct: `0` acquired, `10` held, anything else means the helper itself failed. On that third case `scripts/start.bat` and `scripts/install.bat` log a warning and fall back to a plain `mkdir` lock, so a broken helper can degrade single-instance safety but can never block boot.
-- `scripts/event-log-tailer.ps1`: em-dashes in comments replaced with ASCII (same mojibake hazard); `Append-Full` renamed to `Add-FullLogLine` (`Add` is an approved PowerShell verb); its `catch {}` no longer swallows silently — a failed `full.log` append is now reported into `windows-events.log`, which is not the contended file that just failed.
+- **WebRequest AutoIt apply drove the wrong terminal window (`options_not_found` / silent wrong-terminal writes).** The scripts matched the MT5 main window by title substring (the login), but `WinList()` also returns hidden windows and cloned terminals of the same account have byte-identical titles — so the apply could target the wrong terminal or fail to activate one at all. The API now resolves its terminal64.exe PID by executable path (WMI) and passes it to the scripts, which match only visible windows owned by that PID and verify the Options dialog belongs to it too, with activation retries. Legacy 3-arg script invocation still works (title fallback).
 
-### Added
+- **Loader v1.0.2 — duplicate-chart leak across terminal restarts.** The `chartctl:<id>` chart-comment stamp does not survive MT5's profile save/restore cycle, so every terminal restart (including the periodic auto-reboot) left the loader unable to recognize its own chart and it opened a fresh duplicate — accumulating until the terminal's chart cap. Reconcile now first **adopts** an unowned chart already running the deployment's exact expert + symbol + timeframe before opening a new one; comment stamps are verified by read-back (`ChartSetString` is async); a failed attach closes the chart it opened (previously an expert-less chart leaked per attempt) and backs off for 60 s; and errors are tracked per deployment instead of in a single shared slot (one deployment's failure no longer masks another's).
 
-- **`make lint`** — lints every tracked-or-new script in a throwaway Docker image (built, run, `docker rmi`'d, repo mounted read-only), mirroring how `make test` works. Six checks: a self-test of its own non-ASCII detector, the `.ps1` ASCII gate, a `.ps1` parse check, PSScriptAnalyzer, shellcheck (warning and above), and shfmt. `Dockerfile.lint` + `scripts/lint.sh`.
-  - The detector self-test exists because a checker that silently stops detecting is worse than no checker — the same failure mode as the healthcheck fixed in v4.5.0. It verifies the pattern still flags a real em-dash and still passes pure ASCII, and fails the whole run if it cannot tell them apart.
-  - Files are selected with `git ls-files --cached --others --exclude-standard`, so brand-new scripts are covered while gitignored local scratch is not. The vendored `scripts/defender-remover/` tree is excluded.
-- **`make format`** — applies shfmt in place. Delegates to `scripts/lint.sh --format` so it shares file selection with `make lint`; when the two had separate lists, `format` skipped untracked files that `lint` still flagged and the gate could never go green.
+### Notes
 
-### Changed
+- All chartctl handlers are **lock-free** — pure file I/O against the terminal data dir — so they never queue behind the process-wide MT5 SDK lock.
+- Additive and gated on `chartctl.enabled`; with the block absent the API behaves exactly as before.
 
-- Applied shfmt formatting to `run.sh`, `test.sh`, `scripts/rotate-logs.sh`, and `tests/real/run.sh`. Whitespace and layout only — no behavior change. In `test.sh` this expands single-line function bodies (`pass() { echo …; PASS=…; }`) onto separate lines, which is most of the diff.
-- README's Make Targets list now includes `lint`, `format`, and `test` (`test` had been missing).
-
-## [v4.5.0] — 2026-07-26
-
-Boot-lock and reboot hardening for the Windows VM, a critical healthcheck false-positive fix, and a `make test` build fix. Also adds third-party license notices for the vendored Windows Defender removal tool.
-
-### Fixed
-
-- **Healthcheck reported dead terminals as healthy.** `scripts/healthcheck.sh` probed each terminal with `curl … -w '%{http_code}' … || echo 000`. curl already prints `000` on a failed connection, so the `|| echo 000` fallback appended a second one — yielding `000000`, which compared unequal to `000` and marked the port UP. A full outage could sit behind a green Docker healthcheck indefinitely. The probe now whitelists a valid HTTP status shape (`[1-5][0-9][0-9]`) and fails closed; any real status, including 4xx/5xx, proves the process is listening.
-- **Reboot-orphaned boot locks deadlocked the stack.** `%SHARED%\start.running` (and install.bat's lock) live on the host-mounted volume and survive a VM reboot. The auto-reboot task fires `shutdown /r /t 0 /f` with no grace period and can land mid-run, stranding the lock so every later boot bailed on the orphan forever. New `scripts/acquire_lock.ps1` stamps each lock with the OS boot time, so a lock from a previous boot is provably ownerless and is cleared automatically; a live same-boot instance still blocks. `scripts/start.bat` and `scripts/install.bat` acquire through it and release via a single `release_lock`.
-- **`make test` was dead on a clean checkout.** `Dockerfile.test` COPYed `config/requirements.txt`, which had been retired and is gitignored, so the build failed with `"/config/requirements.txt": not found`. Tests now install from the tracked `requirements-api.txt`, additionally COPY `scripts/config_helper.py` (loaded by `tests/test_terminal_instances.py`), and skip the live-deployment `tests/real/` suite in the default offline run.
-
-### Added
-
-- `scripts/reboot.bat` — the single reboot path for the VM. Writes `rebooting.flag` and releases both lock dirs in one place, replacing three separate inline flag+shutdown+rmdir sequences that had to be kept in sync.
-- `requirements-api.txt` — tracked source of truth for the mt5api HTTP server's Python dependencies (replacing the retired, gitignored `config/requirements.txt`). `scripts/start.bat` installs the same set inline on every boot. Retains the documented `numpy<2` pin — the MetaTrader5 `5.0.5735` wheel is built against numpy 1.x, and under numpy 2.x `order_send` fails with `(-2, 'Unnamed arguments not allowed')`.
-
-### Changed
-
-- Renamed the boot entrypoint `start-mt5.bat` → `start.bat` and its log `start-mt5.log` → `start.log`; README file-tree and log references updated to match.
-
-### Licensing
-
-- Added `THIRD_PARTY.md` and `scripts/defender-remover/LICENSE` (GPL-3.0). `scripts/defender-remover/` is a verbatim vendored copy of the third-party windows-defender-remover tool, which is GPL-3.0-licensed; the rest of mt5-httpapi stays WTFPL. Documents the licensing of what the repo actually distributes.
-
-## [v4.4.3] — 2026-07-26
-
-Docs: hardened the `mt5-httpapi` agent skill with explicit destructive-operation guardrails and an auth/exfil-style warning. Renamed the safety section to `## Security & safety`, spelled out that trade/order/position mutations are irreversible with no client-side auto-retry, and made the "empty `api_token` = unauthenticated" warning more explicit. No behavior, endpoint, or API change.
-
-## [v4.4.2] — 2026-07-25
-
-CI: switch the ClawHub skill publish to `clawhub-publish.yml` directly — the `clawhub-skills-publish-workflow.yml` shim was removed upstream. No trading-path or API change.
+---
 
 ## [v4.3.1] — 2026-05-17
 

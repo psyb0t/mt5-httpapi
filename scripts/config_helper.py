@@ -100,9 +100,11 @@ def main():
 
     elif cmd == "write_ini":
         if len(sys.argv) < 5:
-            print("Usage: config_helper.py write_ini <broker> <account> <outpath>", file=sys.stderr)
+            print("Usage: config_helper.py write_ini <broker> <account> <outpath> [instance] [mode]", file=sys.stderr)
             sys.exit(1)
         broker, account, outpath = sys.argv[2], sys.argv[3], sys.argv[4]
+        instance = sys.argv[5] if len(sys.argv) > 5 else "default"
+        mode = (sys.argv[6] if len(sys.argv) > 6 else "live").lower()
         accounts = cfg.get("accounts", {})
         b = accounts.get(broker, {})
         creds = b.get(account) if account else next(iter(b.values()), None) if b else None
@@ -114,8 +116,50 @@ def main():
         ini += "KeepPrivate=0\nAutoTrading=1\nNewsEnable=0\n"
         ini += "[Experts]\nAllowLiveTrading=1\nAllowDllImport=1\nEnabled=1\n"
         ini += "[Email]\nEnable=0\n"
+
+        # Chart Deployments loader bootstrap: auto-attach MT5ChartLoader at
+        # terminal launch via [StartUp]. Gated exactly like the API's
+        # CHARTCTL_ENABLED: live mode + global chartctl.enabled (default
+        # true) + no per-terminal `chartctl: false` override. The loader's
+        # GlobalVariable mutex makes the re-fire on every launch idempotent
+        # (a duplicate closes its own chart and exits).
+        chartctl_cfg = cfg.get("chartctl") or {}
+        chartctl_on = bool(chartctl_cfg.get("enabled", True))
+        term_override = None
+        term_suffix = ""
+        for t in cfg.get("terminals", []):
+            if (t.get("broker") == broker and str(t.get("account")) == str(account)
+                    and (t.get("instance") or "default") == instance):
+                term_override = t.get("chartctl")
+                term_suffix = t.get("symbol_suffix") or ""
+                break
+        if mode == "live" and chartctl_on and term_override is not False:
+            ini += "[StartUp]\n"
+            ini += "Expert=Advisors\\MT5ChartLoader\n"
+            ini += f"Symbol=EURUSD{term_suffix}\n"
+            ini += "Period=H1\n"
+
         with open(outpath, "w", encoding="utf-8") as f:
             f.write(ini)
+
+        # WebRequest allowlist boot-seed: start.bat deletes Config/common.ini
+        # every boot, so re-emit it here (after the delete, before launch) from
+        # the persistent per-terminal desired file. No-op when this terminal has
+        # no allowlist set. Gated exactly like the loader [StartUp] block above.
+        if mode == "live" and chartctl_on and term_override is not False:
+            try:
+                sys.path.insert(0, _SHARED_DIR)
+                from mt5api.chartctl import webrequest as wr
+                cfg_dir = os.path.join(os.path.dirname(os.path.abspath(outpath)), "Config")
+                urls = wr.load_desired(cfg_dir)
+                if urls is not None:
+                    wr.write_common_ini(cfg_dir, urls)
+            except Exception as exc:  # non-fatal: never block terminal launch
+                print(f"WARN: WebRequest allowlist seed failed: {exc}", file=sys.stderr)
+
+    elif cmd == "chartctl_enabled":
+        chartctl_cfg = cfg.get("chartctl") or {}
+        print("1" if bool(chartctl_cfg.get("enabled", True)) else "0")
 
     elif cmd == "nginx_conf":
         if len(sys.argv) < 3:
