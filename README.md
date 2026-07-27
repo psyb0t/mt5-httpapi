@@ -1282,6 +1282,15 @@ Order/position mutations reached through `request` are the same live, irreversib
 
 For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to this endpoint.
 
+### Claude Code
+
+```bash
+claude plugin marketplace add psyb0t/mt5-httpapi
+claude plugin install mt5-httpapi@psyb0t
+```
+
+Claude Code prompts for the terminal-scoped API URL (e.g. `http://localhost:8888/roboforex/main`) and, if your terminal requires a bearer token, the token. The token is stored in the OS keychain, never in a settings file.
+
 ## Optimization Guide
 
 See [`docs/backtest-optimization.md`](docs/backtest-optimization.md) for a dedicated guide covering:
