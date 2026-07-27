@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.8.1] — 2026-07-27
+
+### Added
+
+- Added self-hosted version and license badges; wired a badges job into pipeline.yml.
+
 ## [v4.8.0] — 2026-07-26
 
 MCP interface reworked from a single generic passthrough to dedicated, typed tools.
