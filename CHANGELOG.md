@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.8.2] — 2026-07-27
+
+### Added
+
+- Added a GitHub Actions CI status badge to the README.
+
 ## [v4.8.1] — 2026-07-27
 
 ### Added
