@@ -309,6 +309,56 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=
 
 Deal fields: `type` (0=buy, 1=sell), `entry` (0=opening, 1=closing), `profit` (0 for entries, realized P&L for exits).
 
+### Chart Deployments
+
+Deploy Expert Advisors to charts over HTTP — no RDP, no terminal restart.
+Stage `.ex5` + `.set` files, declare deployments, and a resident loader EA
+inside the terminal reconciles charts to match. The API holds desired state;
+the loader reports observed truth. A deployment only flips to `running` once
+the loader confirms the expert is live on a chart.
+
+**Setup:** automatic via `[StartUp] Expert=` on boot. No manual attach needed.
+Disable per terminal with `chartctl: false`.
+
+Endpoint reference:
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `POST` / `GET` / `DELETE` | `/experts` `/experts/<hash>` | Stage, list, remove EA `.ex5` |
+| `POST` / `GET` | `/sets` `/sets/<name>` | Stage, list, inspect `.set` (returns parsed inputs) |
+| `POST` / `GET` | `/deployments` | Create or list deployments |
+| `GET` / `PATCH` / `DELETE` | `/deployments/<id>` | Inspect, pause/resume, change set, delete |
+| `POST` | `/deployments/reconcile` | Force immediate reconcile |
+| `GET` | `/charts` | Live chart/EA inventory |
+| `GET` | `/loader` | Loader EA status and version |
+| `POST` | `/charts/<id>/screenshot` | Capture chart as PNG |
+| `POST` | `/charts/<id>/close` | Close a chart by id |
+
+```bash
+# Stage artifacts
+curl -F "expert=@HappyGoldScalp.ex5" "$MT5_API_URL/experts"
+curl -F "set=@gold-m5.set"          "$MT5_API_URL/sets"
+
+# Deploy
+curl -X POST "$MT5_API_URL/deployments" \
+  -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expert":"HappyGoldScalp.ex5","set":"gold-m5.set","symbol":"XAUUSD","timeframe":"M5"}'
+
+# Check status
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/deployments"
+
+# Pause / resume / delete
+curl -X PATCH "$MT5_API_URL/deployments/dep_a1b2c3" \
+  -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -d '{"enabled":false}'
+curl -X DELETE "$MT5_API_URL/deployments/dep_a1b2c3" \
+  -H "Authorization: Bearer $MT5_API_TOKEN"
+```
+
+Full protocol: [`docs/chart-control-protocol.md`](docs/chart-control-protocol.md).
+WebRequest allowlist provisioning: `GET/PUT /webrequest`, `POST /webrequest/apply`.
+
 ### Backtest
 
 Run MT5 Strategy Tester via the API. Two-stage workflow: build the INI from a
