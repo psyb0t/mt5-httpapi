@@ -1,0 +1,205 @@
+services:
+{% for vm in vms %}
+  # ── VM "{{ vm.name }}" — {{ vm.cpuset }} ──
+  {{ vm.service }}:
+    image: dockurr/windows:5.14
+    environment:
+      RAM_SIZE: "{{ vm.ram }}"
+      RAM_CHECK: "N"
+      CPU_CORES: "{{ vm.cpu_cores }}"
+      DISK_SIZE: "{{ vm.disk_size }}"
+    devices:
+      - /dev/kvm
+    cap_add:
+      - NET_ADMIN
+{% if vm.cpuset %}
+    cpuset: "{{ vm.cpuset }}"
+{% endif %}
+    ports:
+{% if vm.novnc_port %}
+      - "{{ vm.novnc_port }}:8006"
+{% else %}
+      - "${NOVNC_PORT:-8006}:8006"
+{% endif %}
+    volumes:
+{% if vm.storage %}
+      - {{ vm.storage }}:/storage
+{% endif %}
+      - ./data/oem:/oem
+{% if vm.log_dir %}
+      - {{ vm.log_dir }}:/shared/logs
+{% endif %}
+      - /data/mt5-shared:/shared
+      - ./data/win.iso:/boot.iso
+      - ./assets:/shared/assets:ro
+{% if vm.extra_binds %}
+{% for bind in vm.extra_binds %}
+      - {{ bind }}
+{% endfor %}
+{% endif %}
+      - ./data/vm-group-{{ vm.name }}.txt:/shared/config/vm-group.txt:ro
+{% if vm.mem_limit %}
+    deploy:
+      resources:
+        limits:
+          memory: {{ vm.mem_limit }}
+{% if vm.memswap_limit %}
+    memswap_limit: {{ vm.memswap_limit }}
+{% endif %}
+{% else %}
+    deploy:
+      resources:
+        limits:
+          memory: 116G
+    memswap_limit: 120G
+{% endif %}
+    healthcheck:
+      test: ["CMD", "sh", "/shared/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+{% if vm.wickworks_service %}
+  # Wickworks sidecar for VM "{{ vm.name }}"
+  {{ vm.wickworks_service }}:
+    image: psyb0t/wickworks:v0.3.1
+    restart: unless-stopped
+    network_mode: "service:{{ vm.service }}"
+    environment:
+      LOG_LEVEL: INFO
+      MAX_BARS: "5000"
+      MIN_BARS: "50"
+    depends_on:
+      - {{ vm.service }}
+
+{% endif %}
+{% endfor %}
+  # Daily log rotator. Rotates data/shared/logs/*.log to *.log.YYYYMMDD
+  # at the day boundary and prunes archives older than RETAIN_DAYS.
+  # Truncate-in-place so the Python API's open log handles keep working
+  # without reopening. Hourly check, idempotent (keyed on yesterday's
+  # archive existing).
+  log-rotator:
+    image: alpine:3.20
+    restart: unless-stopped
+    environment:
+      LOG_DIR: /logs
+      RETAIN_DAYS: "7"
+      INTERVAL: "3600"
+    volumes:
+      - /data/mt5-shared/logs:/logs
+      - ./scripts/rotate-logs.sh:/rotate.sh:ro
+    command: ["sh", "/rotate.sh"]
+
+{% if enable_mcpunifier|default(true) %}
+  # Unified MCP endpoint. One MCP session that reaches every terminal, with
+  # broker/account as tool parameters, instead of one endpoint per terminal.
+  # The per-terminal /<broker>/<account>/mcp endpoints keep working unchanged;
+  # nginx routes /mcp/ here.
+  mcpunifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcpunifier
+    restart: unless-stopped
+    environment:
+      MT5_HOST: {{ vms[0].service if vms else 'mt5' }}
+      LOG_LEVEL: ${MCP_LOG_LEVEL:-info}
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /var/log/mcpunifier:rw,noexec,nosuid,size=64m
+    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6600/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+{%- for vm in vms %}
+      - {{ vm.service }}
+{%- endfor %}
+{%- endif %}
+  # nginx is the single entry point for all terminal APIs. Routes
+  # /<broker>/<account>/... to <vm_service>:<terminal_port> (per-terminal Python
+  # API process inside each Windows VM, reachable via the VM container's
+  # iptables DNAT). Auto-generated from config/config.yaml by run.sh.
+  # Bound to 127.0.0.1:8888 so it's loopback-only by default — LAN
+  # exposure is opt-in (change the host bind), tailnet exposure is via
+  # the optional tailscale sidecar below.
+  nginx:
+    image: nginx:1.30.0-alpine3.23
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8888}:80"
+    volumes:
+      - ./.data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+{%- for vm in vms %}
+      - {{ vm.service }}
+{%- endfor %}
+{%- if enable_mcpunifier|default(true) %}
+      - mcpunifier
+{%- endif %}
+
+  # ── Cloudflare Tunnel (uncomment to expose API publicly) ──────────
+  # Point your cloudflared ingress to http://nginx:80 (single backend,
+  # nginx routes per-terminal paths). Drop creds + config in
+  # ./.data/cloudflared/.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:2026.3.0
+  #   restart: unless-stopped
+  #   command: tunnel --config /etc/cloudflared/config.yml run
+  #   volumes:
+  #     - ./.data/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+  #     - ./.data/cloudflared/creds.json:/etc/cloudflared/creds.json:ro
+  #   depends_on:
+  #     - nginx
+
+  # ── Tailscale (uncomment to expose API over tailnet HTTP) ─────────
+  # Set tailscale.auth_key in config/config.yaml; for Headscale, also set
+  # tailscale.login_server. run.sh reads both and writes .env + wires
+  # tailscale serve via the CLI inside the sidecar. URL scheme:
+  #   http://mt5-httpapi/<broker>/<account>/...
+  # Plain HTTP — bare MagicDNS hostnames don't have matching certs, and
+  # the wireguard layer already encrypts everything inside the tailnet.
+  # The sidecar runs in its OWN netns (bridge mode, not host) so it gets
+  # its own tailnet identity — host's tailscale (if any) stays clean and
+  # ACLs scope to the container's node only.
+  # tailscale:
+  #   image: tailscale/tailscale:v1.96.5
+  #   restart: unless-stopped
+  #   environment:
+  #     - TS_AUTHKEY=${TS_AUTHKEY:-}
+  #     - TS_HOSTNAME=${TS_HOSTNAME:-mt5-httpapi}
+  #     - TS_STATE_DIR=/var/lib/tailscale
+  #     - TS_USERSPACE=false
+  #     - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:---accept-dns=false}
+  #   volumes:
+  #     - ./.data/tailscale/state:/var/lib/tailscale
+  #     - /dev/net/tun:/dev/net/tun
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - NET_RAW
+  #   depends_on:
+  #     - nginx

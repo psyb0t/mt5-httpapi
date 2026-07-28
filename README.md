@@ -171,8 +171,52 @@ Per-field notes:
 - **`terminals[].utc_offset`** — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](#broker-time-vs-real-utc) below). Optional — defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 - **`terminals[].mode`** — `live` (default) or `backtest`. `live` keeps `terminal64.exe` running so the MT5 SDK stays initialized for live trading endpoints. `backtest` prepares the same portable directory but does **not** launch `terminal64.exe`, leaving the data dir free for the Strategy Tester subprocess to grab — see [Backtest](#backtest). MT5 is single-instance per portable data dir, so a backtest cannot run against a `live` terminal.
 - **`terminals[].symbol_suffix`** — optional explicit symbol suffix for Strategy Tester remaps. If set, mt5-httpapi appends it when `[Tester].Symbol` does not already end with that suffix. Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
+- **`terminals[].vm`** — optional VM name that this terminal runs on. Maps to a VM defined in `vms.yaml`. Absent → `default` (routes to the `mt5` container). See [Multi-VM Setup](#multi-vm-setup) below.
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
+
+### `vms.yaml` (optional — multi-VM deployments)
+
+When you need more than one Windows VM (e.g. spreading terminals across NUMA nodes, or isolating a hot-SSD tier from bulk-HDD terminals), define the VM topology in `vms.yaml`. The file is **optional** — absent = single-VM mode (backward compatible, everything routes to the `mt5` container).
+
+```yaml
+vms:
+  - name: fast
+    service: mt5
+    container_name: mt5
+    cpuset: "0-19,40-59"
+    ram: "112G"
+    cpu_cores: 40
+    disk_size: "300G"
+    storage: /data/mt5-vm-a/storage
+    novnc_port: 8006
+    wickworks_service: wickworks
+    extra_binds:
+      - /mnt/ssd/terminals/darwinex/live/a:/shared/terminals/darwinex/live/a
+
+  - name: bulk
+    service: mt5-b
+    container_name: mt5-b
+    cpuset: "20-39,60-79"
+    ram: "112G"
+    cpu_cores: 40
+    disk_size: "150G"
+    storage: /data/mt5-vm-b/storage
+    novnc_port: 8007
+    wickworks_service: wickworks-b
+    extra_binds:
+      - /mnt/hdd/terminals/blackbull/live-prime:/shared/terminals/blackbull/live-prime
+```
+
+Each terminal in `config.yaml` references its VM via `vm: <name>`. Terminals route through nginx to the correct container:
+
+| Terminal | Routes to | Container |
+|---|---|---|
+| `vm: fast` | `proxy_pass http://mt5:<port>` | mt5 |
+| `vm: bulk` | `proxy_pass http://mt5-b:<port>` | mt5-b |
+| no `vm` | `proxy_pass http://mt5:<port>` | mt5 (default) |
+
+See [`docs/multi-vm-setup.md`](docs/multi-vm-setup.md) for the full walkthrough — NUMA pinning, hot-tier bind mounts, per-VM concurrency caps, and the Jinja2 compose template.
 
 ### `config/setup.bat`
 
@@ -1678,6 +1722,9 @@ config/                      Your config shit
   config.yaml.example        Committed template — copy to config.yaml
   setup.bat                  Custom boot commands (optional)
   hosts                      Extra entries for the VM's hosts file (optional)
+
+vms.yaml                     VM topology definition (optional — absent = single VM)
+docker-compose.yml.j2        Jinja2 template for N-VM compose generation
 
 scripts/                     Scripts that run inside the Windows VM
   oem-install.bat            First-boot OEM script (creates startup entry)

@@ -14,13 +14,17 @@ exec > >(tee "${LOG_FILE}") 2>&1
 
 mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem" "${DIR}/assets/experts" "${DIR}/assets/sets"
 
-# Bootstrap docker-compose.yml from example on first run; user owns the real file.
+# Bootstrap docker-compose.yml from Jinja2 template (if vms.yaml + template exist)
+# or from the example file. User owns the real docker-compose.yml after that.
 if [ ! -f "${DIR}/docker-compose.yml" ]; then
-    if [ -f "${DIR}/docker-compose.yml.example" ]; then
+    if [ -f "${DIR}/vms.yaml" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
+        echo "docker-compose.yml not found — generating from Jinja2 template (${DIR}/vms.yaml)"
+        python3 "${DIR}/scripts/config_helper.py" generate_compose
+    elif [ -f "${DIR}/docker-compose.yml.example" ]; then
         echo "docker-compose.yml not found — seeding from docker-compose.yml.example"
         cp "${DIR}/docker-compose.yml.example" "${DIR}/docker-compose.yml"
     else
-        echo "ERROR: neither docker-compose.yml nor docker-compose.yml.example found."
+        echo "ERROR: neither docker-compose.yml, vms.yaml+docker-compose.yml.j2, nor docker-compose.yml.example found."
         exit 1
     fi
 fi
@@ -111,8 +115,18 @@ fi
 CFG="${DIR}/scripts/config_helper.py"
 python3 -c "import yaml" 2>/dev/null || pip3 install --quiet pyyaml
 
+# Load VM names from vms.yaml (single VM "default" if file absent)
+VM_NAMES=$(python3 "$CFG" vms)
+echo "VM topology: ${VM_NAMES}"
+
 API_PORTS=$(python3 "$CFG" port_list)
 echo "Configured terminal ports (container-internal): ${API_PORTS}"
+
+# Generate per-VM group files from config.yaml
+for VM_NAME in ${VM_NAMES}; do
+    python3 "$CFG" vm_group "${VM_NAME}" > "${DIR}/data/vm-group-${VM_NAME}.txt"
+    echo "  generated vm-group-${VM_NAME}.txt ($(wc -l < "${DIR}/data/vm-group-${VM_NAME}.txt") terminals)"
+done
 
 # Generate fresh .env each run.
 : >"${DIR}/.env"
@@ -187,36 +201,44 @@ fi
 echo ""
 echo "Logs: docker compose -f ${DIR}/docker-compose.yml logs -f"
 
-# Set up DNAT inside the mt5 container so traffic arriving on per-terminal
+# Set up DNAT inside each VM's container so traffic arriving on per-terminal
 # ports gets forwarded to the VM. Source is now nginx (or any container on
-# the default network) hitting mt5:<port> — PREROUTING fires regardless of
-# source since it hooks per-packet on mt5's eth0.
+# the default network) hitting <container>:<port> — PREROUTING fires regardless
+# of source since it hooks per-packet on the container's eth0.
 echo ""
-echo "Waiting for VM to get an IP (for API port forwarding)..."
-for _ in $(seq 1 60); do
-    VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T mt5 bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
-    if [ -n "${VM_IP}" ]; then
-        echo "VM IP: ${VM_IP}"
-        for PORT in ${API_PORTS}; do
-            docker compose -f "${DIR}/docker-compose.yml" exec -T mt5 bash -c "
-                iptables -t nat -C PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT} 2>/dev/null || \
-                iptables -t nat -A PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT}
-                iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE 2>/dev/null || \
-                iptables -t nat -A POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE
-                iptables -C FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT 2>/dev/null || \
-                iptables -A FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT
-            "
-            echo "Port forwarding: nginx -> mt5:${PORT} -> VM:${PORT}"
-        done
-        break
+for VM_NAME in ${VM_NAMES}; do
+    VM_SERVICE=$(python3 "$CFG" vm_info "${VM_NAME}" service)
+    VM_PORTS=$(python3 "$CFG" port_list --vm "${VM_NAME}")
+    if [ -z "${VM_PORTS}" ] || [ "${VM_PORTS}" = "6542" ]; then
+        echo "VM '${VM_NAME}' (${VM_SERVICE}): no terminals assigned, skipping DNAT"
+        continue
     fi
-    sleep 5
+    echo "Waiting for VM '${VM_NAME}' (${VM_SERVICE}) to get an IP..."
+    VM_IP=""
+    for _ in $(seq 1 60); do
+        VM_IP=$(docker compose -f "${DIR}/docker-compose.yml" exec -T "${VM_SERVICE}" bash -c 'cat /var/lib/misc/dnsmasq.leases 2>/dev/null | awk "{print \$3}"' 2>/dev/null || true)
+        if [ -n "${VM_IP}" ]; then
+            break
+        fi
+        sleep 5
+    done
+    if [ -z "${VM_IP}" ]; then
+        echo "WARNING: VM '${VM_NAME}' (${VM_SERVICE}) did not get an IP. Port forwarding not set up."
+        continue
+    fi
+    echo "  VM IP: ${VM_IP}"
+    for PORT in ${VM_PORTS}; do
+        docker compose -f "${DIR}/docker-compose.yml" exec -T "${VM_SERVICE}" bash -c "
+            iptables -t nat -C PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT} 2>/dev/null || \
+            iptables -t nat -A PREROUTING -p tcp --dport ${PORT} -j DNAT --to-destination ${VM_IP}:${PORT}
+            iptables -t nat -C POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE 2>/dev/null || \
+            iptables -t nat -A POSTROUTING -p tcp -d ${VM_IP} --dport ${PORT} -j MASQUERADE
+            iptables -C FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT 2>/dev/null || \
+            iptables -A FORWARD -p tcp -d ${VM_IP} --dport ${PORT} -j ACCEPT
+        "
+        echo "  Port forwarding: nginx -> ${VM_SERVICE}:${PORT} -> VM:${PORT}"
+    done
 done
-
-if [ -z "${VM_IP}" ]; then
-    echo "WARNING: Could not detect VM IP. Port forwarding not set up."
-    echo "Re-run this script after the VM boots."
-fi
 
 # Wire Tailscale Serve via the CLI inside the sidecar. We do this here
 # (not via TS_SERVE_CONFIG) because the Web handler needs the node's

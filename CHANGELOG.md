@@ -12,6 +12,22 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 - Fresh terminal API and MCP-unifier installs now pin MCP SDK 1.28.0. MCP 2.0 removed `mcp.server.fastmcp`, causing both processes to fail during import before binding their HTTP ports.
 
+## [v4.10.0] — 2026-07-28
+
+### Added
+
+- **N-VM topology** — `vms.yaml` declares VM resource allocation (cpuset, RAM, CPU cores, disk, hot-tier storage) in one place. `config_helper.py` reads the `vm` field on each terminal entry to generate nginx routes to the correct container (e.g. `mt5`, `mt5-b`), and `run.sh` iterates over all VMs for DNAT/iptables setup. Existing single-VM users are unaffected: no `vms.yaml` → all terminals route to the default `mt5` container.
+- **`terminals[].vm`** — optional field in `config/config.yaml` that assigns a terminal to a specific VM. Absent → `default` (routes to `mt5`). See `vms.yaml` for VM names.
+- **`config_helper.py`** new commands: `vms` (list VM names), `vm_group <name>` (dump terminals for a VM), `vm_info <name> [field]`, `port_list --vm <name>`, `generate_compose` (render `docker-compose.yml` from `docker-compose.yml.j2` + `vms.yaml`).
+- **`docker-compose.yml.j2`** — Jinja2 template that renders the compose file from the VM definitions in `vms.yaml`. Used by `run.sh` on first boot when `vms.yaml` exists.
+- **`docs/multi-vm-setup.md`** — guide for setting up a multi-VM deployment.
+- **Per-VM concurrency caps** — set `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>` environment variable to cap in-flight backtests per VM independently (in addition to the global `MT5_HTTPAPI_MAX_IN_FLIGHT`).
+
+### Changed
+
+- `run.sh` generates per-VM group files (`vm-group-<name>.txt`) from `config.yaml` instead of requiring manually maintained `vm-group-*.txt` files.
+- `config_helper.py` nginx_conf now routes each terminal to its owning VM's container name, derived from `vms.yaml`.
+
 ## [v4.9.3] — 2026-07-28
 
 ### Fixed
