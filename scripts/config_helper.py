@@ -26,6 +26,9 @@ DEFAULT_INSTANCE = "default"
 MCP_ROUTE_PREFIX = "/mcp/"
 MCP_UNIFIER_SERVICE = "mcpunifier"
 MCP_UNIFIER_PORT = 6600
+# Docker's embedded DNS. nginx needs an explicit resolver to look a hostname up
+# at request time instead of at config-parse time.
+DOCKER_EMBEDDED_DNS = "127.0.0.11"
 
 
 def _load():
@@ -153,9 +156,22 @@ def main():
         # selecting which via broker/account tool params. The per-terminal
         # /<broker>/<account>/mcp routes above are unaffected — this is an
         # additional surface, not a replacement.
+        # The upstream is reached through a VARIABLE on purpose. nginx resolves a
+        # literal proxy_pass hostname while PARSING the config, so if the
+        # container is absent nginx refuses to start at all — one missing
+        # optional service takes every terminal route down with it. Routing
+        # through a variable defers the lookup to request time: nginx starts
+        # regardless, every terminal keeps serving, and only this location fails
+        # until the unifier is up.
+        #
+        # That matters because the service genuinely is optional here:
+        # docker-compose.yml is gitignored, so pulling this generator does not
+        # add the container to a running deployment.
         locs.append(
             f"        location {MCP_ROUTE_PREFIX} {{\n"
-            f"            proxy_pass http://{MCP_UNIFIER_SERVICE}:{MCP_UNIFIER_PORT}{MCP_ROUTE_PREFIX};\n"
+            f"            resolver {DOCKER_EMBEDDED_DNS} valid=10s ipv6=off;\n"
+            f"            set $mcp_upstream http://{MCP_UNIFIER_SERVICE}:{MCP_UNIFIER_PORT};\n"
+            f"            proxy_pass $mcp_upstream;\n"
             f"            proxy_set_header Host $host;\n"
             f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
             f"            proxy_http_version 1.1;\n"

@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.9.1] — 2026-07-28
+
+### Fixed
+
+- **A missing `mcpunifier` container no longer stops nginx from starting and takes every other route down with it.** v4.9.0 generated `location /mcp/` with a literal `proxy_pass http://mcpunifier:6600/`. nginx resolves a literal upstream hostname while *parsing* the config, so on a deployment without that container nginx aborts with `host not found in upstream "mcpunifier"` — and every per-terminal route plus the whole REST API returns 502 behind it. Because `docker-compose.yml` is gitignored, pulling v4.9.0 delivered the new `scripts/config_helper.py` without the service it referenced, so the next restart broke the stack.
+- The upstream now routes through a variable (`set $mcp_upstream …;` then `proxy_pass $mcp_upstream;`) with an explicit `resolver`, which defers the lookup to request time. nginx starts whether or not the container exists, every terminal route serves normally, and only `/mcp/` returns 502 until the unifier is running — which makes the service genuinely optional, as it needs to be.
+
 ## [v4.9.0] — 2026-07-28
 
 ### Added
