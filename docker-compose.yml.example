@@ -71,6 +71,54 @@ services:
   # Bound to 127.0.0.1:8888 so it's loopback-only by default — LAN
   # exposure is opt-in (change the host bind), tailnet exposure is via
   # the optional tailscale sidecar below.
+  # Unified MCP endpoint. One MCP session that reaches every terminal, with
+  # broker/account as tool parameters, instead of one endpoint per terminal.
+  # The per-terminal /<broker>/<account>/mcp endpoints keep working unchanged;
+  # nginx routes /mcp/ here.
+  #
+  # Reads the same config/config.yaml that generates the nginx routing, so it
+  # cannot route somewhere nginx does not. It never waits for terminals: a
+  # terminal that is down fails only the calls naming it.
+  mcpunifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcpunifier
+    restart: unless-stopped
+    environment:
+      MT5_HOST: mt5
+      LOG_LEVEL: ${MCP_LOG_LEVEL:-info}
+    volumes:
+      # Read-only: this service only ever reads the terminal table.
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /var/log/mcpunifier:rw,noexec,nosuid,size=64m
+    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6600/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      - mt5
+
   nginx:
     image: nginx:1.30.0-alpine3.23
     restart: unless-stopped
@@ -80,6 +128,7 @@ services:
       - ./.data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - mt5
+      - mcpunifier
 
   # ── Cloudflare Tunnel (uncomment to expose API publicly) ──────────
   # Point your cloudflared ingress to http://nginx:80 (single backend,

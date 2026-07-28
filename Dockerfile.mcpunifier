@@ -1,0 +1,28 @@
+# Unified MCP endpoint across every configured MT5 terminal.
+#
+# Runs as a small Linux container next to the Windows VM that hosts the
+# terminals, and reaches each one over the compose network on its own port.
+# It never imports mt5api — that package needs the Windows-only MetaTrader5
+# SDK — so this image stays a plain Python service.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements-mcpunifier.txt /app/
+RUN pip install --no-cache-dir -r requirements-mcpunifier.txt
+
+COPY mcpunifier /app/mcpunifier
+
+# Non-root: this service holds the API token and can reach every terminal, so
+# it runs with no more privilege than it needs.
+RUN useradd --create-home --shell /usr/sbin/nologin unifier && \
+    mkdir -p /var/log/mcpunifier && \
+    chown -R unifier:unifier /var/log/mcpunifier /app
+USER unifier
+
+EXPOSE 6600
+
+CMD ["python", "-m", "mcpunifier"]

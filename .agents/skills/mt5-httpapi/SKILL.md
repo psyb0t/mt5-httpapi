@@ -57,6 +57,8 @@ Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.
 
 Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/main/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account — see Security & safety above.
 
+A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts and whether each is live or demo; an unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once — the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
+
 ## How It Works
 
 GET for reading, POST for creating, PUT for modifying, DELETE for closing/canceling. All bodies are JSON.

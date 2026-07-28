@@ -1,15 +1,24 @@
 {
   "name": "mt5-httpapi",
-  "description": "MetaTrader 5 trading via REST — market data, orders, positions, history, and server-side technical analysis",
-  "author": { "name": "psyb0t", "url": "https://github.com/psyb0t" },
+  "description": "MetaTrader 5 trading via REST \u2014 market data, orders, positions, history, and server-side technical analysis",
+  "author": {
+    "name": "psyb0t",
+    "url": "https://github.com/psyb0t"
+  },
   "homepage": "https://github.com/psyb0t/mt5-httpapi",
   "license": "WTFPL",
-  "keywords": ["metatrader", "mt5", "trading", "rest-api", "forex"],
+  "keywords": [
+    "metatrader",
+    "mt5",
+    "trading",
+    "rest-api",
+    "forex"
+  ],
   "userConfig": {
     "api_url": {
       "type": "string",
       "title": "MT5 API URL",
-      "description": "Terminal-scoped base URL of your running mt5-httpapi, including the broker and account path, e.g. http://localhost:8888/roboforex/main",
+      "description": "Base URL of your running mt5-httpapi. Use the server root (e.g. http://localhost:8888) to reach every terminal, where tools take broker/account parameters and list_terminals shows what is configured. Use a terminal path (e.g. http://localhost:8888/roboforex/procent) to pin this install to that single terminal.",
       "required": true
     },
     "api_token": {

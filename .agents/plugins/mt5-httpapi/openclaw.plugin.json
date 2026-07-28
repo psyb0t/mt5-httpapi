@@ -3,9 +3,11 @@
   "id": "@psyb0t/mt5-httpapi",
   "version": "0.0.0",
   "type": "code-plugin",
-  "summary": "Wire an OpenClaw agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP — the full REST surface (account, symbols, orders, positions, history, backtest) via a generic request tool.",
-  "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running mt5-httpapi terminal's MCP endpoint (/mcp), exposing its three tools: ping (lock-free liveness), endpoints (the full REST route catalog), and request (call any REST endpoint by method/path/query/body, in-process, through the exact same handler/auth/MT5 locking as a real HTTP call). mt5-httpapi is self-hosted — you run the server yourself and point this bridge at one terminal's base URL. Order and position mutations reached through request are real, irreversible actions on a live trading account. See https://github.com/psyb0t/mt5-httpapi.",
-  "extensions": ["./bin/cli.js"],
+  "summary": "Wire an OpenClaw agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP \u2014 the full REST surface (account, symbols, orders, positions, history, backtest) via a generic request tool.",
+  "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running mt5-httpapi terminal's MCP endpoint (/mcp), exposing its three tools: ping (lock-free liveness), endpoints (the full REST route catalog), and request (call any REST endpoint by method/path/query/body, in-process, through the exact same handler/auth/MT5 locking as a real HTTP call). mt5-httpapi is self-hosted \u2014 you run the server yourself and point this bridge at one terminal's base URL. Order and position mutations reached through request are real, irreversible actions on a live trading account. See https://github.com/psyb0t/mt5-httpapi.",
+  "extensions": [
+    "./bin/cli.js"
+  ],
   "compat": {
     "pluginApi": ">=2026.3.24-beta.2"
   },
@@ -15,24 +17,26 @@
   "environment": {
     "MT5_API_URL": {
       "required": true,
-      "description": "Base URL of one mt5-httpapi terminal, e.g. http://localhost:8888/<broker>/<account> (the bridge appends /mcp/)."
+      "description": "Base URL of your running mt5-httpapi (the bridge appends /mcp/). The server root, e.g. http://localhost:8888, bridges to every terminal with broker/account tool parameters; a terminal path, e.g. http://localhost:8888/<broker>/<account>, pins the bridge to one terminal."
     },
     "MT5_API_TOKEN": {
       "required": false,
-      "description": "Bearer token — required whenever the server's api_token is set (same token as the REST API); omit only if the server has auth disabled."
+      "description": "Bearer token \u2014 required whenever the server's api_token is set (same token as the REST API); omit only if the server has auth disabled."
     }
   },
   "configSchema": {
     "type": "object",
-    "required": ["url"],
+    "required": [
+      "url"
+    ],
     "properties": {
       "url": {
         "type": "string",
-        "description": "Base URL of one mt5-httpapi terminal, e.g. http://localhost:8888/<broker>/<account> (the bridge appends /mcp/)."
+        "description": "Base URL of your running mt5-httpapi (the bridge appends /mcp/). The server root, e.g. http://localhost:8888, bridges to every terminal with broker/account tool parameters; a terminal path, e.g. http://localhost:8888/<broker>/<account>, pins the bridge to one terminal."
       },
       "token": {
         "type": "string",
-        "description": "Bearer token — required whenever the server's api_token is set (same token as the REST API); omit only if the server has auth disabled."
+        "description": "Bearer token \u2014 required whenever the server's api_token is set (same token as the REST API); omit only if the server has auth disabled."
       }
     }
   }

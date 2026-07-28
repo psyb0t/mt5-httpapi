@@ -6,6 +6,25 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.9.0] — 2026-07-28
+
+### Added
+
+- **Unified MCP endpoint at `/mcp`, spanning every configured terminal.** Each terminal already had its own MCP server at `/<broker>/<account>/mcp`, and a session was permanently bound to whichever one it connected to — an MCP session has a fixed tool catalog, so there was no per-call slot to name a terminal. The new endpoint exposes the same 24 tools, each taking `broker` and `account` (plus optional `instance`), so one session can drive every terminal.
+- **`list_terminals`**, reporting each configured terminal's broker, account, instance and whether it is a live or demo account. Every other tool refuses a broker/account pair that is not configured and answers with the valid list, rather than routing to something plausible but wrong.
+- **`mcpunifier` service** (`mcpunifier/`, `Dockerfile.mcpunifier`) — a Linux container running beside the Windows VM. It reads the same `config/config.yaml` that generates the nginx routing, so it cannot route somewhere nginx does not, and reaches each terminal directly on that terminal's own port. `nginx` proxies `/mcp/` to it.
+
+### Notes
+
+- **Nothing existing changes.** The per-terminal `/<broker>/<account>/mcp` endpoints and the whole REST surface are untouched. Which endpoint a client reaches depends only on the URL it is pointed at: a root URL gets the unified tools, a `/<broker>/<account>` URL gets that terminal's existing tools.
+- **No startup coupling and no shared failure.** The unifier never waits on a terminal — the routing table is static and is not re-probed. A terminal that is down fails only the calls naming it and leaves the rest usable; successful responses carry the `terminal` key that answered. `/health` reports whether the unifier can route, never a terminal's state.
+- The unified endpoint is gated by the same bearer token as the REST API. The service runs as a non-root user with a read-only root filesystem and all Linux capabilities dropped, and mounts `config/config.yaml` read-only.
+- `scripts/config_helper.py` now refuses to generate nginx config for a broker literally named `mcp`, which would otherwise shadow the unified route.
+
+### Changed
+
+- **Docs and plugin manifests now describe both MCP endpoints.** The README's MCP section, the Claude Code manifest's `api_url` prompt, and the OpenClaw bridge's `MT5_API_URL` all previously described the base URL as terminal-scoped only, which was the entire truth before this release and is now half of it. Each states that the server root reaches every terminal while a `/<broker>/<account>` path pins one, so the value a user is prompted for no longer steers them into single-terminal mode without mentioning the alternative.
+
 ## [v4.8.4] — 2026-07-27
 
 ### Fixed

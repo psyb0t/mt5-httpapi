@@ -34,6 +34,7 @@ Supports multiple brokers and multiple accounts on the same VM simultaneously. E
   - [Trade Result](#trade-result)
   - [History](#history)
 - [MCP Interface](#mcp-interface)
+  - [One endpoint for every terminal](#one-endpoint-for-every-terminal)
 - [Agent integrations](#agent-integrations)
 - [Examples](#examples)
 - [Optimization Guide](#optimization-guide)
@@ -1251,7 +1252,16 @@ Notes:
 
 ## MCP Interface
 
-Every terminal also mounts a [Model Context Protocol](https://modelcontextprotocol.io) server (streamable-HTTP) at `/mcp`, alongside the REST API, in the same process. It exposes **dedicated, typed tools** grouped by family — each tool's name, typed params, and description are what the agent reads (no guessing at raw paths). Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP request.
+There are two [Model Context Protocol](https://modelcontextprotocol.io) endpoints (both streamable-HTTP), and the URL you point a client at decides which one it gets:
+
+| Point the client at | You get |
+|---|---|
+| `http://host:8888/<broker>/<account>/mcp/` | that **one** terminal — tools take no account parameter |
+| `http://host:8888/mcp/` | **every** terminal — the same tools, plus `broker` / `account` parameters, plus `list_terminals` |
+
+Both are always available; neither disables the other. See [One endpoint for every terminal](#one-endpoint-for-every-terminal) for the unified form.
+
+Every terminal mounts its own server at `/mcp`, alongside the REST API, in the same process. It exposes **dedicated, typed tools** grouped by family — each tool's name, typed params, and description are what the agent reads (no guessing at raw paths). Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP request.
 
 - **Market data** — `list_symbols`, `get_symbol`, `get_tick`, `get_rates(symbol, timeframe, count?)`, `get_ticks`, `get_rates_ta`
 - **Account / positions** — `get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`
@@ -1269,6 +1279,36 @@ The reachable URL is the terminal's normal base plus `/mcp/` — nginx strips `/
 $MT5_API_URL/mcp/
 # e.g. http://localhost:8888/roboforex/main/mcp/
 ```
+
+### One endpoint for every terminal
+
+A per-terminal `/mcp` is bound to that one terminal: an MCP session has a fixed
+tool catalog, so there is no per-call slot to say which account to act on. To
+drive several terminals from one session, point the client at the server root
+instead:
+
+```
+http://localhost:8888/mcp/
+```
+
+That endpoint exposes the same tools, each taking `broker` and `account` (plus
+an optional `instance`, defaulting to `default`). Call `list_terminals` first —
+it returns every configured terminal and whether each is a live or demo
+account. A broker/account pair that is not configured is refused, with the
+valid list in the error, rather than being routed somewhere plausible.
+
+```bash
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  "http://localhost:8888/mcp/" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_terminals","arguments":{}}}'
+```
+
+Both forms work at once — the per-terminal endpoints are unchanged, and the URL
+alone decides which surface a client gets. Terminals are resolved once from
+`config/config.yaml`, never re-probed, so a terminal that is down fails only the
+calls naming it; every successful response carries the `terminal` that answered.
 
 ```bash
 # Raw JSON-RPC — call the request tool directly
@@ -1294,7 +1334,9 @@ claude plugin marketplace add psyb0t/agents
 claude plugin install mt5-httpapi@psyb0t
 ```
 
-Claude Code prompts for the terminal-scoped API URL (e.g. `http://localhost:8888/roboforex/main`) and, if your terminal requires a bearer token, the token — the token is stored in your OS keychain.
+Claude Code prompts for the API URL and, if auth is enabled, the bearer token — the token is stored in your OS keychain.
+
+That URL decides how much you reach. Give it the **server root** (`http://localhost:8888`) and you get every terminal, with `broker`/`account` on each tool and `list_terminals` to discover them. Give it a **terminal path** (`http://localhost:8888/roboforex/procent`) and you get that one terminal, with no account parameter to get wrong.
 
 ### Codex
 

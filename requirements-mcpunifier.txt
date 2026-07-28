@@ -1,0 +1,12 @@
+# Python dependencies for the MCP unifier, which runs as its own Linux
+# container beside the Windows VM.
+#
+# Deliberately separate from requirements-api.txt: that file installs inside
+# the VM alongside the MetaTrader5 SDK, which is Windows-only and has no place
+# in this image. Nothing here imports mt5api.
+mcp
+fastapi
+uvicorn[standard]
+httpx
+pyyaml
+python-json-logger

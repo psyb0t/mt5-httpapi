@@ -23,6 +23,10 @@ _SHARED_DIR = os.path.dirname(_SCRIPTS_DIR)
 CONFIG_PATH = os.path.join(_SHARED_DIR, "config", "config.yaml")
 DEFAULT_INSTANCE = "default"
 
+MCP_ROUTE_PREFIX = "/mcp/"
+MCP_UNIFIER_SERVICE = "mcpunifier"
+MCP_UNIFIER_PORT = 6600
+
 
 def _load():
     with open(CONFIG_PATH, encoding="utf-8") as f:
@@ -125,6 +129,16 @@ def main():
         terms = cfg.get("terminals", [])
         locs = []
         for t in terms:
+            # A broker literally named "mcp" would produce /mcp/<account>/,
+            # which nginx resolves before the unifier's /mcp/ prefix and would
+            # silently shadow it. Refuse rather than ship a confusing route.
+            if str(t.get("broker", "")).strip().lower() == MCP_ROUTE_PREFIX.strip("/"):
+                print(
+                    f"ERROR: broker name '{MCP_ROUTE_PREFIX.strip('/')}' collides with "
+                    f"the unified MCP route {MCP_ROUTE_PREFIX}; rename the broker",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             for p in _route_prefixes(t):
                 locs.append(
                     f"        location {p} {{\n"
@@ -134,6 +148,21 @@ def main():
                     f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
                     f"        }}"
                 )
+
+        # The unified MCP endpoint: one session that reaches every terminal,
+        # selecting which via broker/account tool params. The per-terminal
+        # /<broker>/<account>/mcp routes above are unaffected — this is an
+        # additional surface, not a replacement.
+        locs.append(
+            f"        location {MCP_ROUTE_PREFIX} {{\n"
+            f"            proxy_pass http://{MCP_UNIFIER_SERVICE}:{MCP_UNIFIER_PORT}{MCP_ROUTE_PREFIX};\n"
+            f"            proxy_set_header Host $host;\n"
+            f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
+            f"            proxy_http_version 1.1;\n"
+            f"            proxy_buffering off;\n"
+            f"            proxy_read_timeout 300s;\n"
+            f"        }}"
+        )
         nginx_conf = (
             "events {}\n"
             "http {\n"
