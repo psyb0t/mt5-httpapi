@@ -1559,9 +1559,18 @@ make status      Check VM and API status
 make lint        Lint every .ps1/.sh script in a throwaway Docker image
 make format      Apply shfmt formatting to the .sh files in place
 make test        Run unit tests in a throwaway Docker image
+make test-mcpunifier  End-to-end test the unified MCP endpoint
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
+
+`make test-mcpunifier` builds the unifier image, stands it up next to a stub
+terminal on a scratch network, and checks that it routes to the right terminal,
+that a terminal which is down fails only the calls naming it, and that a
+broker/account pair you never configured is refused rather than routed
+somewhere plausible. It needs the docker socket (it starts sibling containers)
+and removes everything it created on the way out, including after a failure or
+a Ctrl-C.
 
 `make lint` covers the scripts that run inside the VM as well as the host-side
 shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;

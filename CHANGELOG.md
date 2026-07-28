@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.9.3] — 2026-07-28
+
+### Fixed
+
+- **The README's "Make Targets" list was missing `make test-mcpunifier`**, added in v4.9.2. That list is where a contributor looks for the supported operations, so a target absent from it is a target nobody runs. It now matches `make help` exactly, and carries a short note on what the target checks and that it needs the docker socket.
+
 ## [v4.9.2] — 2026-07-28
 
 ### Added
