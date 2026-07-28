@@ -6,6 +6,14 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.9.2] — 2026-07-28
+
+### Added
+
+- **`make test-mcpunifier`** — an end-to-end test for the MCP unifier, which had no automated coverage: `scripts/lint.sh` only reaches `.ps1` and `.sh` files, so nothing verified `mcpunifier/`. `scripts/test-mcpunifier.sh` builds the unifier image, stands it up beside a stub terminal on a scratch network, and asserts seven behaviours — health, the 25-tool surface, `list_terminals` reporting every configured terminal, a live terminal routing to its own port, a configured-but-down terminal failing only the calls that name it, a broker/account pair that is not configured being refused rather than routed, and the service staying healthy after both failures.
+- Every resource the harness creates carries one name prefix and is removed by an `EXIT` trap, so a pass, a failure and an interrupt all leave nothing behind. It also sweeps that prefix on entry, so a run killed outright — where the trap never fires — is cleaned up by the next invocation. On a readiness timeout it dumps each container's state and last log lines *before* tearing down, since the teardown would otherwise destroy the only evidence of why the run failed.
+- Fixtures are written under the gitignored `.data/` rather than `/tmp`: a bind-mount source is resolved on the docker daemon's filesystem, so a `mktemp -d` directory that exists only in the caller's namespace would be bound as an empty dir and the service would start with no configuration.
+
 ## [v4.9.1] — 2026-07-28
 
 ### Fixed

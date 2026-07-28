@@ -1,4 +1,4 @@
-.PHONY: up down logs status lint format test clean distclean help
+.PHONY: up down logs status lint format test test-mcpunifier clean distclean help
 
 all: up
 
@@ -50,6 +50,17 @@ test:
 	docker build -f Dockerfile.test -t $$TAG . && \
 	(docker run --rm $$TAG; STATUS=$$?; docker rmi -f $$TAG >/dev/null; exit $$STATUS)
 
+# End-to-end test for the MCP unifier: builds its image, stands up a fake
+# terminal and the unifier on a scratch network, asserts routing, partial-outage
+# isolation and terminal validation, then tears everything down from an EXIT
+# trap so nothing survives a pass, a failure or an interrupt.
+#
+# Runs on the host rather than in a throwaway image (unlike `test`) because the
+# harness spawns sibling containers through the host docker socket — wrapping
+# that in another container buys nothing and complicates bind-mount paths.
+test-mcpunifier:
+	./scripts/test-mcpunifier.sh test
+
 clean: down
 	sudo rm -rf data/storage data/shared data/metatrader5 data/oem run.log
 
@@ -65,5 +76,6 @@ help:
 	@echo "  lint      - Lint all .ps1/.sh scripts in a throwaway Docker image"
 	@echo "  format    - Apply shfmt formatting to all .sh files in place"
 	@echo "  test      - Run unit tests in a throwaway Docker image"
+	@echo "  test-mcpunifier - End-to-end test the MCP unifier (builds + tears down its own stack)"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
 	@echo "  distclean - Remove everything including ISO"
