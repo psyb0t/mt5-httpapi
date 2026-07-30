@@ -61,6 +61,9 @@ accounts:
 #   freeing the data dir so the tester can spawn it via /portable /config:.
 #   (MT5 is single-instance per portable data dir — a live terminal locks
 #   the dir and any second terminal64.exe exits silently with code 0.)
+# vm: optional VM name from vms.yaml. Routes this terminal's API to the
+#   specified VM container. Absent = default (routes to "mt5").
+#   See docs/multi-vm-setup.md for multi-VM setup.
 # symbol_suffix: optional broker-specific suffix appended to [Tester].Symbol
 #   when missing. Examples: "p", ".p", "-mini". Use "" for no suffix.
 terminals:
@@ -70,6 +73,7 @@ terminals:
     utc_offset: "0"
     mode: live
     symbol_suffix: ""
+    # vm: my-vm-name  # uncomment to pin this terminal to a specific VM
 
   # Same login cloned multiple times: every clone gets its own instance name
   # and its own port.
