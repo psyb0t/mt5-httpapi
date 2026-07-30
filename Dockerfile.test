@@ -21,7 +21,9 @@ COPY mt5api ./mt5api
 COPY tests ./tests
 # Tests inspect the tracked dependency manifests and the Windows installer.
 # Copy only the required scripts rather than pulling every installer asset in.
-COPY requirements-api.txt requirements-mcpunifier.txt ./
+# docker-compose.yml.j2 is here because the compose-generation test renders the
+# REAL template — a stub would assert nothing about what actually ships.
+COPY requirements-api.txt requirements-mcpunifier.txt docker-compose.yml.j2 ./
 COPY scripts/config_helper.py scripts/start.bat ./scripts/
 
 ENV PYTHONPATH=/app
@@ -30,5 +32,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # tests/real/ drives a LIVE deployment over HTTP — it needs a reachable
 # MT5_API_URL and real broker credentials, so it errors with ConnectionError in
 # an offline build. It has its own runner (tests/real/run.sh) for when you do
-# have a live instance. Everything under tests/ outside that dir is offline-safe.
-CMD ["pytest", "-v", "--tb=short", "--ignore=tests/real", "tests/"]
+# have a live instance.
+#
+# tests/integration/ spawns sibling containers via testcontainers and the host
+# docker socket, neither of which exists in here. `make test-integration` runs
+# it on the host instead.
+#
+# Everything under tests/ outside those two dirs is offline-safe.
+CMD ["pytest", "-v", "--tb=short", "--ignore=tests/real", "--ignore=tests/integration", "tests/"]

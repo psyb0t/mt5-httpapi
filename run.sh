@@ -129,8 +129,8 @@ echo "Configured terminal ports (container-internal): ${API_PORTS}"
 
 # Generate per-VM group files from config.yaml
 for VM_NAME in ${VM_NAMES}; do
-    python3 "$CFG" vm_group "${VM_NAME}" > "${DIR}/data/vm-group-${VM_NAME}.txt"
-    echo "  generated vm-group-${VM_NAME}.txt ($(wc -l < "${DIR}/data/vm-group-${VM_NAME}.txt") terminals)"
+    python3 "$CFG" vm_group "${VM_NAME}" >"${DIR}/data/vm-group-${VM_NAME}.txt"
+    echo "  generated vm-group-${VM_NAME}.txt ($(wc -l <"${DIR}/data/vm-group-${VM_NAME}.txt") terminals)"
 done
 
 # Generate fresh .env each run.

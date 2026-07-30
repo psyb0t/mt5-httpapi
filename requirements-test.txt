@@ -1,0 +1,8 @@
+# Host-side deps for `make test-integration` (tests/integration/).
+#
+# The offline suite in `make test` does NOT use these — it runs inside
+# Dockerfile.test, which installs requirements-api.txt plus pytest. These are
+# only what the testcontainers-driven integration tests need on the host.
+pytest==9.0.3
+pyyaml==6.0.3
+testcontainers==4.14.2

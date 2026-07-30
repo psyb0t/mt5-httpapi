@@ -42,3 +42,9 @@ ANUSTIMES.md
 fuckyeah.md
 .telemetry/
 .claude/
+
+# Isolated env for `make test-integration` (testcontainers on the host).
+.venv-test/
+
+# Per-run QA audit logs — never committed.
+.anustimes/

@@ -62,17 +62,22 @@ section() {
 # so the linter still runs (louder than it should, but it runs).
 tracked_files() {
     local pattern="$1"
+    local path
 
     if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         # --cached AND --others --exclude-standard: tracked files PLUS new
         # untracked ones, minus anything gitignored. Tracked-only would skip a
         # brand-new script that has not been `git add`ed yet -- precisely the
-        # file most likely to carry a fresh mistake.
-        git -C "$REPO" ls-files -z --cached --others --exclude-standard -- "$pattern" |
-            tr '\0' '\n' |
-            sed "s#^#${REPO}/#" |
-            grep -v -e "${VENDORED_GLOB//\*/}" |
-            sort
+        # file most likely to carry a fresh mistake. The existence check drops
+        # tracked deletions, which remain in the index until the release script
+        # stages them but have no working-tree file for a linter to open.
+        while IFS= read -r -d '' path; do
+            [[ -f "$REPO/$path" ]] || continue
+            [[ "$path" == scripts/defender-remover/* ]] && continue
+            printf '%s/%s\n' "$REPO" "$path"
+        done < <(
+            git -C "$REPO" ls-files -z --cached --others --exclude-standard -- "$pattern"
+        ) | sort
         return
     fi
 

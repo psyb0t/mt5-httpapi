@@ -6,27 +6,37 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.10.0] — 2026-07-30
+
+### Added
+
+- **Config-driven N-VM topology.** `vms.yaml` (copy `vms.yaml.example`) declares each Windows VM's resources — cpuset, RAM, cores, disk, storage path, noVNC port, wickworks sidecar — and every terminal in `config.yaml` binds to one through a new `vm:` field. `config_helper.py` generates nginx routes aimed at the owning VM's container, `run.sh` loops each VM for DNAT and per-VM group files, and `docker-compose.yml` renders from the new `docker-compose.yml.j2` via `config_helper.py generate_compose`. Backwards compatible by construction: no `vms.yaml` means single-VM, and a terminal with no `vm:` field routes to `mt5` exactly as before. Walkthrough in `docs/multi-vm-setup.md`.
+- **Multi-VM configuration commands.** `config_helper.py` adds `vms`, `vm_group <name>`, `vm_info <name> [field]`, `port_list --vm <name>` and `generate_compose` for inspecting and rendering the topology.
+- **Per-VM backtest limits.** `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>` caps in-flight backtests independently for each VM in addition to the existing global limit.
+- **Contract tests for every handler that moves money.** `tests/test_handlers_orders.py`, `tests/test_handlers_positions.py` and `tests/test_handlers_readonly.py` drive the real Flask routes with the MT5 SDK faked at the `m()` seam, asserting the exact request that would reach `order_send` — a market BUY priced at ask and a SELL at bid, closing a BUY sending a SELL at bid, a partial close sending only the requested volume, an sl-only modify preserving the existing tp. Every failure path also asserts `order_send` was never called, because a handler that errors after sending has already traded.
+- **Tests for the files `config_helper.py` generates.** `tests/test_config_generation.py` asserts the nginx config emits no literal `proxy_pass http://host:port`, that every terminal route carries a resolver, that terminals reach their own VM's container, that an absent `vms.yaml` still routes everything to `mt5`, that a live terminal's INI declares no `[StartUp]` expert, and that two VMs never share a host port.
+- **`make test-integration`** — container-backed suites under `tests/integration/`, driven by pytest and testcontainers. Boots real nginx against the generated config with one VM deliberately absent, and stands the MCP unifier up beside a stub terminal. Runs on the host because it starts sibling containers through the docker socket, with its dependencies isolated in a gitignored `.venv-test/`.
+- **CI now runs the tests.** `pipeline.yml` previously triggered only on `v*` tags and did nothing but publish badges and ClawHub skills, so the suite under `tests/` had never run in CI at all. It now runs `test`, `integration` and `lint` on pushes to `master` and on every non-draft pull request (including the transition from draft to ready for review), and the ClawHub publish is gated on all three so a tag with failing tests cannot publish.
+
+### Changed
+
+- **`make test-mcpunifier` folded into `make test-integration`.** Its seven assertions moved from `scripts/test-mcpunifier.sh` to `tests/integration/test_mcpunifier.py` unchanged — health, the 25-tool surface, both configured terminals listed, a live terminal routing to its own port, a down terminal failing only the calls that name it, an unconfigured broker/account pair refused, and the endpoint still healthy after both failures. The shell script and its make target are gone; there is now one integration harness in one language.
+- nginx terminal routes resolve their upstream per request (a `resolver` directive plus a variable) instead of at config-parse time. With a literal upstream, a single absent VM container stopped nginx starting at all, taking every healthy VM's routes, the REST API and `/mcp/` down with it.
+- The test stub in `tests/conftest.py` now defines `TRADE_RETCODE_DONE` and gives every mocked SDK function a `__name__`. Without the first, no test could reach an order-result success branch; without the second, every SDK call identified as `"?"`, including in `mt5client`'s per-call timing log.
+
+### Fixed
+
+- `config_helper.py` reports a failed `pip install` of its own dependencies instead of surfacing a bare `ImportError` about the module it was trying to install.
+- `run.sh` is `shfmt`-clean again.
+- `scripts/lint.sh` skips tracked files deleted in the working tree, so release-preparation lint can validate a script-removal commit before it is staged.
+- Host-side integration tests use the non-vulnerable `pytest` 9.0.3 release and the age-gate-eligible `testcontainers` 4.14.2 release.
+- Reusable GitHub Actions workflows are pinned to an immutable commit instead of the mutable `master` ref.
+
 ## [v4.9.4] — 2026-07-30
 
 ### Fixed
 
 - Fresh terminal API and MCP-unifier installs now pin MCP SDK 1.28.0. MCP 2.0 removed `mcp.server.fastmcp`, causing both processes to fail during import before binding their HTTP ports.
-
-## [v4.10.0] — 2026-07-28
-
-### Added
-
-- **N-VM topology** — `vms.yaml` declares VM resource allocation (cpuset, RAM, CPU cores, disk, hot-tier storage) in one place. `config_helper.py` reads the `vm` field on each terminal entry to generate nginx routes to the correct container (e.g. `mt5`, `mt5-b`), and `run.sh` iterates over all VMs for DNAT/iptables setup. Existing single-VM users are unaffected: no `vms.yaml` → all terminals route to the default `mt5` container.
-- **`terminals[].vm`** — optional field in `config/config.yaml` that assigns a terminal to a specific VM. Absent → `default` (routes to `mt5`). See `vms.yaml` for VM names.
-- **`config_helper.py`** new commands: `vms` (list VM names), `vm_group <name>` (dump terminals for a VM), `vm_info <name> [field]`, `port_list --vm <name>`, `generate_compose` (render `docker-compose.yml` from `docker-compose.yml.j2` + `vms.yaml`).
-- **`docker-compose.yml.j2`** — Jinja2 template that renders the compose file from the VM definitions in `vms.yaml`. Used by `run.sh` on first boot when `vms.yaml` exists.
-- **`docs/multi-vm-setup.md`** — guide for setting up a multi-VM deployment.
-- **Per-VM concurrency caps** — set `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>` environment variable to cap in-flight backtests per VM independently (in addition to the global `MT5_HTTPAPI_MAX_IN_FLIGHT`).
-
-### Changed
-
-- `run.sh` generates per-VM group files (`vm-group-<name>.txt`) from `config.yaml` instead of requiring manually maintained `vm-group-*.txt` files.
-- `config_helper.py` nginx_conf now routes each terminal to its owning VM's container name, derived from `vms.yaml`.
 
 ## [v4.9.3] — 2026-07-28
 

@@ -1603,18 +1603,28 @@ make status      Check VM and API status
 make lint        Lint every .ps1/.sh script in a throwaway Docker image
 make format      Apply shfmt formatting to the .sh files in place
 make test        Run unit tests in a throwaway Docker image
-make test-mcpunifier  End-to-end test the unified MCP endpoint
+make test-integration  Container-backed suites: nginx routing + MCP unifier
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
 
-`make test-mcpunifier` builds the unifier image, stands it up next to a stub
-terminal on a scratch network, and checks that it routes to the right terminal,
-that a terminal which is down fails only the calls naming it, and that a
-broker/account pair you never configured is refused rather than routed
-somewhere plausible. It needs the docker socket (it starts sibling containers)
-and removes everything it created on the way out, including after a failure or
-a Ctrl-C.
+`make test` is the offline suite — it runs inside a throwaway image with the
+MT5 SDK stubbed, so it needs nothing but docker and finishes in seconds.
+
+`make test-integration` is everything that needs real containers, driven by
+pytest + testcontainers in `tests/integration/`:
+
+- **nginx routing** renders the config `config_helper.py` generates and boots
+  real nginx against it with one VM deliberately absent, proving a single dead
+  VM cannot stop nginx starting and taking every healthy terminal with it.
+- **MCP unifier** builds the unifier image, stands it up next to a stub
+  terminal, and checks that it routes to the right terminal, that a terminal
+  which is down fails only the calls naming it, and that a broker/account pair
+  you never configured is refused rather than routed somewhere plausible.
+
+It runs on the host because it starts sibling containers through the docker
+socket, installs its deps into a gitignored `.venv-test/`, and removes
+everything it created on the way out — including after a failure or a Ctrl-C.
 
 `make lint` covers the scripts that run inside the VM as well as the host-side
 shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;
