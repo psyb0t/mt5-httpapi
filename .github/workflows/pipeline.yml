@@ -21,14 +21,16 @@ on:
       - converted_to_draft
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keep the caller's group distinct from groups inside reusable workflows.
+  # Identical groups deadlock when this workflow waits for a called workflow.
+  group: ${{ github.workflow }}-caller-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  # The suite is offline and container-only (see Dockerfile.test), so it needs
-  # nothing but docker. It is NOT the python-package-workflow caller: that one
-  # is a package pipeline whose build job always runs and expects a dist/, and
-  # this repo builds no package.
+  # `make test` is the full automated suite: offline unit/contract tests plus
+  # the container-backed nginx and MCP-unifier tests. It is NOT the
+  # python-package-workflow caller: that pipeline expects a dist/, and this
+  # repo builds no package.
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -39,20 +41,6 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Run the test suite
         run: make test
-
-  # Every container-backed suite (nginx routing + MCP unifier) via
-  # testcontainers. Separate from `test` because it needs a docker socket and
-  # runs on the host, where `test` runs inside an offline image.
-  integration:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Run the integration suite
-        run: make test-integration
 
   # Shell + PowerShell linting (shellcheck / shfmt / PSScriptAnalyzer). This was
   # never wired into CI, so master reached a shfmt-dirty state without anything
@@ -79,7 +67,7 @@ jobs:
   # and pull requests now, and without it every one of those would publish.
   # Gated on the suite so a tag with failing tests never reaches ClawHub.
   publish-skills-to-clawhub:
-    needs: [test, integration, lint]
+    needs: [test, lint]
     if: startsWith(github.ref, 'refs/tags/')
     uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-publish.yml@35bcdbe66e16aaf6717d1c11d57ebff4a9d0cf77
 

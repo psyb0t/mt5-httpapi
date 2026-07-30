@@ -26,7 +26,7 @@ readonly PSSA_VERSION=1.22.0
 
 # Gate on warning and above. shellcheck's `info`/`style` tiers flag deliberate
 # idioms -- e.g. SC2015 on the `[ x ] && pass ... || fail ...` shape used
-# consistently throughout test.sh -- and blocking on those would make the gate
+# consistently throughout status.sh -- and blocking on those would make the gate
 # something people route around instead of fix. Run `shellcheck` with no
 # --severity locally when you want the full style report.
 readonly SHELLCHECK_SEVERITY=warning

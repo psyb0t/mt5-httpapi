@@ -1602,14 +1602,18 @@ make logs        Tail the logs
 make status      Check VM and API status
 make lint        Lint every .ps1/.sh script in a throwaway Docker image
 make format      Apply shfmt formatting to the .sh files in place
-make test        Run unit tests in a throwaway Docker image
+make test        Run the complete automated test suite
+make test-unit   Run unit and contract tests in a throwaway Docker image
 make test-integration  Container-backed suites: nginx routing + MCP unifier
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
 
-`make test` is the offline suite — it runs inside a throwaway image with the
-MT5 SDK stubbed, so it needs nothing but docker and finishes in seconds.
+`make test` is the complete automated gate: it runs `make test-unit` followed
+by `make test-integration`. Use either scoped target directly while iterating.
+
+`make test-unit` is the offline suite — it runs inside a throwaway image with
+the MT5 SDK stubbed, so it needs nothing but docker and finishes in seconds.
 
 `make test-integration` is everything that needs real containers, driven by
 pytest + testcontainers in `tests/integration/`:
@@ -1625,6 +1629,10 @@ pytest + testcontainers in `tests/integration/`:
 It runs on the host because it starts sibling containers through the docker
 socket, installs its deps into a gitignored `.venv-test/`, and removes
 everything it created on the way out — including after a failure or a Ctrl-C.
+
+`make status` is separate from the automated suite: it runs
+`scripts/status.sh` against an already-running MT5 deployment and reports the
+live terminals and read-only API checks.
 
 `make lint` covers the scripts that run inside the VM as well as the host-side
 shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;

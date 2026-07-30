@@ -1,4 +1,4 @@
-.PHONY: up down logs status lint format test test-integration clean distclean help
+.PHONY: up down logs status lint format test test-unit test-integration clean distclean help
 
 all: up
 
@@ -12,7 +12,7 @@ logs:
 	docker compose logs -f
 
 status:
-	./test.sh
+	./scripts/status.sh
 
 # Lint every script the stack runs, in a throwaway Docker image (same
 # build-run-rmi pattern as test). Repo is mounted read-only — lint never
@@ -42,10 +42,17 @@ format:
 	(docker run --rm -v "$$PWD":/work $$TAG --format; \
 	STATUS=$$?; docker rmi -f $$TAG >/dev/null; exit $$STATUS)
 
+# Run every automated test suite. Keep the scoped targets for fast local runs,
+# but CI and the canonical contributor command use this complete gate.
+test:
+	$(MAKE) test-unit
+	$(MAKE) test-integration
+
 # Run unit tests in a throwaway Docker image. The image is built with a
 # unique tag, run, and removed afterwards (--rm + rmi) so nothing lingers
-# on the host. MT5 SDK is mocked — these tests cover pure logic only.
-test:
+# on the host. The MT5 SDK is mocked; this covers offline logic and handler
+# contracts without touching a live trading terminal.
+test-unit:
 	@TAG=mt5-httpapi-tests:$$(date +%s)-$$RANDOM; \
 	docker build -f Dockerfile.test -t $$TAG . && \
 	(docker run --rm $$TAG; STATUS=$$?; docker rmi -f $$TAG >/dev/null; exit $$STATUS)
@@ -81,7 +88,8 @@ help:
 	@echo "  status    - Check VM and MT5 HTTP API status"
 	@echo "  lint      - Lint all .ps1/.sh scripts in a throwaway Docker image"
 	@echo "  format    - Apply shfmt formatting to all .sh files in place"
-	@echo "  test      - Run unit tests in a throwaway Docker image"
+	@echo "  test      - Run the complete automated test suite"
+	@echo "  test-unit - Run unit and contract tests in a throwaway Docker image"
 	@echo "  test-integration - Container-backed suites: nginx routing + MCP unifier (needs docker)"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
 	@echo "  distclean - Remove everything including ISO"

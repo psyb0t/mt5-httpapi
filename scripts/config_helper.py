@@ -22,21 +22,6 @@ except ImportError:
         sys.exit(1)
     import yaml
 
-try:
-    from jinja2 import Template
-except ImportError:
-    import subprocess
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet", "jinja2"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except subprocess.CalledProcessError:
-        print("ERROR: pip install jinja2 failed — run 'pip install jinja2' manually", file=sys.stderr)
-        sys.exit(1)
-    from jinja2 import Template
-
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SHARED_DIR = os.path.dirname(_SCRIPTS_DIR)
 CONFIG_PATH = os.path.join(_SHARED_DIR, "config", "config.yaml")
@@ -53,6 +38,29 @@ MCP_UNIFIER_PORT = 6600
 # Docker's embedded DNS. nginx needs an explicit resolver to look a hostname up
 # at request time instead of at config-parse time.
 DOCKER_EMBEDDED_DNS = "127.0.0.11"
+
+
+def _render_compose_template(template_source, vms):
+    try:
+        from jinja2 import Template
+    except ImportError:
+        import subprocess
+
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--quiet", "jinja2"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except subprocess.CalledProcessError:
+            print(
+                "ERROR: pip install jinja2 failed — run 'pip install jinja2' manually",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from jinja2 import Template
+
+    return Template(template_source).render(vms=vms, enable_mcpunifier=True)
 
 
 def _load():
@@ -291,8 +299,7 @@ def main():
             template_source = f.read()
         vms = _load_vms()
         vm_list = list(vms.values())
-        template = Template(template_source)
-        rendered = template.render(vms=vm_list, enable_mcpunifier=True)
+        rendered = _render_compose_template(template_source, vm_list)
         with open(COMPOSE_OUTPUT_PATH, "w", encoding="utf-8") as f:
             f.write(rendered)
         print(f"Generated {COMPOSE_OUTPUT_PATH} from template ({len(vm_list)} VM(s))")

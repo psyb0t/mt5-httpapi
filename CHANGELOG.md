@@ -6,6 +6,19 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.10.1] — 2026-07-30
+
+### Changed
+
+- `make test` is now the complete automated gate, running both the offline unit/contract suite and the container-backed nginx/MCP-unifier suite. `make test-unit` and `make test-integration` remain available for scoped local runs, while CI reports one test job instead of splitting tests by implementation detail.
+- The live deployment probe moved from the misleading root-level `test.sh` name to `scripts/status.sh`; `make status` remains the public command.
+
+### Fixed
+
+- The pipeline caller and its ClawHub reusable workflow no longer use the same concurrency-group name. Their identical groups caused GitHub Actions to detect a parent/child deadlock and fail tag runs after every actual test had passed.
+- Read-only `config_helper.py` commands no longer import Jinja2. Template support is loaded only by `generate_compose`, so `make status` does not fail merely because the host Python environment lacks the unrelated compose-template dependency.
+- `make status` no longer combines `pipefail` with `head` while discovering the first configured terminal. That pipeline killed `config_helper.py` with SIGPIPE whenever the configuration contained multiple terminals.
+
 ## [v4.10.0] — 2026-07-30
 
 ### Added

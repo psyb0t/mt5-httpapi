@@ -1,7 +1,9 @@
 #!/bin/bash
-set -eo pipefail
+set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+trap 'echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} — command failed (exit $?)" >&2' ERR
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASS=0
 FAIL=0
 SKIP=0
@@ -20,17 +22,17 @@ skip() {
 }
 
 # ── Discover config ─────────────────────────────────────────────
-if [ ! -f "${DIR}/config/config.yaml" ]; then
+if [ ! -f "${ROOT_DIR}/config/config.yaml" ]; then
     echo "ERROR: config/config.yaml not found. Need at least one terminal configured."
     exit 1
 fi
 
-CFG="${DIR}/scripts/config_helper.py"
+CFG="${ROOT_DIR}/scripts/config_helper.py"
 
 # Pick the first terminal's broker/account as test target. nginx (on
 # API_HOST_PORT, default 8888) routes /<broker>/<account>/... to the
 # right terminal — per-terminal ports are container-internal now.
-FIRST_PREFIX=$(python3 "$CFG" terminals 2>/dev/null | head -n1 | awk '{print $1"/"$2}')
+FIRST_PREFIX=$(python3 "$CFG" terminals | awk 'NR == 1 { print $1 "/" $2 }')
 
 if [ -z "$FIRST_PREFIX" ] || [ "$FIRST_PREFIX" = "/" ]; then
     echo "ERROR: no terminals found in config.yaml"
@@ -65,7 +67,7 @@ api_status() {
     fi
 }
 
-echo "MT5 HTTP API Tests"
+echo "MT5 HTTP API Status"
 echo "==================="
 echo "Target: ${BASE}"
 echo "Auth:   $([ -n "$AUTH" ] && echo 'yes' || echo 'no')"
