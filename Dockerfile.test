@@ -19,11 +19,12 @@ RUN grep -v -i '^MetaTrader5' /tmp/requirements-api.txt > /tmp/req-test.txt && \
 
 COPY mt5api ./mt5api
 COPY tests ./tests
-# tests/test_terminal_instances.py loads this by path as
-# <repo>/scripts/config_helper.py. Without it those two tests fail with
-# FileNotFoundError. Copied individually rather than the whole scripts/ dir so
-# the image doesn't pull in defender-remover and the Windows .bat files.
-COPY scripts/config_helper.py ./scripts/config_helper.py
+# Dependency sync tests inspect both tracked manifests and the Windows boot
+# installer, while terminal instance tests load config_helper.py by path.
+# Copy only those files rather than the whole scripts/ directory so the test
+# image does not pull in unrelated installer and debloat assets.
+COPY requirements-api.txt requirements-mcpunifier.txt ./
+COPY scripts/config_helper.py scripts/start.bat ./scripts/
 
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1

@@ -4,7 +4,9 @@
 # Deliberately separate from requirements-api.txt: that file installs inside
 # the VM alongside the MetaTrader5 SDK, which is Windows-only and has no place
 # in this image. Nothing here imports mt5api.
-mcp
+# mcpunifier uses the v1 FastMCP API (mcp.server.fastmcp). MCP v2 renamed and
+# moved it to MCPServer, so keep the SDK on the compatible major version.
+mcp<2
 fastapi
 uvicorn[standard]
 httpx

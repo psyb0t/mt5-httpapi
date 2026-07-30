@@ -25,5 +25,8 @@ flask-compress
 psutil
 # MCP interface (mt5api/mcp_server.py) mounted at /mcp. a2wsgi bridges the ASGI
 # MCP app into the Flask/WSGI stack served by waitress (see mt5api/main.py).
-mcp
+# The implementation uses the v1 FastMCP API (mcp.server.fastmcp). MCP v2
+# renamed and moved that API to MCPServer, so an unconstrained install makes
+# the whole REST API fail at import time before waitress can bind its port.
+mcp<2
 a2wsgi

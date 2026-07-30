@@ -101,7 +101,9 @@ set "PIP_CHANGED=0"
 
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
-"%PYDIR%\python.exe" -m pip install pyyaml MetaTrader5 "numpy<2" flask waitress flask-compress psutil mcp a2wsgi > "%PIP_TMP%" 2>&1
+rem Both MCP surfaces use mcp.server.fastmcp, which was removed in MCP v2.
+rem Keep this constraint in sync with requirements-api.txt.
+"%PYDIR%\python.exe" -m pip install pyyaml MetaTrader5 "numpy<2" flask waitress flask-compress psutil "mcp<2" a2wsgi > "%PIP_TMP%" 2>&1
 set "PIP_EC=!errorlevel!"
 type "%PIP_TMP%" >> "%PIP_LOG%"
 findstr /C:"Successfully installed" "%PIP_TMP%" >nul 2>&1 && set "PIP_CHANGED=1"
