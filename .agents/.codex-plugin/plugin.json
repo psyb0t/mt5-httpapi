@@ -1,6 +1,6 @@
 {
   "name": "mt5-httpapi",
-  "version": "4.9.3",
+  "version": "4.9.4",
   "description": "MetaTrader 5 trading via REST \u2014 market data, orders, positions, history, and server-side technical analysis",
   "author": {
     "name": "psyb0t",

@@ -1,4 +1,7 @@
 CLAUDE.md
+AGENTS.md
+CODEX.local.md
+.testing/
 .research_files
 data/*
 !data/.gitkeep
