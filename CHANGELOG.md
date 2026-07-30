@@ -6,6 +6,26 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.11.0] — 2026-07-30
+
+### Added
+
+- Typed per-terminal and unified MCP tools now expose the REST API's complete range-query model: `get_ticks` and `get_rates_ta` accept `from_` and `to`, with parity tests preventing the two MCP catalogs from drifting.
+- The public Go client now decodes the ping process mode and terminal broker-UTC-offset fields, with an HTTP-backed regression test for the current response shape.
+- `make test-go` compiles and race-tests the Go client in a digest-pinned Go container, and the canonical `make test` gate now runs it alongside the unit and container-backed integration suites.
+- The Python test image now pins its base image by digest, matching the Go test container's immutable toolchain pin.
+
+### Changed
+
+- The root README is now a concise project overview and quick start. Detailed installation, REST API, market-data, trading, backtesting, MCP/agent, client/example, multi-VM, and operations guidance lives in focused `docs/*.md` guides.
+- README, setup guidance, the published skill, and the OpenClaw bridge metadata now match the complete REST/MCP surface, process-mode semantics, backtest controls, JSON-versus-multipart boundaries, and exact terminal shutdown/restart behavior.
+
+### Fixed
+
+- A clean `make up` no longer treats `vms.yaml.example` as an active multi-VM topology. Without an explicit `vms.yaml`, it seeds the documented single-VM compose example.
+- MCP-unifier integration fixtures now use and assert the supported process modes (`live` and `backtest`) rather than the unrelated brokerage-account labels (`live` and `demo`).
+- Removed the erroneous `v4.10.0` release-note claim that per-VM `MT5_HTTPAPI_MAX_IN_FLIGHT_*` controls existed; the implementation never exposed those variables.
+
 ## [v4.10.1] — 2026-07-30
 
 ### Changed
@@ -25,7 +45,6 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 - **Config-driven N-VM topology.** `vms.yaml` (copy `vms.yaml.example`) declares each Windows VM's resources — cpuset, RAM, cores, disk, storage path, noVNC port, wickworks sidecar — and every terminal in `config.yaml` binds to one through a new `vm:` field. `config_helper.py` generates nginx routes aimed at the owning VM's container, `run.sh` loops each VM for DNAT and per-VM group files, and `docker-compose.yml` renders from the new `docker-compose.yml.j2` via `config_helper.py generate_compose`. Backwards compatible by construction: no `vms.yaml` means single-VM, and a terminal with no `vm:` field routes to `mt5` exactly as before. Walkthrough in `docs/multi-vm-setup.md`.
 - **Multi-VM configuration commands.** `config_helper.py` adds `vms`, `vm_group <name>`, `vm_info <name> [field]`, `port_list --vm <name>` and `generate_compose` for inspecting and rendering the topology.
-- **Per-VM backtest limits.** `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>` caps in-flight backtests independently for each VM in addition to the existing global limit.
 - **Contract tests for every handler that moves money.** `tests/test_handlers_orders.py`, `tests/test_handlers_positions.py` and `tests/test_handlers_readonly.py` drive the real Flask routes with the MT5 SDK faked at the `m()` seam, asserting the exact request that would reach `order_send` — a market BUY priced at ask and a SELL at bid, closing a BUY sending a SELL at bid, a partial close sending only the requested volume, an sl-only modify preserving the existing tp. Every failure path also asserts `order_send` was never called, because a handler that errors after sending has already traded.
 - **Tests for the files `config_helper.py` generates.** `tests/test_config_generation.py` asserts the nginx config emits no literal `proxy_pass http://host:port`, that every terminal route carries a resolver, that terminals reach their own VM's container, that an absent `vms.yaml` still routes everything to `mt5`, that a live terminal's INI declares no `[StartUp]` expert, and that two VMs never share a host port.
 - **`make test-integration`** — container-backed suites under `tests/integration/`, driven by pytest and testcontainers. Boots real nginx against the generated config with one VM deliberately absent, and stands the MCP unifier up beside a stub terminal. Runs on the host because it starts sibling containers through the docker socket, with its dependencies isolated in a gitignored `.venv-test/`.

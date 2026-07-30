@@ -68,7 +68,7 @@ _INSTRUCTIONS = """\
 HTTP interface to EVERY configured MetaTrader 5 terminal, exposed over MCP as
 dedicated typed tools. Each tool takes `broker` and `account` (plus optional
 `instance`) naming which terminal to act on; call `list_terminals` first to see
-what is configured, including whether each one is a live or demo account.
+what is configured, including whether each process is in live or backtest mode.
 
 Tool families: health/terminal (ping, get_terminal, terminal_control), account
 (get_account), market data (list_symbols, get_symbol, get_tick, get_rates,
@@ -118,10 +118,10 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
 
     @mcp.tool()
     async def list_terminals() -> dict[str, Any]:
-        """List every configured terminal: broker, account, instance and whether
-        it is a live or demo account. Call this before any other tool to learn
-        which broker/account values are valid — the other tools reject anything
-        not listed here rather than guessing."""
+        """List every configured terminal: broker, account, instance and process
+        mode (live or backtest). Call this before any other tool to learn which
+        broker/account values are valid — the other tools reject anything not
+        listed here rather than guessing."""
         return {
             "terminals": [
                 {
@@ -165,9 +165,10 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
         """Control one terminal's MT5 connection: ``action`` is "init",
         "shutdown" or "restart" (``POST /terminal/{action}``).
 
-        DESTRUCTIVE: restart/shutdown disrupt that terminal's running
-        connection. Only call on explicit user request, and confirm which
-        terminal first.
+        ``shutdown`` disconnects that API process from the MT5 SDK while
+        leaving terminal64.exe running. ``restart`` kills and relaunches that
+        selected terminal process. Only call either on explicit user request,
+        and confirm which terminal first.
         """
         return await call(broker, account, instance, "POST", f"/terminal/{action}")
 
@@ -254,20 +255,25 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
         symbol: str,
         count: int = 0,
         from_: str = "",
+        to: str = "",
         flags: str = "",
         instance: str = DEFAULT_INSTANCE,
     ) -> dict[str, Any]:
         """Get raw ticks for one symbol (``GET /symbols/{symbol}/ticks``).
 
         ``count``: positive = forward from ``from_``, negative = backward ending
-        at ``from_``, omitted = last 100 ticks. ``from_``: unix seconds or
-        ``YYYY_MM_DD[_HH_MM_SS]``. ``flags``: ALL / INFO / TRADE (default ALL).
+        at ``from_``, omitted with no ``from_``/``to`` = last 100 ticks.
+        ``from_``/``to``: unix seconds or ``YYYY_MM_DD[_HH_MM_SS]``; ``to``
+        requires ``from_`` and is mutually exclusive with ``count``. ``flags``:
+        ALL / INFO / TRADE (default ALL).
         """
         query: dict[str, Any] = {}
         if count:
             query["count"] = count
         if from_:
             query["from"] = from_
+        if to:
+            query["to"] = to
         if flags:
             query["flags"] = flags
         return await call(
@@ -287,16 +293,18 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
         timeframe: str,
         indicators: dict[str, Any],
         count: int = 0,
+        from_: str = "",
+        to: str = "",
         instance: str = DEFAULT_INSTANCE,
     ) -> dict[str, Any]:
         """Get OHLCV bars plus a technical-analysis overlay computed by the
         wickworks sidecar (``POST /symbols/{symbol}/rates/ta``).
 
         ``timeframe``: same values as ``get_rates``. ``indicators``: a non-empty
-        wickworks indicator spec object. ``count``: same semantics as
-        ``get_rates`` (0 = default last-100 window).
+        wickworks indicator spec object. ``count``/``from_``/``to``: same
+        semantics as ``get_rates``.
         """
-        query = _rates_query(timeframe, count, "", "")
+        query = _rates_query(timeframe, count, from_, to)
         body = {"indicators": indicators}
         return await call(
             broker,
@@ -427,8 +435,9 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
 
         DESTRUCTIVE: places a real order on a real account — irreversible once
         filled. Only call on explicit user request, and confirm
-        terminal/symbol/type/volume/price first. Check `list_terminals` for
-        which accounts are live.
+        terminal/symbol/type/volume/price first. Call ``get_account`` for the
+        selected terminal and inspect its trade mode before trading;
+        ``list_terminals`` reports process mode, not live/demo account status.
         """
         body: dict[str, Any] = {"symbol": symbol, "type": type, "volume": volume}
         if price:
@@ -580,8 +589,10 @@ def build_mcp_server(settings: Settings, client: TerminalClient) -> FastMCP:
         body: dict[str, Any] | None = None,
         instance: str = DEFAULT_INSTANCE,
     ) -> dict[str, Any]:
-        """Escape hatch: call any mt5-httpapi REST endpoint on one terminal and
-        return its JSON response, for routes without a dedicated tool.
+        """Escape hatch: call a JSON-compatible mt5-httpapi REST endpoint on
+        one terminal and return its JSON response, for routes without a
+        dedicated tool. Multipart uploads, including ``POST /backtest``, must
+        use the REST API directly.
 
         ``method``: GET / POST / PUT / DELETE. ``path``: a route from
         ``endpoints``, e.g. ``/account``. ``query``: URL query params. ``body``:

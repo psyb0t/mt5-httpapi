@@ -1,7 +1,13 @@
 .git
 .github
+.anustimes
+.brutal_reviews
 .research_files
+AGENTS.md
 CLAUDE.md
+git-update.sh
+.env
+.env.*
 data/
 mt5installers/
 assets/experts/

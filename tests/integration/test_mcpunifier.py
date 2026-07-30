@@ -93,13 +93,13 @@ CONFIG = {
             "broker": LIVE_BROKER,
             "account": LIVE_ACCOUNT,
             "port": LIVE_TERMINAL_PORT,
-            "mode": "demo",
+            "mode": "live",
         },
         {
             "broker": DOWN_BROKER,
             "account": DOWN_ACCOUNT,
             "port": DOWN_TERMINAL_PORT,
-            "mode": "live",
+            "mode": "backtest",
         },
     ],
 }
@@ -200,6 +200,16 @@ def test_every_tool_is_exposed(unifier):
     assert len(tools) == EXPECTED_TOOL_COUNT
 
 
+def test_market_data_tool_schemas_expose_range_queries(unifier):
+    tools = {
+        tool["name"]: tool["inputSchema"]["properties"]
+        for tool in _mcp(unifier, "tools/list")["result"]["tools"]
+    }
+
+    assert {"from_", "to"} <= set(tools["get_ticks"])
+    assert {"from_", "to"} <= set(tools["get_rates_ta"])
+
+
 def test_list_terminals_reports_both_configured_terminals(unifier):
     """Both, not just the reachable one: the catalogue reflects configuration,
     so a dead terminal still has to appear.
@@ -207,6 +217,10 @@ def test_list_terminals_reports_both_configured_terminals(unifier):
     payload = json.loads(_tool_text(_call_tool(unifier, "list_terminals", {})))
 
     assert len(payload["terminals"]) == EXPECTED_TERMINAL_COUNT
+    assert {terminal["mode"] for terminal in payload["terminals"]} == {
+        "live",
+        "backtest",
+    }
 
 
 def test_the_live_terminal_routes_to_its_own_port(unifier):

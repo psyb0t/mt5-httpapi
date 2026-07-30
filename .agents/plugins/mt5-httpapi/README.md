@@ -26,7 +26,11 @@ reads): market data (`list_symbols`, `get_symbol`, `get_tick`, `get_rates`,
 (`list_orders`, `get_order`, `create_order`, `modify_order`, `cancel_order`),
 history/terminal/backtest (`get_history_orders`, `get_history_deals`,
 `get_terminal`, `terminal_control`, `get_backtest`), and `ping`. A generic
-`request` + `endpoints` catalog cover anything without a dedicated tool.
+`request` + `endpoints` catalog cover JSON-compatible routes without a
+dedicated tool; multipart `POST /backtest` submission still uses REST directly.
+When `MT5_API_URL` is the server root, `list_terminals` discovers the valid
+broker/account/instance combinations and their `live`/`backtest` process mode;
+when it is a terminal path, the session is pinned to that terminal.
 
 The order/position tools (`create_order`, `modify_order`, `cancel_order`,
 `modify_position`, `close_position`) are real, irreversible actions on a live
@@ -36,7 +40,7 @@ trading account — confirm the parameters before calling them.
 
 | Env var | Required | Description |
 |---|---|---|
-| `MT5_API_URL` | yes | Base URL of one mt5-httpapi terminal, e.g. `http://localhost:8888/<broker>/<account>`. The bridge appends `/mcp/`. |
+| `MT5_API_URL` | yes | Server root (for unified tools plus `list_terminals`) or one terminal URL (for a pinned session), e.g. `http://localhost:8888` or `http://localhost:8888/<broker>/<account>`. The bridge appends `/mcp/`. |
 | `MT5_API_TOKEN` | no | Bearer token — required whenever the terminal's `api_token` is set (same token as the REST API); omit only if the server has auth disabled. |
 
 ## Install

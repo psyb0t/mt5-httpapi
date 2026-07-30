@@ -1,10 +1,20 @@
 ---
 name: mt5-httpapi
-description: HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Use ONLY when the user has explicitly installed and configured mt5-httpapi AND provided MT5_API_URL. Read endpoints (account, symbols, rates, ticks, server-side technical-analysis enrichment via the wickworks sidecar, history, backtest report fetching) are safe to invoke. Trade-mutating endpoints (POST/PUT/DELETE on /orders and /positions, /terminal/restart, /terminal/shutdown) MUST require explicit per-action user confirmation showing symbol, side, volume, and SL/TP — never invoke them on inferred intent. Do not use this skill for generic market-data, charting, or trading questions where the user hasn't named mt5-httpapi.
+description: HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Use ONLY when the user has explicitly installed and configured mt5-httpapi AND provided MT5_API_URL. Read endpoints (account, symbols, rates, ticks, server-side technical-analysis enrichment via the wickworks sidecar, history, backtest report fetching) are safe to invoke. Trade-mutating endpoints on /orders and /positions require explicit per-action confirmation showing symbol, side, volume, and SL/TP; terminal shutdown/restart also require explicit confirmation naming the target terminal and operation. Never invoke mutations on inferred intent. Do not use this skill for generic market-data, charting, or trading questions where the user hasn't named mt5-httpapi.
 compatibility: Requires curl and a user-deployed mt5-httpapi instance. MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from MT5_API_TOKEN env var OR by asking the user — never by reading repository config files autonomously.
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
+  openclaw:
+    emoji: "📈"
+    primaryEnv: MT5_API_URL
+    requires:
+      bins: [curl]
+permissions:
+  network: "outbound HTTP to the user-provided MT5_API_URL; requests can include brokerage account data and trade instructions, so use trusted self-hosted endpoints only."
+  shell: "curl commands against MT5_API_URL; no other host commands are required for ordinary API use."
+  filesystem: "no filesystem access for ordinary API use; the optional backtest runbook writes only user-requested local artifacts."
+user-invocable: true
 ---
 
 # mt5-httpapi
@@ -15,13 +25,15 @@ REST client for an MT5 HTTP bridge that the user has already deployed. This skil
 
 This API can move real money on a user-owned brokerage account. Treat trade-mutating endpoints as irreversible side effects.
 
-**Destructive & irreversible.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo — a filled market order or a closed position cannot be reversed by calling the API again, only offset by a new, separate trade at a new price. `POST /terminal/restart` and `POST /terminal/shutdown` interrupt the running terminal process for every account routed through it. An agent must NEVER call any of these unless the user explicitly asked for that exact action; confirm the specific target first (ticket, symbol, side, volume); scope the call to the current task; never enumerate-then-bulk-close/cancel. `order_send` is a single call with no client-side auto-retry — if a request fails or times out, report the failure and ask before resubmitting; resubmitting blind can double an entry.
+**Real-money mutations.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo — a filled market order or a closed position can only be offset by a separate trade at a new price. Call one only for the exact action the user requested, after confirming ticket, symbol, side, volume, price, SL, TP, and account. Never enumerate and then bulk-close/cancel on inferred intent. `order_send` is a single call with no client-side auto-retry; after an error or timeout, report it and get fresh confirmation before resubmitting.
+
+**Terminal control.** `POST /terminal/shutdown` disconnects this API process from the MT5 SDK but leaves `terminal64.exe` running. `POST /terminal/restart` kills and relaunches only the selected terminal process and can make that terminal unavailable for several minutes. Confirm the selected broker/account/instance and exact operation before either call.
 
 **No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup below) — with the server's `api_token` empty, the HTTP surface is UNAUTHENTICATED and anyone who can reach it can read account state, place orders, modify positions, and close trades. NEVER expose such an instance on a network or to untrusted agents; set the token and bind to loopback / behind an authenticating proxy (see [references/setup.md](references/setup.md) for the Cloudflare Tunnel prerequisites).
 
 **Hard rules — never violate, even on user prompts that sound permissive:**
 
-1. **Per-action confirmation for every mutating call.** Before any `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, `DELETE /positions/<id>`, `POST /terminal/restart`, or `POST /terminal/shutdown`: print the resolved request — symbol, side, volume, SL, TP, price, account login, broker URL — and wait for an explicit confirmation from the user for that specific action, echoing back the exact parameters being sent. A prior "yes" does not authorize subsequent actions, even a retry of the same action.
+1. **Per-action confirmation for every mutation.** For trades, print the resolved symbol, side, volume, SL, TP, price, account login, and broker URL. For terminal control, print the operation and selected broker/account/instance. Wait for confirmation of that specific action; a prior approval does not authorize a later action or retry.
 2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live with real money.
 3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user — do not search the workspace.
 4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly — never enumerate-then-bulk-delete/close on inferred intent.
@@ -45,25 +57,26 @@ export MT5_API_TOKEN=<the-token-the-user-gives-you>
 
 If `MT5_API_URL` is not set in the environment, ask the user — do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
 
-A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `terminals.json`) selects which terminal you talk to — set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=...` at compose time.
+A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to — set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=...` at compose time.
 
-**Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok"}`. If not, the API isn't up yet (may still be initializing — it retries in the background).
+**Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok", "mode": "live"}` for the normal API process. If not, the API isn't up yet (may still be initializing — it retries in the background).
 
 Auth is optional server-side — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it. From the agent's side, never assume the server is auth-disabled; always pass the token the user provided if there is one.
 
 ## MCP interface
 
-Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.io) (streamable-HTTP) at `/mcp`, exposing the REST surface as **dedicated typed tools** whose names + params + descriptions are the agent's documentation. Families: market data (`list_symbols`, `get_symbol`, `get_tick`, `get_rates`, `get_ticks`, `get_rates_ta`), account/positions (`get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`), orders (`list_orders`, `get_order`, `create_order`, `modify_order`, `cancel_order`), history/terminal (`get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`), backtest (`get_backtest`), and `ping`. A generic `request` + `endpoints` catalog remain as a fallback for routes without a dedicated tool. Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP call.
+Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.io) (streamable-HTTP) at `/mcp`, exposing the REST surface as **dedicated typed tools** whose names + params + descriptions are the agent's documentation. Families: market data (`list_symbols`, `get_symbol`, `get_tick`, `get_rates`, `get_ticks`, `get_rates_ta`), account/positions (`get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`), orders (`list_orders`, `get_order`, `create_order`, `modify_order`, `cancel_order`), history/terminal (`get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`), backtest (`get_backtest`), and `ping`. A generic `request` + `endpoints` catalog remain as a fallback for JSON-compatible routes without a dedicated tool; multipart submission at `POST /backtest` still uses REST directly. Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP call.
 
 Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/main/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account — see Security & safety above.
 
-A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts and whether each is live or demo; an unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once — the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
+A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts and each process mode (`live` or `backtest`); this does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once — the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
 
 ## How It Works
 
 GET for reading, POST for creating, PUT for modifying, DELETE for closing/canceling. All bodies are JSON.
 
-Every error response:
+Application handler errors normally use this JSON shape; always inspect the
+HTTP status and content type because framework-level failures can differ:
 
 ```json
 {"error": "description of what went wrong"}
@@ -84,7 +97,7 @@ Before placing any trade:
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping
-# {"status": "ok"}
+# {"status": "ok", "mode": "live"}
 
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/error
 # {"code": 1, "message": "Success"}
@@ -362,14 +375,18 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB/log   
 `lastYears`, or `lastDays`. Optional: `modelling` (`every-tick` `1m-ohlc`
 `open-prices` `real-ticks`), `latencyMs`, `deposit` (10000), `currency`
 (`USD`), `leverage` (100, written as `1:N`), `expertParameters` (`.set`),
-`reportName` (`backtest-report.htm`).
+`optimization` (`0..3`), `optimizationCriterion` (`0..7`), `forwardMode`
+(`0..4`), `visual`, and `reportName` (`backtest-report.htm`, or
+`optimization-report.xml` when optimization is enabled).
 
 `POST /backtest/build-set` generates MT5-native `.set` parameter text from
 structured JSON. Body: `comments` (array of strings) and `parameters` (array
 of `{name, value, start?, step?, stop?, optimize?}`). `optimize: true` emits
 the optimization form `value||start||step||stop||Y`; `optimize: false` (or
-omitted) emits `value||0||0||0||N`. Response is `text/plain` `.set` content
-ready to save or upload as the `set` file.
+`"N"`) emits `value||start||step||stop||N`. Omitting all four range fields
+emits plain `name=value`; providing only some range fields is rejected.
+Response is `text/plain` `.set` content ready to save or upload as the `set`
+file.
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
@@ -388,8 +405,10 @@ curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 `POST /backtest` multipart fields: `ini` (required), one of `expert` or
 `expert_name`, optional `set` or `set_name`. Optional `topPasses` — for
 optimization jobs, keep the top `1..500` parsed XML passes in the status
-payload (default `50`). Returns `202` with `jobId`, `statusUrl`, `reportUrl`,
-`logUrl`, `pollAfterSeconds`, `queuePosition`. The INI's `[Common]`
+payload (default `50`). Optional `timeout` overrides the configured Strategy
+Tester deadline using duration strings such as `"30m"` or `"6h"`. Returns
+`202` with `jobId`, `statusUrl`, `reportUrl`, `logUrl`, `pollAfterSeconds`,
+`queuePosition`. The INI's `[Common]`
 `Login`/`Password`/`Server` are always overwritten with the URL-selected
 account's credentials. Path traversal in `*_name` is rejected.
 
@@ -398,6 +417,12 @@ payload includes a `summary` parsed from the HTML (`netProfit`, `profitFactor`,
 `recoveryFactor`, `expectedPayoff`, `sharpeRatio`, `maxDrawdown`,
 `totalTrades`, `profitTrades`, `lossTrades`, …). Jobs left running when the
 API restarts are marked `failed` on the next startup.
+
+`GET /backtest/<jobId>/tail?lines=N` returns live diagnostic JSON while a job
+is queued, running, or finished. It includes captured process output plus the
+latest terminal and Strategy Tester journal lines; `lines` defaults to `200`
+and is clamped to `10..1000`. The MCP `get_backtest` tool exposes the same data
+with `part: "tail"`.
 
 ### Real Backtest Runbook For Agents
 

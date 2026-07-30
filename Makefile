@@ -1,4 +1,6 @@
-.PHONY: up down logs status lint format test test-unit test-integration clean distclean help
+.PHONY: up down logs status lint format test test-unit test-integration test-go clean distclean help
+
+GO_TEST_IMAGE := golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647
 
 all: up
 
@@ -47,6 +49,7 @@ format:
 test:
 	$(MAKE) test-unit
 	$(MAKE) test-integration
+	$(MAKE) test-go
 
 # Run unit tests in a throwaway Docker image. The image is built with a
 # unique tag, run, and removed afterwards (--rm + rmi) so nothing lingers
@@ -74,6 +77,17 @@ test-integration:
 	.venv-test/bin/pip install --quiet -r requirements-test.txt
 	.venv-test/bin/pytest -v tests/integration/
 
+# Compile and race-test the public Go client in the same pinned Go toolchain
+# declared by its module. The source mount is read-only; caches are ephemeral.
+test-go:
+	docker run --rm \
+		-e GOCACHE=/tmp/go-build \
+		-e GOMODCACHE=/tmp/go-mod \
+		-v "$$PWD/clients/go:/src:ro" \
+		-w /src \
+		$(GO_TEST_IMAGE) \
+		sh -c '/usr/local/go/bin/go test -race ./...'
+
 clean: down
 	sudo rm -rf data/storage data/shared data/metatrader5 data/oem run.log
 
@@ -91,5 +105,6 @@ help:
 	@echo "  test      - Run the complete automated test suite"
 	@echo "  test-unit - Run unit and contract tests in a throwaway Docker image"
 	@echo "  test-integration - Container-backed suites: nginx routing + MCP unifier (needs docker)"
+	@echo "  test-go  - Compile and race-test the public Go client in a pinned container"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
 	@echo "  distclean - Remove everything including ISO"

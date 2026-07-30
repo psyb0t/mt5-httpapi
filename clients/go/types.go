@@ -8,6 +8,7 @@ type APIError struct {
 
 type PingResponse struct {
 	Status string `json:"status"`
+	Mode   string `json:"mode"`
 }
 
 type LastError struct {
@@ -21,28 +22,30 @@ type SuccessResponse struct {
 }
 
 type Terminal struct {
-	CommunityAccount     bool   `json:"community_account"`
-	CommunityConnection  bool   `json:"community_connection"`
-	Connected            bool   `json:"connected"`
-	DLLsAllowed          bool   `json:"dlls_allowed"`
-	TradeAllowed         bool   `json:"trade_allowed"`
-	TradeAPIDisabled     bool   `json:"tradeapi_disabled"`
-	EmailEnabled         bool   `json:"email_enabled"`
-	FTPEnabled           bool   `json:"ftp_enabled"`
-	NotificationsEnabled bool   `json:"notifications_enabled"`
-	MQID                 bool   `json:"mqid"`
-	Build                int    `json:"build"`
-	MaxBars              int    `json:"maxbars"`
-	CodePage             int    `json:"codepage"`
-	PingLast             int    `json:"ping_last"`
-	CommunityBalance     float64 `json:"community_balance"`
-	Retransmission       float64 `json:"retransmission"`
-	Company              string `json:"company"`
-	Name                 string `json:"name"`
-	Language             string `json:"language"`
-	Path                 string `json:"path"`
-	DataPath             string `json:"data_path"`
-	CommonDataPath       string `json:"commondata_path"`
+	CommunityAccount       bool    `json:"community_account"`
+	CommunityConnection    bool    `json:"community_connection"`
+	Connected              bool    `json:"connected"`
+	DLLsAllowed            bool    `json:"dlls_allowed"`
+	TradeAllowed           bool    `json:"trade_allowed"`
+	TradeAPIDisabled       bool    `json:"tradeapi_disabled"`
+	EmailEnabled           bool    `json:"email_enabled"`
+	FTPEnabled             bool    `json:"ftp_enabled"`
+	NotificationsEnabled   bool    `json:"notifications_enabled"`
+	MQID                   bool    `json:"mqid"`
+	Build                  int     `json:"build"`
+	MaxBars                int     `json:"maxbars"`
+	CodePage               int     `json:"codepage"`
+	PingLast               int     `json:"ping_last"`
+	CommunityBalance       float64 `json:"community_balance"`
+	Retransmission         float64 `json:"retransmission"`
+	Company                string  `json:"company"`
+	Name                   string  `json:"name"`
+	Language               string  `json:"language"`
+	Path                   string  `json:"path"`
+	DataPath               string  `json:"data_path"`
+	CommonDataPath         string  `json:"commondata_path"`
+	BrokerUTCOffsetHours   float64 `json:"broker_utc_offset_hours"`
+	BrokerUTCOffsetSeconds int     `json:"broker_utc_offset_seconds"`
 }
 
 type Account struct {
@@ -187,41 +190,41 @@ type Tick struct {
 }
 
 type Rate struct {
-	Time        int64   `json:"time"`
-	Open        float64 `json:"open"`
-	High        float64 `json:"high"`
-	Low         float64 `json:"low"`
-	Close       float64 `json:"close"`
-	TickVolume  uint64  `json:"tick_volume"`
-	Spread      int     `json:"spread"`
-	RealVolume  uint64  `json:"real_volume"`
+	Time       int64   `json:"time"`
+	Open       float64 `json:"open"`
+	High       float64 `json:"high"`
+	Low        float64 `json:"low"`
+	Close      float64 `json:"close"`
+	TickVolume uint64  `json:"tick_volume"`
+	Spread     int     `json:"spread"`
+	RealVolume uint64  `json:"real_volume"`
 }
 
 type Order struct {
-	Ticket          int64   `json:"ticket"`
-	TimeSetup       int64   `json:"time_setup"`
-	TimeSetupMsc    int64   `json:"time_setup_msc"`
-	TimeDone        int64   `json:"time_done"`
-	TimeDoneMsc     int64   `json:"time_done_msc"`
-	TimeExpiration  int64   `json:"time_expiration"`
-	Type            int     `json:"type"`
-	TypeTime        int     `json:"type_time"`
-	TypeFilling     int     `json:"type_filling"`
-	State           int     `json:"state"`
-	Magic           int64   `json:"magic"`
-	PositionID      int64   `json:"position_id"`
-	PositionByID    int64   `json:"position_by_id"`
-	Reason          int     `json:"reason"`
-	VolumeInitial   float64 `json:"volume_initial"`
-	VolumeCurrent   float64 `json:"volume_current"`
-	PriceOpen       float64 `json:"price_open"`
-	SL              float64 `json:"sl"`
-	TP              float64 `json:"tp"`
-	PriceCurrent    float64 `json:"price_current"`
-	PriceStopLimit  float64 `json:"price_stoplimit"`
-	Symbol          string  `json:"symbol"`
-	Comment         string  `json:"comment"`
-	ExternalID      string  `json:"external_id"`
+	Ticket         int64   `json:"ticket"`
+	TimeSetup      int64   `json:"time_setup"`
+	TimeSetupMsc   int64   `json:"time_setup_msc"`
+	TimeDone       int64   `json:"time_done"`
+	TimeDoneMsc    int64   `json:"time_done_msc"`
+	TimeExpiration int64   `json:"time_expiration"`
+	Type           int     `json:"type"`
+	TypeTime       int     `json:"type_time"`
+	TypeFilling    int     `json:"type_filling"`
+	State          int     `json:"state"`
+	Magic          int64   `json:"magic"`
+	PositionID     int64   `json:"position_id"`
+	PositionByID   int64   `json:"position_by_id"`
+	Reason         int     `json:"reason"`
+	VolumeInitial  float64 `json:"volume_initial"`
+	VolumeCurrent  float64 `json:"volume_current"`
+	PriceOpen      float64 `json:"price_open"`
+	SL             float64 `json:"sl"`
+	TP             float64 `json:"tp"`
+	PriceCurrent   float64 `json:"price_current"`
+	PriceStopLimit float64 `json:"price_stoplimit"`
+	Symbol         string  `json:"symbol"`
+	Comment        string  `json:"comment"`
+	ExternalID     string  `json:"external_id"`
 }
 
 type Position struct {
@@ -270,16 +273,16 @@ type Deal struct {
 }
 
 type TradeResult struct {
-	Retcode      int     `json:"retcode"`
-	Deal         int64   `json:"deal"`
-	Order        int64   `json:"order"`
-	Volume       float64 `json:"volume"`
-	Price        float64 `json:"price"`
-	Bid          float64 `json:"bid"`
-	Ask          float64 `json:"ask"`
-	Comment      string  `json:"comment"`
-	RequestID    int64   `json:"request_id"`
-	RetcodeExt   int     `json:"retcode_external"`
+	Retcode    int     `json:"retcode"`
+	Deal       int64   `json:"deal"`
+	Order      int64   `json:"order"`
+	Volume     float64 `json:"volume"`
+	Price      float64 `json:"price"`
+	Bid        float64 `json:"bid"`
+	Ask        float64 `json:"ask"`
+	Comment    string  `json:"comment"`
+	RequestID  int64   `json:"request_id"`
+	RetcodeExt int     `json:"retcode_external"`
 }
 
 type CreateOrderRequest struct {
@@ -336,12 +339,12 @@ type RatesQuery struct {
 // inert in wickworks v0.3.x — accepted by the request schema but currently
 // unused; set Count appropriately or slice client-side to trim the response.
 type RatesTAQuery struct {
-	Timeframe   string
-	Count       int
-	From        int64
-	To          int64
-	Indicators  map[string]any
-	RecentBars  int
+	Timeframe  string
+	Count      int
+	From       int64
+	To         int64
+	Indicators map[string]any
+	RecentBars int
 }
 
 // RatesTAResponse mirrors POST /symbols/:symbol/rates/ta. TA is the raw

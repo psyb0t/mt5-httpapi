@@ -2,6 +2,16 @@
 
 This guide documents how mt5-httpapi runs MetaTrader 5 Strategy Tester optimizations over HTTP, what each MT5 optimization mode actually does, and what artifacts you should expect back from the API.
 
+## Contents
+
+- [Requirements](#requirements)
+- [Overview](#overview)
+- [Optimization modes](#optimization-modes)
+- [Set files for optimization](#set-files-for-optimization)
+- [Polling and interpreting results](#polling-and-interpreting-results)
+- [Raw artifacts and debugging](#raw-artifacts-and-debugging)
+- [End-to-end example script](#end-to-end-example-script)
+
 ## Requirements
 
 Optimization requests only run correctly against a terminal configured with `mode: backtest` in `config/config.yaml`.

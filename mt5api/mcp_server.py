@@ -16,7 +16,7 @@ Tool families:
                         ``modify_order``, ``cancel_order``
   - History          — ``get_history_orders``, ``get_history_deals``
   - Backtest         — ``get_backtest`` (poll; new runs are multipart, submit via REST)
-  - Escape hatches   — ``request`` (any route) and ``endpoints`` (route catalog)
+  - Escape hatches   — ``request`` (JSON routes) and ``endpoints`` (route catalog)
 
 Each tool is a thin typed wrapper: it maps friendly params to
 (method, path, query, body) and calls the same in-process WSGI helper the
@@ -106,8 +106,9 @@ def build_mcp_server() -> FastMCP:
         """Control the MT5 terminal connection: ``action`` is one of
         "init", "shutdown", "restart" (``POST /terminal/{action}``).
 
-        DESTRUCTIVE: restart/shutdown disrupt the running terminal
-        connection. Only call on explicit user request.
+        ``shutdown`` disconnects this API process from the MT5 SDK while
+        leaving terminal64.exe running. ``restart`` kills and relaunches this
+        terminal process. Only call either on explicit user request.
         """
         return await _call("POST", f"/terminal/{action}")
 
@@ -166,20 +167,24 @@ def build_mcp_server() -> FastMCP:
         symbol: str,
         count: int = 0,
         from_: str = "",
+        to: str = "",
         flags: str = "",
     ) -> dict[str, Any]:
         """Get raw ticks for one symbol (``GET /symbols/{symbol}/ticks``).
 
         ``count``: positive = forward from ``from_``, negative = backward
-        ending at ``from_``, omitted = last 100 ticks. ``from_``: unix
-        seconds or ``YYYY_MM_DD[_HH_MM_SS]``. ``flags``: ALL / INFO / TRADE
-        (default ALL).
+        ending at ``from_``, omitted with no ``from_``/``to`` = last 100
+        ticks. ``from_``/``to``: unix seconds or
+        ``YYYY_MM_DD[_HH_MM_SS]``; ``to`` requires ``from_`` and is mutually
+        exclusive with ``count``. ``flags``: ALL / INFO / TRADE (default ALL).
         """
         query: dict[str, Any] = {}
         if count:
             query["count"] = count
         if from_:
             query["from"] = from_
+        if to:
+            query["to"] = to
         if flags:
             query["flags"] = flags
         return await _call("GET", f"/symbols/{symbol}/ticks", query=query or None)
@@ -190,16 +195,18 @@ def build_mcp_server() -> FastMCP:
         timeframe: str,
         indicators: dict[str, Any],
         count: int = 0,
+        from_: str = "",
+        to: str = "",
     ) -> dict[str, Any]:
         """Get OHLCV bars for one symbol/timeframe plus a technical-analysis
         overlay computed by the wickworks sidecar (``POST
         /symbols/{symbol}/rates/ta``).
 
         ``timeframe``: same values as ``get_rates``. ``indicators``: a
-        non-empty wickworks indicator spec object. ``count``: same semantics
-        as ``get_rates`` (0 = default last-100 window).
+        non-empty wickworks indicator spec object. ``count``/``from_``/``to``:
+        same semantics as ``get_rates``.
         """
-        query = _rates_query(timeframe, count, "", "")
+        query = _rates_query(timeframe, count, from_, to)
         body = {"indicators": indicators}
         return await _call("POST", f"/symbols/{symbol}/rates/ta", query=query, body=body)
 
@@ -384,10 +391,10 @@ def build_mcp_server() -> FastMCP:
         query: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Escape hatch: call any mt5-httpapi REST endpoint and return its
-        JSON response, for routes without a dedicated tool (e.g.
-        ``/backtest/build-ini``, ``/backtest/build-set``, or the multipart
-        ``/backtest`` submission).
+        """Escape hatch: call a JSON-compatible mt5-httpapi REST endpoint and
+        return its JSON response, for routes without a dedicated tool (e.g.
+        ``/backtest/build-ini`` or ``/backtest/build-set``). Multipart uploads,
+        including ``POST /backtest``, must use the REST API directly.
 
         ``method``: GET / POST / PUT / DELETE / etc. ``path``: a full route
         from ``endpoints``, e.g. ``/account`` or ``/orders``. ``query``: URL

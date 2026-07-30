@@ -3,6 +3,13 @@ AGENTS.md
 CODEX.local.md
 .testing/
 .research_files
+.agent_notes/
+.agent_knowledge/
+PLAN.md
+implplan.md
+NOTES.md
+TODO.md
+WIP.md
 data/*
 !data/.gitkeep
 # Terminal data tree scaffolded at repo root when mt5api runs outside the VM
@@ -27,11 +34,27 @@ config/ts_login_server.txt
 config/reboot_interval.txt
 config/requirements.txt
 .env
+.env.local
+.env.*
+!.env.example
 docker-compose.yml
 vms.yaml
 run.log
 logs/
 __pycache__
+coverage.txt
+coverage.out
+profile.out
+.cover/
+htmlcov/
+.vscode/
+.idea/
+.editorconfig
+.envrc
+.tool-versions
+.python-version
+.nvmrc
+pyrightconfig.json
 commit.sh
 git-update.sh
 fix.sh
@@ -48,3 +71,4 @@ fuckyeah.md
 
 # Per-run QA audit logs — never committed.
 .anustimes/
+.brutal_reviews/

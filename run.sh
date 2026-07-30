@@ -14,20 +14,18 @@ exec > >(tee "${LOG_FILE}") 2>&1
 
 mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/config" "${DIR}/data/shared/terminals" "${DIR}/data/oem" "${DIR}/assets/experts" "${DIR}/assets/sets"
 
-# Bootstrap docker-compose.yml from Jinja2 template (if vms.yaml + template exist)
-# or from the example file. User owns the real docker-compose.yml after that.
+# Bootstrap docker-compose.yml from the Jinja2 template only when the user has
+# created vms.yaml. Without an explicit topology, seed the single-VM example.
+# User owns the generated docker-compose.yml after that.
 if [ ! -f "${DIR}/docker-compose.yml" ]; then
-    if [ -f "${DIR}/vms.yaml.example" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
-        echo "docker-compose.yml not found — generating from Jinja2 template (vms.yaml.example)"
-        python3 "${DIR}/scripts/config_helper.py" generate_compose
-    elif [ -f "${DIR}/vms.yaml" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
+    if [ -f "${DIR}/vms.yaml" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
         echo "docker-compose.yml not found — generating from Jinja2 template (vms.yaml)"
         python3 "${DIR}/scripts/config_helper.py" generate_compose
     elif [ -f "${DIR}/docker-compose.yml.example" ]; then
         echo "docker-compose.yml not found — seeding from docker-compose.yml.example"
         cp "${DIR}/docker-compose.yml.example" "${DIR}/docker-compose.yml"
     else
-        echo "ERROR: neither vms.yaml nor vms.yaml.example + docker-compose.yml.j2, nor docker-compose.yml.example found."
+        echo "ERROR: neither vms.yaml + docker-compose.yml.j2 nor docker-compose.yml.example found."
         exit 1
     fi
 fi

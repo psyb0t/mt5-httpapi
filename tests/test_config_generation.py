@@ -9,6 +9,7 @@ and the damage only surfaced when a container tried to start.
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,28 @@ def test_live_terminal_ini_declares_no_startup_expert(tmp_path, monkeypatch):
     content = outpath.read_text(encoding="utf-8")
     assert "[StartUp]" not in content
     assert "Expert=" not in content
+    assert content.count("[Experts]") == 1
+
+
+def test_clean_start_uses_single_vm_compose_without_explicit_topology(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    run_script = (repo_root / "run.sh").read_text(encoding="utf-8")
+    bootstrap = run_script.split("# Check for KVM", 1)[0]
+    compose_example = (repo_root / "docker-compose.yml.example").read_text(
+        encoding="utf-8"
+    )
+
+    (tmp_path / "run.sh").write_text(bootstrap, encoding="utf-8")
+    (tmp_path / "docker-compose.yml.example").write_text(
+        compose_example,
+        encoding="utf-8",
+    )
+
+    subprocess.run(["bash", str(tmp_path / "run.sh")], cwd=tmp_path, check=True)
+
+    assert (tmp_path / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    ) == compose_example
 
 
 def test_generate_compose_emits_one_service_per_vm(tmp_path, monkeypatch):

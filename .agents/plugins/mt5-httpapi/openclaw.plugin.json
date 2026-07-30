@@ -1,10 +1,10 @@
 {
   "name": "@psyb0t/mt5-httpapi",
   "id": "@psyb0t/mt5-httpapi",
-  "version": "0.0.0",
+  "version": "4.11.0",
   "type": "code-plugin",
-  "summary": "Wire an OpenClaw agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP \u2014 the full REST surface (account, symbols, orders, positions, history, backtest) via a generic request tool.",
-  "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running mt5-httpapi terminal's MCP endpoint (/mcp), exposing its three tools: ping (lock-free liveness), endpoints (the full REST route catalog), and request (call any REST endpoint by method/path/query/body, in-process, through the exact same handler/auth/MT5 locking as a real HTTP call). mt5-httpapi is self-hosted \u2014 you run the server yourself and point this bridge at one terminal's base URL. Order and position mutations reached through request are real, irreversible actions on a live trading account. See https://github.com/psyb0t/mt5-httpapi.",
+  "summary": "Wire an OpenClaw agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP \u2014 typed tools for terminals, market data, orders, positions, history, and backtests.",
+  "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running mt5-httpapi MCP endpoint (/mcp). The server exposes dedicated typed tools for terminal health and control, account data, symbols, rates, ticks, technical analysis, orders, positions, history, and backtest status, plus endpoints and request fallbacks for JSON-compatible REST routes; multipart backtest submission still uses REST directly. Point the bridge at the server root for broker/account parameters across every configured terminal, or at one terminal path to pin the session. mt5-httpapi is self-hosted; order and position mutations are real actions on a live trading account. See https://github.com/psyb0t/mt5-httpapi.",
   "extensions": [
     "./bin/cli.js"
   ],

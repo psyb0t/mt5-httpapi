@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
 
 WORKDIR /app
 
@@ -18,12 +18,13 @@ RUN grep -v -i '^MetaTrader5' /tmp/requirements-api.txt > /tmp/req-test.txt && \
     pip install --no-cache-dir -r /tmp/req-test.txt pytest requests
 
 COPY mt5api ./mt5api
+COPY mcpunifier ./mcpunifier
 COPY tests ./tests
 # Tests inspect the tracked dependency manifests and the Windows installer.
 # Copy only the required scripts rather than pulling every installer asset in.
 # docker-compose.yml.j2 is here because the compose-generation test renders the
 # REAL template — a stub would assert nothing about what actually ships.
-COPY requirements-api.txt requirements-mcpunifier.txt docker-compose.yml.j2 ./
+COPY requirements-api.txt requirements-mcpunifier.txt docker-compose.yml.example docker-compose.yml.j2 run.sh ./
 COPY scripts/config_helper.py scripts/start.bat ./scripts/
 
 ENV PYTHONPATH=/app
