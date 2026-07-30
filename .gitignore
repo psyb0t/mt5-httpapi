@@ -5,6 +5,10 @@ CODEX.local.md
 .research_files
 data/*
 !data/.gitkeep
+# Terminal data tree scaffolded at repo root when mt5api runs outside the VM
+# (config.py resolves BROKERS_DIR relative to the repo). Never commit it —
+# a real terminal dir contains account artifacts.
+/terminals/
 mt5installers/*
 !mt5installers/.gitkeep
 # Host-managed backtest assets — referenced by /backtest via expert_name/set_name.
@@ -24,6 +28,7 @@ config/reboot_interval.txt
 config/requirements.txt
 .env
 docker-compose.yml
+vms.yaml
 run.log
 logs/
 __pycache__

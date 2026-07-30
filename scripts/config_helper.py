@@ -33,6 +33,7 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SHARED_DIR = os.path.dirname(_SCRIPTS_DIR)
 CONFIG_PATH = os.path.join(_SHARED_DIR, "config", "config.yaml")
 VMS_PATH = os.path.join(_SHARED_DIR, "vms.yaml")
+_VMS_EXAMPLE_PATH = os.path.join(_SHARED_DIR, "vms.yaml.example")
 COMPOSE_TEMPLATE_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml.j2")
 COMPOSE_OUTPUT_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml")
 DEFAULT_INSTANCE = "default"
@@ -52,8 +53,9 @@ def _load():
 
 
 def _load_vms():
+    path = VMS_PATH if os.path.exists(VMS_PATH) else _VMS_EXAMPLE_PATH
     try:
-        with open(VMS_PATH, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         vms = data.get("vms", [])
         if not vms:
@@ -186,8 +188,10 @@ def main():
             for p in _route_prefixes(t):
                 locs.append(
                     f"        location {p} {{\n"
+                    f"            resolver {DOCKER_EMBEDDED_DNS} valid=10s ipv6=off;\n"
+                    f"            set $vm_upstream http://{container}:{t['port']};\n"
                     f"            rewrite ^{p}(.*)$ /$1 break;\n"
-                    f"            proxy_pass http://{container}:{t['port']};\n"
+                    f"            proxy_pass $vm_upstream;\n"
                     f"            proxy_set_header Host $host;\n"
                     f"            proxy_set_header X-Forwarded-For $remote_addr;\n"
                     f"        }}"

@@ -1,0 +1,28 @@
+vms:
+  - name: fast
+    service: mt5
+    container_name: mt5
+    cpuset: "0-3"
+    ram: "8G"
+    cpu_cores: 4
+    disk_size: "64G"
+    storage: /data/mt5-vm-a/storage
+    log_dir: /data/mt5-shared/logs
+    novnc_port: 8006
+    wickworks_service: wickworks
+    mem_limit: 10G
+    memswap_limit: 12G
+
+  - name: bulk
+    service: mt5-b
+    container_name: mt5-b
+    cpuset: "4-7"
+    ram: "8G"
+    cpu_cores: 4
+    disk_size: "64G"
+    storage: /data/mt5-vm-b/storage
+    log_dir: /data/mt5-vm-b/logs
+    novnc_port: 8007
+    wickworks_service: wickworks-b
+    mem_limit: 10G
+    memswap_limit: 12G

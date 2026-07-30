@@ -4,7 +4,7 @@ This guide covers deploying **mt5-httpapi** with more than one Windows VM — sp
 
 ## How it works
 
-- **`vms.yaml`** declares each VM's resources (cpuset, RAM, CPU cores, disk size, storage path, noVNC port, wickworks sidecar name).
+- **`vms.yaml`** (copy `vms.yaml.example`) declares each VM's resources (cpuset, RAM, CPU cores, disk size, storage path, noVNC port, wickworks sidecar name).
 - **`config/config.yaml`** gains a `vm` field on each terminal entry, binding that terminal to a specific VM.
 - **`scripts/config_helper.py`** reads both files to generate nginx routes targeting the correct container (`proxy_pass http://mt5:<port>` vs `http://mt5-b:<port>`).
 - **`run.sh`** loops over all VMs for DNAT/iptables setup and auto-generates per-VM group files.
@@ -12,7 +12,7 @@ This guide covers deploying **mt5-httpapi** with more than one Windows VM — sp
 
 ## Backward compatibility
 
-- **No `vms.yaml`** → single-VM mode. All terminals route to the default `mt5` container. Everything works exactly as before.
+- **No `vms.yaml` / `vms.yaml.example`** → single-VM mode. All terminals route to the default `mt5` container. Everything works exactly as before.
 - **No `vm` field on a terminal** → defaults to `default`, routes to `mt5`.
 
 ## Prerequisites
@@ -22,7 +22,13 @@ This guide covers deploying **mt5-httpapi** with more than one Windows VM — sp
 
 ## Step-by-step
 
-### 1. Create `vms.yaml`
+### 1. Copy and edit `vms.yaml.example`
+
+Start from the example and customize it:
+
+```bash
+cp vms.yaml.example vms.yaml
+```
 
 Define one entry per VM. The `name` is how terminals reference it in `config.yaml`.
 
@@ -31,36 +37,30 @@ vms:
   - name: fast
     service: mt5
     container_name: mt5
-    cpuset: "0-19,40-59"
-    ram: "112G"
-    cpu_cores: 40
-    disk_size: "300G"
+    cpuset: "0-3"
+    ram: "8G"
+    cpu_cores: 4
+    disk_size: "64G"
     storage: /data/mt5-vm-a/storage
-    hot_tier: /mnt/mt5-hot
     log_dir: /data/mt5-shared/logs
     novnc_port: 8006
     wickworks_service: wickworks
-    mem_limit: 116G
-    memswap_limit: 120G
-    extra_binds:
-      - /mnt/ssd/terminals/darwinex/live/a:/shared/terminals/darwinex/live/a
+    mem_limit: 10G
+    memswap_limit: 12G
 
   - name: bulk
     service: mt5-b
     container_name: mt5-b
-    cpuset: "20-39,60-79"
-    ram: "112G"
-    cpu_cores: 40
-    disk_size: "150G"
+    cpuset: "4-7"
+    ram: "8G"
+    cpu_cores: 4
+    disk_size: "64G"
     storage: /data/mt5-vm-b/storage
-    hot_tier: /mnt/mt5-hot-b
     log_dir: /data/mt5-vm-b/logs
     novnc_port: 8007
     wickworks_service: wickworks-b
-    mem_limit: 116G
-    memswap_limit: 120G
-    extra_binds:
-      - /mnt/hdd/terminals/blackbull/live-prime:/shared/terminals/blackbull/live-prime
+    mem_limit: 10G
+    memswap_limit: 12G
 ```
 
 Fields:
@@ -102,7 +102,7 @@ terminals:
 
 ### 3. Generate docker-compose.yml
 
-On first run, `run.sh` detects `vms.yaml` + `docker-compose.yml.j2` and generates the compose file automatically. To regenerate:
+On first run, `run.sh` detects `vms.yaml` (or `vms.yaml.example`) + `docker-compose.yml.j2` and generates the compose file automatically. To regenerate:
 
 ```bash
 python3 scripts/config_helper.py generate_compose
@@ -123,7 +123,7 @@ The global cap `MT5_HTTPAPI_MAX_IN_FLIGHT` still applies on top. Per-VM caps are
 
 ## Generated files
 
-`run.sh` auto-generates these from `vms.yaml` + `config.yaml`:
+`run.sh` auto-generates these from `vms.yaml` (or `vms.yaml.example`) + `config.yaml`:
 
 | File | Contents |
 |---|---|
@@ -132,7 +132,7 @@ The global cap `MT5_HTTPAPI_MAX_IN_FLIGHT` still applies on top. Per-VM caps are
 
 ## Adding a third VM
 
-1. Add a new entry to `vms.yaml` with a unique `name`, `service`, and `container_name`.
+1. Add a new entry to `vms.yaml` (copy from `vms.yaml.example`) with a unique `name`, `service`, and `container_name`.
 2. Assign some terminals to it via `vm: <new-name>` in `config.yaml`.
 3. Regenerate the compose file.
 4. Set `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>` if needed.
@@ -141,6 +141,6 @@ The global cap `MT5_HTTPAPI_MAX_IN_FLIGHT` still applies on top. Per-VM caps are
 ## Troubleshooting
 
 - **Nginx 502 for a terminal**: check the generated nginx.conf at `.data/nginx/nginx.conf`. The `proxy_pass` should target the correct container name for that terminal's VM.
-- **VM not booting**: verify `vms.yaml` has correct `cpuset` (don't overlap pins) and enough host RAM for all VMs combined.
+- **VM not booting**: verify `vms.yaml` has correct `cpuset` (don't overlap pins) and enough host RAM for all VMs combined. Start from `vms.yaml.example`.
 - **Port conflicts**: each VM needs a unique `novnc_port`. Default single-VM is `8006`; add VMs on `8007`, `8008`, etc.
-- **Per-VM cap not applying**: ensure the env var name matches the VM name in `vms.yaml`, uppercased: `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>`.
+- **Per-VM cap not applying**: ensure the env var name matches the VM name in `vms.yaml`, uppercased: `MT5_HTTPAPI_MAX_IN_FLIGHT_<NAME>`. See `vms.yaml.example` for the naming convention.

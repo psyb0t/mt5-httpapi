@@ -17,14 +17,17 @@ mkdir -p "${DIR}/data/storage" "${DIR}/data/shared/scripts" "${DIR}/data/shared/
 # Bootstrap docker-compose.yml from Jinja2 template (if vms.yaml + template exist)
 # or from the example file. User owns the real docker-compose.yml after that.
 if [ ! -f "${DIR}/docker-compose.yml" ]; then
-    if [ -f "${DIR}/vms.yaml" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
-        echo "docker-compose.yml not found — generating from Jinja2 template (${DIR}/vms.yaml)"
+    if [ -f "${DIR}/vms.yaml.example" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
+        echo "docker-compose.yml not found — generating from Jinja2 template (vms.yaml.example)"
+        python3 "${DIR}/scripts/config_helper.py" generate_compose
+    elif [ -f "${DIR}/vms.yaml" ] && [ -f "${DIR}/docker-compose.yml.j2" ]; then
+        echo "docker-compose.yml not found — generating from Jinja2 template (vms.yaml)"
         python3 "${DIR}/scripts/config_helper.py" generate_compose
     elif [ -f "${DIR}/docker-compose.yml.example" ]; then
         echo "docker-compose.yml not found — seeding from docker-compose.yml.example"
         cp "${DIR}/docker-compose.yml.example" "${DIR}/docker-compose.yml"
     else
-        echo "ERROR: neither docker-compose.yml, vms.yaml+docker-compose.yml.j2, nor docker-compose.yml.example found."
+        echo "ERROR: neither vms.yaml nor vms.yaml.example + docker-compose.yml.j2, nor docker-compose.yml.example found."
         exit 1
     fi
 fi
@@ -59,8 +62,10 @@ cp "${DIR}/scripts/reboot.bat" "${DIR}/data/shared/scripts/reboot.bat"
 cp "${DIR}/scripts/acquire_lock.ps1" "${DIR}/data/shared/scripts/acquire_lock.ps1"
 cp "${DIR}/scripts/api_runner.bat" "${DIR}/data/shared/scripts/api_runner.bat"
 cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-warmup-ea.bat"
+
 cp "${DIR}/scripts/check_health.py" "${DIR}/data/shared/scripts/check_health.py"
 cp "${DIR}/scripts/config_helper.py" "${DIR}/data/shared/scripts/config_helper.py"
+
 cp "${DIR}/scripts/event-log-tailer.ps1" "${DIR}/data/shared/scripts/event-log-tailer.ps1"
 cp "${DIR}/scripts/healthcheck.sh" "${DIR}/data/shared/scripts/healthcheck.sh"
 chmod +x "${DIR}/data/shared/scripts/healthcheck.sh"
