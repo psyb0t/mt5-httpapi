@@ -11,22 +11,30 @@ try:
     import yaml
 except ImportError:
     import subprocess
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        print("ERROR: pip install pyyaml failed — run 'pip install pyyaml' manually", file=sys.stderr)
+        sys.exit(1)
     import yaml
 
 try:
     from jinja2 import Template
 except ImportError:
     import subprocess
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "--quiet", "jinja2"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", "jinja2"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        print("ERROR: pip install jinja2 failed — run 'pip install jinja2' manually", file=sys.stderr)
+        sys.exit(1)
     from jinja2 import Template
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
