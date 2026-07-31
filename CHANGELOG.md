@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.11.3] — 2026-07-31
+
+### Fixed
+
+- The pipeline referenced the shared reusable workflows by commit SHA, which pinned this repo to a revision predating the fix it was actually failing on: `publish-plugins` failed the v4.11.1 and v4.11.2 tag runs because ClawHub's own Plugin Inspector could not start (`ENOENT ... mkdir '/home/sbx_user…'`, a stack trace from their backend), and the retry-and-defer handling that survives exactly that had already shipped upstream. Both references now track `@master`, so a fix to the shared workflows applies on the next run instead of waiting for someone to hand-carry a new SHA into every repo.
+
 ## [v4.11.2] — 2026-07-31
 
 ### Fixed
