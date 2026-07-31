@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.11.2] — 2026-07-31
+
+### Fixed
+
+- Quick Start now makes the required broker/account/installer-name match explicit instead of pretending the template's placeholder terminals will start a real broker install.
+- It now shows token generation, a minimal matching terminal shape, the resulting API route, and `make status` as the readiness check after `make up` boots the VM.
+
 ## [v4.11.1] — 2026-07-30
 
 ### Changed

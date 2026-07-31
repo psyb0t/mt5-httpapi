@@ -8,6 +8,19 @@ MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with REST and 
 
 Run multiple brokers, accounts, and cloned terminal instances at the same time. Each one gets its own Python API process inside the VM, while nginx puts the whole mess behind one port at `http://localhost:8888/<broker>/<account>/...`.
 
+## Contents
+
+- [What this fucker does](#what-this-fucker-does)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Where the fuck is everything documented?](#where-the-fuck-is-everything-documented)
+- [API at a glance](#api-at-a-glance)
+- [Development](#development)
+- [Project layout](#project-layout)
+- [Recommended brokers](#recommended-brokers)
+- [License](#license)
+
 > [!WARNING]
 > This thing can trade real money. If your algo buys the top and detonates your account, that shit is on you. Start with demo accounts and test the fucker properly.
 
@@ -36,15 +49,53 @@ git clone https://github.com/psyb0t/mt5-httpapi.git
 cd mt5-httpapi
 
 cp config/config.yaml.example config/config.yaml
-# Set api_token, accounts, and terminals in config/config.yaml.
+# Generate a bearer token, then edit config/config.yaml with it, your broker
+# login, server, password, and ONE terminal you actually intend to run.
+openssl rand -hex 32
 
+# This filename is not decoration: "mybroker" MUST exactly match the
+# broker: field of the terminal you configured below.
 cp ~/Downloads/mt5setup.exe mt5installers/mt5setup-mybroker.exe
 
-# Fire up the whole mess.
+# Start the stack. This starts the VM; it does not mean MT5 is ready yet.
 make up
+
+# Wait until this passes before hitting the API.
+make status
 ```
 
-The first run downloads tiny11 and installs Windows, Python, and MT5, so give the fucker roughly ten minutes. Later boots usually take about a minute. Watch the installation through noVNC at <http://localhost:8006>; when it is alive, the API is at <http://localhost:8888>.
+Before `make up`, replace the template's sample `accounts:` and `terminals:`
+blocks — they contain placeholder FTMO and RoboForex entries and **will not
+magically start your broker**. Keep the other template settings, but the three
+names below must line up exactly, or Windows installs one terminal and the API
+tries to launch another fucking thing:
+
+```yaml
+# config/config.yaml
+accounts:
+  mybroker:                 # 1. broker key
+    main:                   # 2. account key
+      login: 12345678       # your real account login
+      server: "Broker-MT5"  # your broker's exact MT5 server name
+      password: "your-password"
+
+terminals:
+  - broker: mybroker        # 1. same broker key
+    account: main           # 2. same account key
+    port: 5001              # unique per terminal; stays inside Docker
+    utc_offset: "0"         # set this to the broker server's UTC offset
+```
+
+The installer must therefore be named `mt5installers/mt5setup-mybroker.exe`
+(`mybroker` is 3. the same broker key). Get that executable from the broker;
+this repo cannot download it for you. Remove the unused example accounts and
+terminals, or configure an installer for every one of them.
+
+The first run downloads tiny11 and installs Windows, Python, and MT5, so give
+the fucker roughly ten minutes. `make up` returning only means Docker and the
+VM booted; `make status` passing means the configured terminal API is actually
+alive. Watch the installation through noVNC at <http://localhost:8006>; the
+API lands at `http://localhost:8888/mybroker/main/` for the config above.
 
 ## Architecture
 

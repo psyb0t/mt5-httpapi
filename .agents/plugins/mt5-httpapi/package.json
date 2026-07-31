@@ -1,6 +1,6 @@
 {
   "name": "@psyb0t/mt5-httpapi",
-  "version": "4.11.1",
+  "version": "4.11.2",
   "mcpName": "io.github.psyb0t/mt5-httpapi",
   "description": "Connect an OpenClaw/MCP agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP.",
   "type": "module",
