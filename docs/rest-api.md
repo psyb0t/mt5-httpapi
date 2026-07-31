@@ -1,6 +1,6 @@
-# REST API
+# REST API — MT5 without the clicky bullshit
 
-Routing, bearer authentication, liveness, terminal control, account information, and broker-time normalization.
+One HTTP surface for routing, auth, health, terminal control, account state, and MT5's cursed broker-time timestamps.
 
 ## Contents
 
@@ -15,7 +15,7 @@ Routing, bearer authentication, liveness, terminal control, account information,
 
 ## API
 
-All terminals are served behind a single host port via nginx. Default entry point: `http://localhost:8888` (loopback-only). Each terminal lives at its own path prefix:
+nginx puts every terminal behind one loopback-only host port, `http://localhost:8888`. The path tells it which broker/account process gets the request:
 
 ```
 http://localhost:8888/<broker>/<account>/...
@@ -102,7 +102,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/m
 { "success": true }
 ```
 
-The API auto-initializes on first request. You almost never need to call these manually.
+The API initializes itself on the first real request. You almost never need to poke these endpoints by hand unless the terminal is being a dick.
 `shutdown` leaves `terminal64.exe` running; a later MT5-backed request can
 initialize the SDK connection again. `restart` kills and relaunches only the
 terminal selected by this API process and may take several minutes.
@@ -169,4 +169,3 @@ When set, the API:
 Inspect via `GET /terminal` — fields `broker_utc_offset_hours` and `broker_utc_offset_seconds` show what's in effect.
 
 If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps through unchanged (pre-1.8 behavior).
-

@@ -1,6 +1,6 @@
-# Installation and configuration
+# Installation and configuration without mystery bullshit
 
-Host requirements, resource planning, terminal/account configuration, and the files used to bootstrap the Windows VM.
+Everything that makes the Windows VM, MT5 terminals, accounts, and sidecars boot without turning the setup into an archaeological dig.
 
 ## Contents
 
@@ -41,7 +41,7 @@ Or just run MT5 on a dedicated box if you're hammering it.
 
 ### `config/config.yaml`
 
-Single source of truth — gitignored. Copy `config/config.yaml.example` and edit. Structure:
+This gitignored file controls the whole contraption. Copy `config/config.yaml.example`, edit it, and do not commit your fucking broker password.
 
 ```yaml
 # Bearer token for API auth. Empty = no auth.
@@ -118,7 +118,7 @@ Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account
 
 ### `vms.yaml` (optional — multi-VM deployments)
 
-When you need more than one Windows VM (e.g. spreading terminals across NUMA nodes, or isolating a hot-SSD tier from bulk-HDD terminals), define the VM topology in `vms.yaml`. The file is **optional** — absent = single-VM mode (backward compatible, everything routes to the `mt5` container).
+When one Windows VM can no longer carry all your terminal bullshit, define the topology in `vms.yaml`. The file is **optional**: leave it out and the normal single-VM setup keeps working.
 
 Each VM entry names its Compose service/container and defines its CPU, memory,
 disk, storage, log, noVNC, and optional Wickworks settings. Each terminal then

@@ -1,6 +1,6 @@
-# Market data API
+# Market data API — get the fucking bars
 
-Symbol discovery, contract metadata, ticks, OHLCV rates, and server-side technical analysis.
+Find symbols, inspect the contract details that brokers love making weird, pull ticks or OHLCV bars, and bolt on server-side TA in the same request.
 
 ## Contents
 
@@ -159,7 +159,7 @@ Examples:
 - `?timeframe=H1&from=2024_01_15&count=-100` — 100 candles ending at midnight UTC on 2024-01-15
 - `?timeframe=H1&from=2024_01_15_09_30_00&to=2024_01_15_16_00_00` — every H1 candle in the window
 
-Pick the mode that fits: `count` when you want exactly N bars and don't care about the end time; `to` when you have an explicit window and want everything in it. The `count` mode internally computes the range with weekend/holiday padding; the `to` mode is a direct passthrough to `copy_rates_range`.
+Use `count` when you want exactly N bars and do not care about the precise end time. Use `to` when you have a real window and want the whole damn thing. `count` adds weekend/holiday padding internally; `to` passes the range straight to `copy_rates_range`.
 
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
@@ -167,7 +167,7 @@ Symbols are auto-selected into MarketWatch on first access — backfilling rarel
 
 ### Rates with technical analysis
 
-**POST `/symbols/:symbol/rates/ta`** fetches candles exactly like `GET /symbols/:symbol/rates` (same query params: `timeframe`, `count`, `from`, `to`), then forwards them to the [wickworks](https://github.com/psyb0t/docker-wickworks) TA sidecar for indicator analysis. Returns both as siblings:
+**POST `/symbols/:symbol/rates/ta`** fetches candles exactly like `GET /symbols/:symbol/rates`, throws them at the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar, and gives you the bars and calculated TA together:
 
 ```json
 {
@@ -225,6 +225,6 @@ Examples:
 - `?from=1700000000&count=-500` — 500 ticks ending at anchor
 - `?from=2024_01_15_09_00_00&to=2024_01_15_10_00_00` — every tick in that 1-hour window
 
-Tick-density caveat: liquid pairs (EURUSD in NY hours) emit 10–100 ticks/sec. A 1-hour `from+to` window can return millions of rows. Prefer `count` mode unless you really need every tick in a window — and even then, keep the window small or paginate.
+Tick-density warning: a liquid pair can shit out 10–100 ticks/sec. A one-hour `from+to` window can become millions of rows, so prefer `count` unless you genuinely need every twitch in the window.
 
 Responses are gzip-compressed when the client sends `Accept-Encoding: gzip` — typically a 5–10× bandwidth reduction for large rate/tick fetches. `curl` honors this if you pass `--compressed`.

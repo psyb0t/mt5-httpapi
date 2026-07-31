@@ -1,6 +1,6 @@
-# Backtesting
+# Backtesting without babysitting MT5
 
-Run MetaTrader 5 Strategy Tester jobs through the HTTP API, track their lifecycle, and retrieve reports and artifacts.
+Build Strategy Tester files, launch the job, watch it run, and pull the reports back over HTTP instead of spending your life clicking around inside MT5.
 
 ## Contents
 
@@ -20,7 +20,7 @@ Run MetaTrader 5 Strategy Tester jobs through the HTTP API, track their lifecycl
 
 ## Backtest API
 
-Run MT5 Strategy Tester backtests and optimizations over the HTTP API.
+This is the whole Strategy Tester pipeline over HTTP: build the ugly MT5 files, submit them, poll the job, then grab the useful shit when it finishes.
 `POST /backtest` execution requires a terminal whose `config.yaml` entry has
 `mode: backtest`. The two stateless builders, `POST /backtest/build-ini` and
 `POST /backtest/build-set`, work in either mode because they only transform
@@ -66,7 +66,7 @@ Optimization modes do not all emit the same MT5 artifacts:
 | `2`  | genetic | Single symbol in `[Tester].Symbol` | MT5 XML spreadsheet report | `<report>.xml` |
 | `3`  | all Market Watch symbols | Symbols currently selected in Market Watch | `Tester/cache/*.opt` cache file | `<report>.symbols.xml` |
 
-Mode `3` is the odd one out. MT5 still writes a report file, but it is the
+Mode `3` is the odd bastard out. MT5 still writes a report file, but it is the
 header-only `.symbols.xml` variant and the actual pass rows live in the tester
 cache. mt5-httpapi parses that cache, recovers pass-to-symbol mappings from the
 agent logs, and exposes the discovered cache artifact in `optimizationCache`.
@@ -183,8 +183,8 @@ that orphaned job as `failed` with `API restarted before completion`.
 
 ### Asset sources
 
-The expert and set file can be sent inline (preferred for ad-hoc runs) or
-referenced by name from a host-managed pool:
+Send the expert and set file inline for one-off runs, or dump reusable ones in
+the host-managed pool:
 
 ```
 assets/
@@ -410,7 +410,7 @@ job finishes.
 
 ### `GET /backtest/{jobId}/tail`
 
-Return a live JSON diagnostic tail for queued, running, or finished jobs.
+Return the live diagnostic guts for queued, running, or finished jobs as JSON.
 `?lines=N` controls the terminal/tester journal depth and is clamped to
 `10..1000` (default `200`). The response includes `runLog`, `terminalLog`,
 `testerLog`, status/timestamps, and the selected journal filenames.

@@ -1,6 +1,6 @@
-# Operations
+# Operations — keeping the bastard alive
 
-Supported Make targets, service ports, remote-access options, project layout, concurrency controls, and log locations.
+The commands, ports, tunnels, locks, queues, and logs you need after the thing boots and eventually does something stupid.
 
 ## Contents
 
@@ -84,7 +84,7 @@ below.
 
 ## Tailscale (optional)
 
-Expose the API over your tailnet using a bare MagicDNS hostname — `http://mt5-httpapi/<broker>/<account>/...` — works with both stock Tailscale and self-hosted Headscale. Plain HTTP (no TLS) by design: bare hostnames don't have matching certs, and the wireguard layer already encrypts everything inside the tailnet.
+Shove the API through your tailnet at `http://mt5-httpapi/<broker>/<account>/...`. This works with stock Tailscale or self-hosted Headscale. It deliberately uses plain HTTP inside WireGuard because bare MagicDNS names do not have matching certs and the tunnel already encrypts the traffic.
 
 How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity — ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays out of the sidecar's inbound path. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `nginx.conf` is auto-generated from `config.yaml`'s `terminals:` list on every `make up`; the Tailscale Serve config is wired in via the `tailscale serve` CLI from inside the sidecar (it needs the live FQDN, which only the CLI knows) and persisted in tailscaled state.
 
@@ -116,7 +116,7 @@ The API token (if set in `config.yaml`) still applies — Tailscale handles netw
 
 ## Cloudflare Tunnel (optional)
 
-Expose the API publicly without opening firewall ports. cloudflared dials out to Cloudflare's edge and proxies to the always-on `nginx` sidecar — one tunnel, one hostname, every terminal reachable behind `/<broker>/<account>/`.
+If you absolutely need this shit on the public internet, cloudflared can dial out without opening firewall ports. One tunnel and hostname reach every terminal through `/<broker>/<account>/`.
 
 **Setup**:
 
@@ -211,7 +211,7 @@ data/                        Generated/volatile data (gitignored)
 
 ## Concurrency and backpressure
 
-The MT5 Python SDK is single-connection-per-process and not threadsafe — concurrent calls into `mt5.*` corrupt internal state (notably `last_error`, which several flows read implicitly). The API enforces a process-wide mutex around all SDK calls, held for the **entire** duration of a request handler so multi-call handlers (`POST /orders`, the `get_rates` retry loop, etc.) are atomic against everything else.
+The MT5 Python SDK is single-connection-per-process and not remotely fucking threadsafe. Concurrent `mt5.*` calls corrupt shared state, especially `last_error`, so the API holds one process-wide mutex for the **entire** request handler.
 
 Knock-on effects you'll observe:
 

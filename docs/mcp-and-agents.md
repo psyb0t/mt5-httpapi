@@ -1,6 +1,6 @@
-# MCP and agent integrations
+# MCP and agent integrations — let the robots trade carefully
 
-Expose the REST surface as MCP tools and install the repository's reusable agent integrations.
+The REST API also speaks MCP, so Claude Code, Codex, OpenClaw, or any other compatible robot can use typed tools instead of hallucinating curl commands.
 
 ## Contents
 
@@ -10,7 +10,7 @@ Expose the REST surface as MCP tools and install the repository's reusable agent
 
 ## MCP Interface
 
-There are two [Model Context Protocol](https://modelcontextprotocol.io) endpoints (both streamable-HTTP), and the URL you point a client at decides which one it gets:
+There are two streamable-HTTP [Model Context Protocol](https://modelcontextprotocol.io) endpoints. The URL decides whether your robot gets one terminal or the entire fucking fleet:
 
 | Point the client at | You get |
 |---|---|
@@ -19,7 +19,7 @@ There are two [Model Context Protocol](https://modelcontextprotocol.io) endpoint
 
 Both are always available; neither disables the other. See [One endpoint for every terminal](#one-endpoint-for-every-terminal) for the unified form.
 
-Every terminal mounts its own server at `/mcp`, alongside the REST API, in the same process. It exposes **dedicated, typed tools** grouped by family — each tool's name, typed params, and description are what the agent reads (no guessing at raw paths). Every tool runs the exact same handler, auth, and MT5 locking as a real HTTP request.
+Every terminal serves `/mcp` beside its REST API. The tools are dedicated and typed, so the agent gets real names, parameters, and descriptions instead of guessing raw paths like an idiot. They still hit the same handlers, auth, and MT5 lock as ordinary HTTP calls.
 
 - **Market data** — `list_symbols`, `get_symbol`, `get_tick`,
   `get_rates(symbol, timeframe, count?, from_?, to?)`,
@@ -43,7 +43,7 @@ $MT5_API_URL/mcp/
 
 ### One endpoint for every terminal
 
-A per-terminal `/mcp` is bound to that one terminal: an MCP session has a fixed
+A per-terminal `/mcp` is married to that one terminal: an MCP session has a fixed
 tool catalog, so there is no per-call slot to say which account to act on. To
 drive several terminals from one session, point the client at the server root
 instead:
@@ -88,7 +88,7 @@ For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`]
 
 ## Agent integrations
 
-The [skill](../.agents/skills/mt5-httpapi) works in any agent that reads `.agents/skills/`, and installs natively in the clients below.
+The [skill](../.agents/skills/mt5-httpapi) teaches compatible agents how to use the whole mess without YOLOing trades. Install it through whichever robot cage you use:
 
 ### Claude Code
 

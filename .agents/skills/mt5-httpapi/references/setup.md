@@ -1,4 +1,4 @@
-# mt5-httpapi setup
+# mt5-httpapi setup — boot the whole fucking contraption
 
 ## Requirements
 
@@ -7,7 +7,7 @@
 - ~20 GB disk (Windows ISO + VM storage + MT5 installs)
 - 5 GB RAM (runs mostly on swap — tiny11 + debloat idles at ~1.4 GB)
 
-## Quick Install
+## Quick install
 
 ```bash
 git clone https://github.com/psyb0t/mt5-httpapi
@@ -16,19 +16,19 @@ cp config/config.yaml.example config/config.yaml
 # Edit config.yaml with your broker credentials, api_token, terminals
 ```
 
-Drop your broker's MT5 installer in `mt5installers/`, named `mt5setup-<broker>.exe`, then:
+Dump your broker's installer in `mt5installers/` as `mt5setup-<broker>.exe`, then fire it up:
 
 ```bash
 make up
 ```
 
-First run downloads tiny11 (~4 GB), installs Windows (~10 min), then sets up Python + MT5 automatically. On first boot it debloats Windows, reboots, installs MT5 terminals, reboots again, then starts everything. After that, boots in ~1 min.
+The first run downloads tiny11, installs and debloats Windows, reboots, installs Python and every MT5 terminal, reboots again, and finally starts the pile. Give the bastard about ten minutes. Later boots are usually around a minute.
 
 ## Configuration
 
 ### `config/config.yaml`
 
-Single file for everything: bearer token, broker credentials, terminals, and optional sidecar settings (tailscale, wickworks). Copy from `config.yaml.example` and fill in.
+One file controls the whole mess: bearer token, broker credentials, terminals, and optional Tailscale/wickworks sidecars. Copy the example and fill in your shit.
 
 ```yaml
 # Bearer token for API auth. Empty string = no auth.
@@ -149,7 +149,7 @@ Inside the VM shared folder (`data/shared/logs/`):
 - `api-<broker>-<account>.log` — per-terminal API logs
 - `full.log` — combined log of everything
 
-## Public Access via Cloudflare Tunnel (optional)
+## Public access via Cloudflare Tunnel — lock this shit down
 
 > **Prerequisites — non-negotiable before exposing publicly:**
 >

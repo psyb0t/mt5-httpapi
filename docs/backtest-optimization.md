@@ -1,6 +1,6 @@
-# Backtest Optimization Guide
+# Backtest optimization without clicking the fucking GUI
 
-This guide documents how mt5-httpapi runs MetaTrader 5 Strategy Tester optimizations over HTTP, what each MT5 optimization mode actually does, and what artifacts you should expect back from the API.
+MT5 has three optimization modes, several incompatible output formats, and a habit of hiding the useful shit in cache files. This guide shows how mt5-httpapi drives that mess over HTTP and where the actual results end up.
 
 ## Contents
 
@@ -14,7 +14,7 @@ This guide documents how mt5-httpapi runs MetaTrader 5 Strategy Tester optimizat
 
 ## Requirements
 
-Optimization requests only run correctly against a terminal configured with `mode: backtest` in `config/config.yaml`.
+Optimization requests need a terminal configured with `mode: backtest` in `config/config.yaml`. Do not point this shit at a live terminal and hope for the best.
 
 Example:
 
@@ -28,11 +28,11 @@ terminals:
     symbol_suffix: ""
 ```
 
-If you submit an optimization against a `live` terminal, MT5 can silently exit without producing a usable Strategy Tester report because the portable directory is already owned by the running terminal process.
+If you submit against a `live` terminal, MT5 can exit successfully while producing fuck-all because the running terminal already owns the portable directory.
 
 ## Overview
 
-The optimization flow is always the same:
+No matter which mode you pick, the dance is the same:
 
 1. Build or author a tester INI.
 2. Provide an `.ex5` expert.
@@ -51,7 +51,7 @@ The optimization flow is always the same:
 
 ### Mode 1: Slow Complete
 
-Mode `1` enumerates the full search space for the active symbol. Use it when you need exhaustive coverage and the parameter grid is small enough to be practical.
+Mode `1` brute-forces the full search space for one symbol. Use it when the grid is small enough that exhaustive search will finish before the heat death of the universe.
 
 Typical characteristics:
 
@@ -111,7 +111,7 @@ Typical completed payload shape:
 
 ## Mode 2: Fast Genetic
 
-Mode `2` uses MT5's genetic optimizer for a single symbol. Use it when the search space is too large for a full exhaustive run and you want faster convergence on promising regions.
+Mode `2` lets MT5's genetic optimizer hunt the promising parts of a single-symbol search space. Use it when mode `1` would take forever and you can live without evaluating every combination.
 
 Typical characteristics:
 
@@ -164,11 +164,11 @@ Example completed payload shape:
 
 ## Mode 3: Market Watch Symbols
 
-Mode `3` is different from modes `1` and `2` in both scope and artifact handling.
+Mode `3` is the weird bastard. It changes both what MT5 searches and where MT5 hides the results.
 
 MT5 runs the optimization across the symbols currently selected in Market Watch instead of only the `[Tester].Symbol` value. That symbol still matters because it participates in cache naming and INI generation, but the pass rows themselves are keyed to the Market Watch symbol set.
 
-Most importantly, MT5 does not put the real optimization rows into the normal report XML for mode `3`.
+Most importantly, MT5 does **not** put the real pass rows in the normal report XML for mode `3`, because apparently that would be too convenient.
 
 What MT5 writes instead:
 
@@ -257,7 +257,7 @@ Example completed payload shape from a real replay:
 
 ## `.set` Files for Optimization
 
-Optimization only makes sense when the `.set` file contains MT5 optimization ranges.
+An optimization without ranges is just an expensive way to run the same shit repeatedly. The `.set` file needs MT5 optimization ranges.
 
 MT5 uses this wire format for optimizable fields:
 
@@ -329,7 +329,7 @@ Important fields:
 
 ## Raw Artifacts and Debugging
 
-Use these rules of thumb:
+When MT5 produces confusing garbage, start here:
 
 - For modes `1` and `2`, start with `/report` because the XML spreadsheet is the main source of optimization rows.
 - For mode `3`, start with `optimizationCache` and `optimizationResults`; `/report` exists, but it is the `.symbols.xml` header export rather than the real pass table.
@@ -338,7 +338,7 @@ Use these rules of thumb:
 
 ## End-to-End Example Script
 
-This pattern works for any optimization mode. Change the `optimization` field in the `build-ini` payload and point to the correct `.set` file.
+This script works for all three modes. Change `optimization`, point it at the right `.set`, and let the bastard run.
 
 ```bash
 export URL=http://127.0.0.1:8888/darwinex/tester

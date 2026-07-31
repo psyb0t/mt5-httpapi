@@ -1,6 +1,6 @@
-# Clients and examples
+# Clients, examples, and copy-pasteable shit
 
-Examples for REST calls, the public Go client, and technical-analysis workflows.
+Working REST calls, the typed Go client, and TA examples. Copy the bit you need and get on with your life.
 
 ## Contents
 
@@ -57,10 +57,10 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=
 
 ## Go Client
 
-A typed Go client for the live terminal, market-data, order, position, and
-history endpoints lives in [`clients/go/`](../clients/go/). Backtest endpoints are
-not currently wrapped. Errors map to typed sentinels, and structs have been
-verified against live responses.
+The typed Go client in [`clients/go/`](../clients/go/) covers the live terminal,
+market data, orders, positions, and history. Backtest endpoints are not wrapped
+yet. Errors map to sentinels you can actually check, and the structs were tested
+against real responses instead of invented from documentation fairy dust.
 
 ```bash
 go get github.com/psyb0t/mt5-httpapi/clients/go
@@ -162,11 +162,11 @@ common 503 retry case.
 
 ## Technical Analysis
 
-Two options:
+Pick your poison:
 
 **Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, swing structure, S/R levels, dozens more). Primitives only — wickworks emits raw indicator series and SMC structural facts; interpretive signals (divergences, crossover events, etc.) belong in your consumer. The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](market-data.md#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
 
-**Client-side** — grab the raw candles with `GET /rates` and crunch them yourself. There's a full working example in `examples/python/` using [pandas-ta](https://github.com/twopirllc/pandas-ta) with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
+**Client-side** — grab raw candles with `GET /rates` and crunch the shit yourself. `examples/python/` has a working [pandas-ta](https://github.com/twopirllc/pandas-ta) example with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 
 ```bash
 cd examples/python

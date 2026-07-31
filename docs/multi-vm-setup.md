@@ -1,6 +1,6 @@
-# Multi-VM Setup
+# Multi-VM setup when one Windows bastard is not enough
 
-This guide covers deploying **mt5-httpapi** with more than one Windows VM — spreading terminals across NUMA nodes, isolating hot-SSD tiers from bulk-HDD storage, or scaling past what a single VM can hold.
+One VM eventually runs out of CPU, RAM, disk, or patience. This is how you spread terminals across several Windows VMs, pin the heavy fuckers to NUMA nodes, and keep hot storage away from bulk junk.
 
 ## How it works
 
@@ -24,7 +24,7 @@ This guide covers deploying **mt5-httpapi** with more than one Windows VM — sp
 
 ### 1. Copy and edit `vms.yaml.example`
 
-Start from the example and customize it:
+Copy the example instead of writing this YAML from memory:
 
 ```bash
 cp vms.yaml.example vms.yaml
@@ -109,7 +109,7 @@ On first run, `run.sh` detects a real `vms.yaml` alongside `docker-compose.yml.j
 python3 scripts/config_helper.py generate_compose
 ```
 
-This renders one service block per VM (with its wickworks sidecar), plus the shared services (log-rotator, mcpunifier, nginx).
+This shits out one service block per VM and wickworks sidecar, plus the shared log rotator, MCP unifier, and nginx router.
 
 ## Generated files
 

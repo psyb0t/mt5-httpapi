@@ -4,28 +4,30 @@
 [![version](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/version.svg)](https://github.com/psyb0t/mt5-httpapi/releases)
 [![license](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/license.svg)](LICENSE)
 
-Run the real MetaTrader 5 terminal inside a Windows VM on Docker + QEMU/KVM and control multiple brokers and accounts through one REST or MCP endpoint.
+MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with REST and MCP APIs slapped on top. No Wine bullshit, no janky compatibility hacks — the real Windows MT5 terminal in portable mode, controllable without clicking through that fucking GUI all day.
+
+Run multiple brokers, accounts, and cloned terminal instances at the same time. Each one gets its own Python API process inside the VM, while nginx puts the whole mess behind one port at `http://localhost:8888/<broker>/<account>/...`.
 
 > [!WARNING]
-> This automates real trades. Start with demo accounts, test your strategy, and treat every endpoint that changes an order or position as production access to your money.
+> This thing can trade real money. If your algo buys the top and detonates your account, that shit is on you. Start with demo accounts and test the fucker properly.
 
-## What it ships
+## What this fucker does
 
-- A real Windows MT5 environment in portable mode — no Wine.
-- Multiple brokers, accounts, and terminal instances behind one nginx port.
-- REST endpoints for terminal state, market data, orders, positions, history, and Strategy Tester jobs.
-- Server-side technical analysis through the isolated [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar.
-- Per-terminal and unified MCP endpoints, plus Claude Code, Codex, and OpenClaw integrations.
-- Optional multi-VM placement, Tailscale access, and Cloudflare Tunnel access.
+- **Real MT5 on real Windows** — no Wine, no pretending, no compatibility-layer roulette.
+- **As many brokers, accounts, and terminal clones as your machine can stomach** — all behind one nginx port.
+- **The useful MT5 shit over HTTP** — terminal state, market data, orders, positions, history, and Strategy Tester jobs.
+- **Built-in technical analysis** — [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
+- **MCP for the robot overlords** — one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
+- **Optional multi-VM fuckery** — spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
 
 ## Requirements
 
 - Linux with KVM available at `/dev/kvm`
 - Docker with Docker Compose
 - About 20 GB of disk for the ISO, VM, and MT5 installations
-- Enough RAM for the Windows workload; the default low-memory setup relies heavily on host swap
+- Enough RAM for however hard you plan to abuse the Windows VM; the default low-memory setup leans heavily on host swap
 
-Heavy history scraping can push each terminal into multiple gigabytes of cached chart data. Read the [resource guidance](docs/installation-and-configuration.md#requirements) before sizing a busy deployment.
+MT5 hoards loaded chart history like a greedy little bastard and does not give the memory back. Deep history scraping can blow each terminal up to several gigabytes, so read the [actual sizing details](docs/installation-and-configuration.md#requirements) before hammering it.
 
 ## Quick start
 
@@ -37,10 +39,12 @@ cp config/config.yaml.example config/config.yaml
 # Set api_token, accounts, and terminals in config/config.yaml.
 
 cp ~/Downloads/mt5setup.exe mt5installers/mt5setup-mybroker.exe
+
+# Fire up the whole mess.
 make up
 ```
 
-The first run downloads tiny11, installs Windows, Python, and MT5, and takes roughly ten minutes. Later boots normally take about a minute. Open noVNC at <http://localhost:8006> to watch setup, then use the API at <http://localhost:8888>.
+The first run downloads tiny11 and installs Windows, Python, and MT5, so give the fucker roughly ten minutes. Later boots usually take about a minute. Watch the installation through noVNC at <http://localhost:8006>; when it is alive, the API is at <http://localhost:8888>.
 
 ## Architecture
 
@@ -56,33 +60,35 @@ client
   wickworks sidecar for requested technical-analysis calculations
 ```
 
-`config/config.yaml` is the source of truth for accounts, terminals, ports, authentication, broker UTC offsets, and process mode. A real `vms.yaml` opts into multi-VM generation; without it, the project uses the single-VM compose example.
+`config/config.yaml` controls the accounts, terminals, ports, auth, broker UTC offsets, and whether a terminal is for live trading or backtests. Add a real `vms.yaml` when one Windows VM is not enough; leave it out and the normal single-VM setup keeps working.
 
-## Documentation
+## Where the fuck is everything documented?
 
-| Area | Guide |
+The old README became a massive wall of API shit, so the details now live in separate files where you can actually find them:
+
+| You need | Read this |
 | --- | --- |
-| Host sizing, installation, accounts, terminals, and configuration | [Installation and configuration](docs/installation-and-configuration.md) |
-| Routing, authentication, health, terminal, account, and broker time | [REST API overview](docs/rest-api.md) |
-| Symbols, ticks, rates, and server-side technical analysis | [Market data API](docs/market-data.md) |
-| Positions, orders, broker results, and history | [Trading and history API](docs/trading-and-history.md) |
-| Strategy Tester jobs and artifacts | [Backtesting](docs/backtesting.md) |
-| Large parameter sweeps and result handling | [Backtest optimization](docs/backtest-optimization.md) |
-| Unified/per-terminal MCP and agent installation | [MCP and agent integrations](docs/mcp-and-agents.md) |
-| curl examples, Go client, and technical analysis | [Clients and examples](docs/clients-and-examples.md) |
-| Make targets, ports, remote access, concurrency, and logs | [Operations](docs/operations.md) |
-| NUMA placement and multiple Windows VMs | [Multi-VM setup](docs/multi-vm-setup.md) |
+| Get Windows + MT5 running, size the host, and configure accounts | [Installation and configuration](docs/installation-and-configuration.md) |
+| Figure out routing, auth, health, terminal state, accounts, and broker time | [REST API overview](docs/rest-api.md) |
+| Pull symbols, ticks, bars, and server-side TA | [Market data API](docs/market-data.md) |
+| Place/close shit and inspect orders, positions, and history | [Trading and history API](docs/trading-and-history.md) |
+| Run Strategy Tester jobs and get the artifacts back | [Backtesting](docs/backtesting.md) |
+| Throw giant parameter sweeps at the Strategy Tester | [Backtest optimization](docs/backtest-optimization.md) |
+| Wire the MCP endpoints into your agent of choice | [MCP and agent integrations](docs/mcp-and-agents.md) |
+| Copy working curl and Go examples instead of guessing | [Clients and examples](docs/clients-and-examples.md) |
+| Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](docs/operations.md) |
+| Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](docs/multi-vm-setup.md) |
 
 ## API at a glance
 
-Each configured terminal is available at:
+Every configured terminal gets one of these routes:
 
 ```text
 http://localhost:8888/<broker>/<account>/...
 http://localhost:8888/<broker>/<account>/<instance>/...
 ```
 
-Set `api_token` in `config/config.yaml`, then send it as a bearer token:
+Set `api_token` in `config/config.yaml`, shove it into a bearer header, and start poking the thing:
 
 ```bash
 export MT5_API_TOKEN="your-token-here"
@@ -94,31 +100,31 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" \
   "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&count=100"
 ```
 
-See the [REST API reference](docs/rest-api.md) for the complete request and response model.
+That is just the hello-world shit. The [REST API docs](docs/rest-api.md) link to every endpoint and response shape.
 
 ## Development
 
 ```bash
-make status            # inspect a running deployment
-make test              # unit, integration, and Go race tests
-make lint              # validate PowerShell and shell scripts
-make format            # apply shell formatting
-make logs              # follow service logs
-make down              # stop this project's stack
+make status            # see whether the whole contraption is alive
+make test              # run all the tests, including integration + Go race
+make lint              # lint the PowerShell and shell shit
+make format            # format the shell scripts
+make logs              # watch the logs scream
+make down              # stop only this project's stack
 ```
 
-Run `make help` for every supported target. The [operations guide](docs/operations.md#make-targets) explains the test split and live status probe.
+Run `make help` when you forget the rest. The [operations guide](docs/operations.md#make-targets) explains what the targets actually do.
 
 ## Project layout
 
 ```text
-config/          deployment configuration and templates
-mt5api/          per-terminal Python REST and MCP server
-mcpunifier/      unified MCP server for every configured terminal
-clients/go/      typed public Go client
-scripts/         Windows bootstrap plus host-side helpers
-tests/           unit, contract, and container-backed integration tests
-docs/            feature guides and operational runbooks
+config/          config and templates for the whole contraption
+mt5api/          Python REST + MCP server running beside each terminal
+mcpunifier/      one MCP endpoint that fronts every configured terminal
+clients/go/      typed Go client so you do not have to hand-roll requests
+scripts/         Windows bootstrap and host-side glue
+tests/           unit, contract, integration, and race-test shit
+docs/            all the details that no longer clog up this README
 ```
 
 ## Recommended brokers

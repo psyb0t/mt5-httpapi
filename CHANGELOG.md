@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.11.1] — 2026-07-30
+
+### Changed
+
+- The root README, every focused guide, the published agent skill, its setup reference, and the OpenClaw plugin README now sound like the rest of the psyb0t shit instead of corporate-ass generated copy.
+- Commands, API contracts, safety rules, examples, and cross-document links are unchanged; this release changes the voice, not the runtime behavior.
+
 ## [v4.11.0] — 2026-07-30
 
 ### Added

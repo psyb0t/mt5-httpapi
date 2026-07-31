@@ -19,11 +19,11 @@ user-invocable: true
 
 # mt5-httpapi
 
-REST client for an MT5 HTTP bridge that the user has already deployed. This skill talks to a running mt5-httpapi server — it does not stand one up, does not provision broker credentials, and does not place trades on its own initiative.
+This skill drives an mt5-httpapi server the user already runs. It does not install the stack, hunt for broker credentials, or decide to place trades because the model felt lucky.
 
-## Security & safety
+## Security and safety — real money, no cowboy shit
 
-This API can move real money on a user-owned brokerage account. Treat trade-mutating endpoints as irreversible side effects.
+This API moves real money on a real brokerage account. Mutating endpoints are irreversible, so precision beats enthusiasm every fucking time.
 
 **Real-money mutations.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo — a filled market order or a closed position can only be offset by a separate trade at a new price. Call one only for the exact action the user requested, after confirming ticket, symbol, side, volume, price, SL, TP, and account. Never enumerate and then bulk-close/cancel on inferred intent. `order_send` is a single call with no client-side auto-retry; after an error or timeout, report it and get fresh confirmation before resubmitting.
 
@@ -42,7 +42,7 @@ This API can move real money on a user-owned brokerage account. Treat trade-muta
 
 Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`) do not require per-action confirmation.
 
-**One-stop technical analysis.** Skip the client-side TA stack entirely. `POST /symbols/<symbol>/rates/ta` with an indicator spec → get OHLC bars + analyzed indicator series back in a single call. RSI, MACD, Bollinger, ADX, ATR, VWAP, Ichimoku, Order Blocks, Fair Value Gaps, BOS/CHoCH, swing structure, S/R levels, liquidity, session anchors, dozens more — all computed server-side by the [wickworks](https://github.com/psyb0t/docker-wickworks) sidecar that ships with this stack. Primitives only — wickworks returns raw indicator series and structural facts (e.g. "order block formed at this bar", "price closed past this swing"), never interpretive signals like divergences or crossover events. Build those in the consumer. See the [Technical Analysis](#technical-analysis) section.
+**One-stop technical analysis.** Skip the local pandas circus. `POST /symbols/<symbol>/rates/ta` returns OHLC bars and the indicators you asked for in one call. [wickworks](https://github.com/psyb0t/docker-wickworks) does the math server-side and returns primitives, not magical buy/sell bullshit. Build interpretations in the consumer. See [Technical Analysis](#technical-analysis).
 
 For installation and setup, see [references/setup.md](references/setup.md).
 
@@ -71,7 +71,7 @@ Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Conn
 
 A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts and each process mode (`live` or `backtest`); this does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once — the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
 
-## How It Works
+## How the fucker works
 
 GET for reading, POST for creating, PUT for modifying, DELETE for closing/canceling. All bodies are JSON.
 
@@ -82,7 +82,7 @@ HTTP status and content type because framework-level failures can differ:
 {"error": "description of what went wrong"}
 ```
 
-## Pre-Trade Checks (DO NOT SKIP)
+## Pre-trade checks — do not skip this shit
 
 Before placing any trade:
 
@@ -424,10 +424,11 @@ latest terminal and Strategy Tester journal lines; `lines` defaults to `200`
 and is clamped to `10..1000`. The MCP `get_backtest` tool exposes the same data
 with `part: "tail"`.
 
-### Real Backtest Runbook For Agents
+### Real backtest runbook — finish the fucking job
 
-When the user asks for a real backtest run, do not stop at a built INI or a
-`202 Accepted` submit response. The task is only complete after one of these is
+When the user asks for a real backtest, do not declare victory after building an
+INI or getting `202 Accepted`. That only means the job entered the building. The
+task is complete after one of these is
 true:
 
 - the job reaches `completed`, the report/log are downloaded, and the requested

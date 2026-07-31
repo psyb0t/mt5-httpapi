@@ -1,9 +1,9 @@
-# Trading and history API
+# Trading and history API — the real-money shit
 
-Read and change positions and orders, inspect broker results, and retrieve order/deal history.
+Inspect positions and pending orders, place or change trades, decode broker results, and pull the order/deal history afterward.
 
 > [!WARNING]
-> Order and position mutations are live, irreversible trading actions. Confirm the selected terminal, symbol, side, volume, and price controls before sending them.
+> These endpoints move real fucking money. Confirm the terminal, account, symbol, side, volume, price, SL, and TP before sending anything. There is no undo button after the broker fills it.
 
 ## Contents
 
@@ -157,7 +157,7 @@ All fields optional.
 
 ## Trade Result
 
-What comes back from POST/PUT/DELETE on orders and positions:
+After you send, modify, cancel, or close something, MT5 throws this back:
 
 ```json
 {
@@ -244,4 +244,3 @@ What comes back from POST/PUT/DELETE on orders and positions:
 ```
 
 `type`: 0 = buy, 1 = sell. `entry`: 0 = opening, 1 = closing. `profit` is 0 for entries, actual realized P&L for exits.
-
