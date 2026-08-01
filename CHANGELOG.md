@@ -6,6 +6,17 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.11.4] — 2026-08-01
+
+### Changed
+
+- CI/infrastructure only. No code in this repo changed — the entire diff since v4.11.3 is under `.github/workflows/`.
+- The pipeline was split: building and publishing stay in `pipeline.yml`, and everything that leaves the host now lives in its own file beside it.
+- The repo is mirrored to Codeberg as well as GitLab.
+- The repo is archived to the Wayback Machine, Software Heritage and archive.org.
+- Issues opened on either mirror are copied back to GitHub every six hours, and closed here when the original closes.
+- Pull requests are switched off on both mirrors. The mirrors are force-pushed from GitHub, so anything merged on them would be destroyed by the next sync. Issues and forking stay enabled.
+
 ## [v4.11.3] — 2026-07-31
 
 ### Fixed
