@@ -142,16 +142,42 @@ def test_absent_vms_file_keeps_every_terminal_on_the_default_container(
     assert "mt5-b" not in content
 
 
-def test_live_terminal_ini_declares_no_startup_expert(tmp_path, monkeypatch):
-    """The generated INI decides what a terminal does on launch, so a `[StartUp]`
-    section auto-attaches an expert to every live terminal — a fleet-wide
-    behaviour change in a file nothing else asserts on. Adding that feature means
-    editing this test deliberately, not inheriting it from an unrelated commit.
+def test_live_terminal_ini_startup_expert_with_chartctl(tmp_path, monkeypatch):
+    """Chart Deployments is enabled by default, so a live terminal's INI carries
+    a [StartUp] section that auto-attaches MT5ChartLoader. The loader's
+    GlobalVariable mutex makes repeated re-attaches idempotent.
     """
     helper = _load_config_helper_module()
     config_path = _write_config(
         tmp_path, [{"broker": "acme", "account": "main", "port": 5001}]
     )
+    outpath = tmp_path / "terminal.ini"
+    monkeypatch.setattr(helper, "CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["config_helper.py", "write_ini", "acme", "main", str(outpath), "default", "live"],
+    )
+
+    helper.main()
+
+    content = outpath.read_text(encoding="utf-8")
+    assert "[StartUp]" in content
+    assert "Expert=Advisors\\MT5ChartLoader" in content
+
+
+def test_live_terminal_ini_declares_no_startup_when_chartctl_disabled(tmp_path, monkeypatch):
+    """With chartctl explicitly disabled, a live terminal's INI has no [StartUp]
+    section — no unexpected expert auto-attachment.
+    """
+    helper = _load_config_helper_module()
+    config_path = _write_config(
+        tmp_path,
+        [{"broker": "acme", "account": "main", "port": 5001}],
+    )
+    config_obj = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_obj["chartctl"] = {"enabled": False}
+    config_path.write_text(yaml.safe_dump(config_obj), encoding="utf-8")
+
     outpath = tmp_path / "terminal.ini"
     monkeypatch.setattr(helper, "CONFIG_PATH", str(config_path))
     monkeypatch.setattr(

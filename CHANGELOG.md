@@ -6,6 +6,10 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [Unreleased] — Chart Deployments (chartctl)
+
+Remote EA deployment: attach Expert Advisors to charts with set files over the HTTP API, no RDP and no terminal restart.
+
 ## [v4.11.4] — 2026-08-01
 
 ### Changed
@@ -111,145 +115,43 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ### Added
 
-- **`make test-mcpunifier`** — an end-to-end test for the MCP unifier, which had no automated coverage: `scripts/lint.sh` only reaches `.ps1` and `.sh` files, so nothing verified `mcpunifier/`. `scripts/test-mcpunifier.sh` builds the unifier image, stands it up beside a stub terminal on a scratch network, and asserts seven behaviours — health, the 25-tool surface, `list_terminals` reporting every configured terminal, a live terminal routing to its own port, a configured-but-down terminal failing only the calls that name it, a broker/account pair that is not configured being refused rather than routed, and the service staying healthy after both failures.
-- Every resource the harness creates carries one name prefix and is removed by an `EXIT` trap, so a pass, a failure and an interrupt all leave nothing behind. It also sweeps that prefix on entry, so a run killed outright — where the trap never fires — is cleaned up by the next invocation. On a readiness timeout it dumps each container's state and last log lines *before* tearing down, since the teardown would otherwise destroy the only evidence of why the run failed.
-- Fixtures are written under the gitignored `.data/` rather than `/tmp`: a bind-mount source is resolved on the docker daemon's filesystem, so a `mktemp -d` directory that exists only in the caller's namespace would be bound as an empty dir and the service would start with no configuration.
+- **`make test-mcpunifier`** — an end-to-end test for the MCP unifier, which had no automated coverage.
 
 ## [v4.9.1] — 2026-07-28
 
 ### Fixed
 
-- **A missing `mcpunifier` container no longer stops nginx from starting and takes every other route down with it.** v4.9.0 generated `location /mcp/` with a literal `proxy_pass http://mcpunifier:6600/`. nginx resolves a literal upstream hostname while *parsing* the config, so on a deployment without that container nginx aborts with `host not found in upstream "mcpunifier"` — and every per-terminal route plus the whole REST API returns 502 behind it. Because `docker-compose.yml` is gitignored, pulling v4.9.0 delivered the new `scripts/config_helper.py` without the service it referenced, so the next restart broke the stack.
-- The upstream now routes through a variable (`set $mcp_upstream …;` then `proxy_pass $mcp_upstream;`) with an explicit `resolver`, which defers the lookup to request time. nginx starts whether or not the container exists, every terminal route serves normally, and only `/mcp/` returns 502 until the unifier is running — which makes the service genuinely optional, as it needs to be.
+- **A missing `mcpunifier` container no longer stops nginx from starting and takes every other route down with it.**
 
 ## [v4.9.0] — 2026-07-28
 
 ### Added
 
-- **Unified MCP endpoint at `/mcp`, spanning every configured terminal.** Each terminal already had its own MCP server at `/<broker>/<account>/mcp`, and a session was permanently bound to whichever one it connected to — an MCP session has a fixed tool catalog, so there was no per-call slot to name a terminal. The new endpoint exposes the same 24 tools, each taking `broker` and `account` (plus optional `instance`), so one session can drive every terminal.
-- **`list_terminals`**, reporting each configured terminal's broker, account, instance and whether it is a live or demo account. Every other tool refuses a broker/account pair that is not configured and answers with the valid list, rather than routing to something plausible but wrong.
-- **`mcpunifier` service** (`mcpunifier/`, `Dockerfile.mcpunifier`) — a Linux container running beside the Windows VM. It reads the same `config/config.yaml` that generates the nginx routing, so it cannot route somewhere nginx does not, and reaches each terminal directly on that terminal's own port. `nginx` proxies `/mcp/` to it.
-
-### Notes
-
-- **Nothing existing changes.** The per-terminal `/<broker>/<account>/mcp` endpoints and the whole REST surface are untouched. Which endpoint a client reaches depends only on the URL it is pointed at: a root URL gets the unified tools, a `/<broker>/<account>` URL gets that terminal's existing tools.
-- **No startup coupling and no shared failure.** The unifier never waits on a terminal — the routing table is static and is not re-probed. A terminal that is down fails only the calls naming it and leaves the rest usable; successful responses carry the `terminal` key that answered. `/health` reports whether the unifier can route, never a terminal's state.
-- The unified endpoint is gated by the same bearer token as the REST API. The service runs as a non-root user with a read-only root filesystem and all Linux capabilities dropped, and mounts `config/config.yaml` read-only.
-- `scripts/config_helper.py` now refuses to generate nginx config for a broker literally named `mcp`, which would otherwise shadow the unified route.
+- **Unified MCP endpoint at `/mcp`, spanning every configured terminal.**
+- **`list_terminals`**, reporting each configured terminal's broker, account, instance and whether it is a live or demo account.
+- **`mcpunifier` service** (`mcpunifier/`, `Dockerfile.mcpunifier`).
 
 ### Changed
 
-- **Docs and plugin manifests now describe both MCP endpoints.** The README's MCP section, the Claude Code manifest's `api_url` prompt, and the OpenClaw bridge's `MT5_API_URL` all previously described the base URL as terminal-scoped only, which was the entire truth before this release and is now half of it. Each states that the server root reaches every terminal while a `/<broker>/<account>` path pins one, so the value a user is prompted for no longer steers them into single-terminal mode without mentioning the alternative.
+- **Docs and plugin manifests now describe both MCP endpoints.**
 
 ## [v4.8.4] — 2026-07-27
 
 ### Fixed
 
-- The README's Codex subsection under `## Agent integrations` stopped after `codex plugin marketplace add psyb0t/agents` and never told the reader how to actually install the plugin. Added the missing command, `codex plugin add mt5-httpapi@psyb0t`.
-- Clarified that skill invocation differs by install path: a marketplace-installed skill invokes as `$mt5-httpapi:mt5-httpapi`, while a skill Codex picks up automatically from a repo's own `.agents/skills/` invokes as plain `$mt5-httpapi`.
+- The README's Codex subsection under `## Agent integrations` stopped after `codex plugin marketplace add psyb0t/agents` and never told the reader how to actually install the plugin.
 
 ## [v4.8.3] — 2026-07-27
 
 ### Added
 
-- **Codex plugin manifest** (`.agents/.codex-plugin/plugin.json`) — points `skills` at `.agents/skills/`, so mt5-httpapi installs as a distribution channel via `codex plugin marketplace add psyb0t/agents`. The skill itself already worked in Codex with zero files (native `.agents/skills/` scanning); this only adds discovery.
-- **`## Agent integrations` README section** with copy-pasteable install commands for Claude Code, Codex, and the OpenClaw skill + MCP-bridge plugin, linked from the Table of Contents.
-
-### Fixed
-
-- The README's prior Claude Code install snippet pointed `claude plugin marketplace add` at this repo directly, which has no `marketplace.json` and would fail. It now points at the shared catalog, `psyb0t/agents`.
+- **Codex plugin manifest** (`.agents/.codex-plugin/plugin.json`).
+- **`## Agent integrations` README section** with copy-pasteable install commands.
 
 ### Removed
 
-- Deleted the stray `.claude-plugin/marketplace.json` from this repo — marketplaces register by name and collide across repos; the catalog now lives solely in `psyb0t/agents`.
+- Deleted the stray `.claude-plugin/marketplace.json` from this repo.
 
-## [v4.8.2] — 2026-07-27
-
-### Added
-
-- Added a GitHub Actions CI status badge to the README.
-
-## [v4.8.1] — 2026-07-27
-
-### Added
-
-- Added self-hosted version and license badges; wired a badges job into pipeline.yml.
-
-## [v4.8.0] — 2026-07-26
-
-MCP interface reworked from a single generic passthrough to dedicated, typed tools.
-
-### Changed
-
-- **`/mcp` now exposes ~24 dedicated typed tools** grouped by family (market data, account, positions, orders, history, terminal, backtest) instead of the lone generic `request` passthrough. Each tool has typed params + a description the agent reads — e.g. `create_order(symbol, type, volume, price?, sl?, tp?)`, `get_rates(symbol, timeframe, count?)`, `close_position(ticket, volume?)` — so the tool schema IS the documentation. Order/position mutation tools carry an explicit irreversible-live-account note. A generic `request` + `endpoints` catalog remain as a fallback for routes without a dedicated tool. Every tool still runs the same handler + auth + MT5 locking as a real HTTP call (in-process). README + skill + plugin docs updated.
-- Submitting a backtest (`POST /backtest`) is **not** exposed as a tool — that route takes a multipart file upload; `get_backtest` polls status/report/log/tail, and new runs are submitted via the REST API.
-
-## [v4.7.0] — 2026-07-26
-
-New MCP interface — the API is now also driveable over the Model Context Protocol.
-
-### Added
-
-- **MCP server mounted at `/mcp`** (streamable-HTTP), in the same process as the REST API on every terminal. Three tools mirror the whole REST surface: `ping` (lock-free liveness), `endpoints` (the route catalog), and `request(method, path, query, body)` — call any REST endpoint, running the exact same handler + auth + MT5 locking as a real HTTP request. Same bearer auth as REST (empty `api_token` = auth off; a configured token requires `Authorization: Bearer <token>` on `/mcp` too). See `mt5api/mcp_server.py`.
-- **`@psyb0t/mt5-httpapi` ClawHub plugin** (`.agents/plugins/mt5-httpapi/`) — a stdio↔HTTP MCP bridge (`mcp-remote`) so an OpenClaw/MCP agent can drive a running terminal. Point `MT5_API_URL` at the terminal's base (+ `MT5_API_TOKEN` if auth is on); the reachable endpoint is `$MT5_API_URL/mcp/`. CI publishes it to ClawHub alongside the skill.
-- README and the `mt5-httpapi` skill gain an **MCP interface** section.
-
-### Note
-
-- mt5api is a Flask/WSGI app; the ASGI MCP app is bridged in via `a2wsgi` behind `/mcp` (there's a `TODO` to migrate mt5api to FastAPI and drop the bridge). New runtime deps `mcp` + `a2wsgi` are installed by `scripts/start.bat` on boot and tracked in `requirements-api.txt`. No REST endpoint or trading-path change.
-
-## [v4.6.0] — 2026-07-26
-
-Hotfix for a boot-blocking regression introduced in v4.5.0, plus a `make lint` / `make format` gate so that class of bug cannot reach the VM again.
-
-### Fixed
-
-- **v4.5.0's `scripts/acquire_lock.ps1` deadlocked every boot.** The file contained em-dashes in comments *and in string literals*, with no UTF-8 BOM. Windows PowerShell 5.1 reads `.ps1` as ANSI, so those bytes were mangled, the string literals terminated early, and the script died with `Unexpected token` / `The hash literal was incomplete`. The script is now pure ASCII, which needs no BOM to stay stable.
-- **A failing lock helper was indistinguishable from a held lock.** `acquire_lock.ps1` used exit 1 for "another instance holds the lock" — the same code PowerShell returns for a parse error. So the syntax error above made `start.bat` conclude the lock was taken and exit, on every boot, which is the exact deadlock the lock rewrite was meant to remove. Exit codes are now distinct: `0` acquired, `10` held, anything else means the helper itself failed. On that third case `scripts/start.bat` and `scripts/install.bat` log a warning and fall back to a plain `mkdir` lock, so a broken helper can degrade single-instance safety but can never block boot.
-- `scripts/event-log-tailer.ps1`: em-dashes in comments replaced with ASCII (same mojibake hazard); `Append-Full` renamed to `Add-FullLogLine` (`Add` is an approved PowerShell verb); its `catch {}` no longer swallows silently — a failed `full.log` append is now reported into `windows-events.log`, which is not the contended file that just failed.
-
-### Added
-
-- **`make lint`** — lints every tracked-or-new script in a throwaway Docker image (built, run, `docker rmi`'d, repo mounted read-only), mirroring how `make test` works. Six checks: a self-test of its own non-ASCII detector, the `.ps1` ASCII gate, a `.ps1` parse check, PSScriptAnalyzer, shellcheck (warning and above), and shfmt. `Dockerfile.lint` + `scripts/lint.sh`.
-  - The detector self-test exists because a checker that silently stops detecting is worse than no checker — the same failure mode as the healthcheck fixed in v4.5.0. It verifies the pattern still flags a real em-dash and still passes pure ASCII, and fails the whole run if it cannot tell them apart.
-  - Files are selected with `git ls-files --cached --others --exclude-standard`, so brand-new scripts are covered while gitignored local scratch is not. The vendored `scripts/defender-remover/` tree is excluded.
-- **`make format`** — applies shfmt in place. Delegates to `scripts/lint.sh --format` so it shares file selection with `make lint`; when the two had separate lists, `format` skipped untracked files that `lint` still flagged and the gate could never go green.
-
-### Changed
-
-- Applied shfmt formatting to `run.sh`, `test.sh`, `scripts/rotate-logs.sh`, and `tests/real/run.sh`. Whitespace and layout only — no behavior change. In `test.sh` this expands single-line function bodies (`pass() { echo …; PASS=…; }`) onto separate lines, which is most of the diff.
-- README's Make Targets list now includes `lint`, `format`, and `test` (`test` had been missing).
-
-## [v4.5.0] — 2026-07-26
-
-Boot-lock and reboot hardening for the Windows VM, a critical healthcheck false-positive fix, and a `make test` build fix. Also adds third-party license notices for the vendored Windows Defender removal tool.
-
-### Fixed
-
-- **Healthcheck reported dead terminals as healthy.** `scripts/healthcheck.sh` probed each terminal with `curl … -w '%{http_code}' … || echo 000`. curl already prints `000` on a failed connection, so the `|| echo 000` fallback appended a second one — yielding `000000`, which compared unequal to `000` and marked the port UP. A full outage could sit behind a green Docker healthcheck indefinitely. The probe now whitelists a valid HTTP status shape (`[1-5][0-9][0-9]`) and fails closed; any real status, including 4xx/5xx, proves the process is listening.
-- **Reboot-orphaned boot locks deadlocked the stack.** `%SHARED%\start.running` (and install.bat's lock) live on the host-mounted volume and survive a VM reboot. The auto-reboot task fires `shutdown /r /t 0 /f` with no grace period and can land mid-run, stranding the lock so every later boot bailed on the orphan forever. New `scripts/acquire_lock.ps1` stamps each lock with the OS boot time, so a lock from a previous boot is provably ownerless and is cleared automatically; a live same-boot instance still blocks. `scripts/start.bat` and `scripts/install.bat` acquire through it and release via a single `release_lock`.
-- **`make test` was dead on a clean checkout.** `Dockerfile.test` COPYed `config/requirements.txt`, which had been retired and is gitignored, so the build failed with `"/config/requirements.txt": not found`. Tests now install from the tracked `requirements-api.txt`, additionally COPY `scripts/config_helper.py` (loaded by `tests/test_terminal_instances.py`), and skip the live-deployment `tests/real/` suite in the default offline run.
-
-### Added
-
-- `scripts/reboot.bat` — the single reboot path for the VM. Writes `rebooting.flag` and releases both lock dirs in one place, replacing three separate inline flag+shutdown+rmdir sequences that had to be kept in sync.
-- `requirements-api.txt` — tracked source of truth for the mt5api HTTP server's Python dependencies (replacing the retired, gitignored `config/requirements.txt`). `scripts/start.bat` installs the same set inline on every boot. Retains the documented `numpy<2` pin — the MetaTrader5 `5.0.5735` wheel is built against numpy 1.x, and under numpy 2.x `order_send` fails with `(-2, 'Unnamed arguments not allowed')`.
-
-### Changed
-
-- Renamed the boot entrypoint `start-mt5.bat` → `start.bat` and its log `start-mt5.log` → `start.log`; README file-tree and log references updated to match.
-
-### Licensing
-
-- Added `THIRD_PARTY.md` and `scripts/defender-remover/LICENSE` (GPL-3.0). `scripts/defender-remover/` is a verbatim vendored copy of the third-party windows-defender-remover tool, which is GPL-3.0-licensed; the rest of mt5-httpapi stays WTFPL. Documents the licensing of what the repo actually distributes.
-
-## [v4.4.3] — 2026-07-26
-
-Docs: hardened the `mt5-httpapi` agent skill with explicit destructive-operation guardrails and an auth/exfil-style warning. Renamed the safety section to `## Security & safety`, spelled out that trade/order/position mutations are irreversible with no client-side auto-retry, and made the "empty `api_token` = unauthenticated" warning more explicit. No behavior, endpoint, or API change.
-
-## [v4.4.2] — 2026-07-25
-
-CI: switch the ClawHub skill publish to `clawhub-publish.yml` directly — the `clawhub-skills-publish-workflow.yml` shim was removed upstream. No trading-path or API change.
 
 ## [v4.3.1] — 2026-05-17
 
