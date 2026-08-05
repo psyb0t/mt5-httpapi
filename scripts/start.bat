@@ -200,6 +200,32 @@ if "!REBOOT_INTERVAL!"=="0" (
     )
 )
 
+:: ── Compile chartctl loader EA (zero-touch bootstrap) ────────────
+:: Compiles MT5ChartLoader in every broker base and propagates the .ex5
+:: into existing terminal instances, so the [StartUp] Expert= line in
+:: mt5start.ini can auto-attach it at launch. Skipped when chartctl is
+:: disabled globally in config.yaml. Non-fatal: a compile failure only
+:: means chart deployments stay unavailable until fixed.
+:: Tempfile read, NOT for /f ('command') — with both python.exe and the
+:: script path quoted, cmd's quote-stripping mangles the subshell command
+:: and it silently outputs nothing (same failure the api_token block
+:: documents; also why install.bat's ports lookup falls back to 6542).
+set "CHARTCTL_ON="
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" chartctl_enabled > "%SHARED%\mt5_cc.tmp" 2>nul
+for /f "usebackq delims=" %%C in ("%SHARED%\mt5_cc.tmp") do set "CHARTCTL_ON=%%C"
+del "%SHARED%\mt5_cc.tmp" 2>nul
+if "!CHARTCTL_ON!"=="1" (
+    call :log "%START_LOG%" "Compiling chartctl loader EA (MT5ChartLoader)..."
+    call "%SCRIPTS%\compile-chartctl-loader.bat" >> "%START_LOG%" 2>&1
+    if !errorlevel! neq 0 (
+        call :log "%START_LOG%" "WARN: chartctl loader compile failed -- chart deployments unavailable. See logs\compile-chartctl-loader.log"
+    ) else (
+        call :log "%START_LOG%" "chartctl loader compiled and propagated."
+    )
+) else (
+    call :log "%START_LOG%" "chartctl disabled in config.yaml -- skipping loader compile."
+)
+
 :: ── Launch MT5 terminals ─────────────────────────────────────────
 call :log "%START_LOG%" "Launching MT5 terminals..."
 set TERM_COUNT=0
@@ -292,7 +318,7 @@ if not exist "!LT_DIR!\terminal64.exe" (
 del "!LT_DIR!\Config\settings.ini" 2>nul
 del "!LT_DIR!\Config\common.ini" 2>nul
 
-call :write_ini "!LT_DIR!" "!LT_BROKER!" "!LT_ACCOUNT!"
+call :write_ini "!LT_DIR!" "!LT_BROKER!" "!LT_ACCOUNT!" "!LT_INSTANCE!" "!LT_MODE!"
 
 rem Save journal log size before launch so we only check NEW content
 for /f "delims=" %%D in ('python -c "from datetime import date;print(date.today().strftime('%%Y%%m%%d'))"') do set "LT_LOGDATE=%%D"
@@ -355,8 +381,12 @@ exit /b 0
 set "WI_DIR=%~1"
 set "WI_BROKER=%~2"
 set "WI_ACCOUNT=%~3"
+set "WI_INSTANCE=%~4"
+set "WI_MODE=%~5"
+if "!WI_INSTANCE!"=="" set "WI_INSTANCE=default"
+if "!WI_MODE!"=="" set "WI_MODE=live"
 set "WI_CFG=!WI_DIR!\mt5start.ini"
-"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" write_ini "!WI_BROKER!" "!WI_ACCOUNT!" "!WI_CFG!" >> "%START_LOG%" 2>&1
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" write_ini "!WI_BROKER!" "!WI_ACCOUNT!" "!WI_CFG!" "!WI_INSTANCE!" "!WI_MODE!" >> "%START_LOG%" 2>&1
 if errorlevel 1 (
     call :log "%START_LOG%" "WARNING: Could not write ini for !WI_BROKER!/!WI_ACCOUNT!, using defaults"
     echo [Common]> "!WI_CFG!"

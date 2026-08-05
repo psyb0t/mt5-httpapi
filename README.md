@@ -32,6 +32,7 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 - **Built-in technical analysis** — [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
 - **MCP for the robot overlords** — one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
 - **Optional multi-VM fuckery** — spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
+- **Chart Deployments** for remote EA deployment: stage `.ex5` + `.set` files, declare a deployment (symbol + timeframe), and a resident loader EA inside the terminal reconciles charts automatically — no RDP or manual attach needed.
 
 ## Requirements
 
@@ -129,6 +130,7 @@ The old README became a massive wall of API shit, so the details now live in sep
 | Copy working curl and Go examples instead of guessing | [Clients and examples](docs/clients-and-examples.md) |
 | Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](docs/operations.md) |
 | Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](docs/multi-vm-setup.md) |
+| Deploy EAs to charts remotely over HTTP | [Chart Deployments (chartctl)](docs/chart-control-protocol.md) |
 
 ## API at a glance
 
@@ -152,6 +154,23 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" \
 ```
 
 That is just the hello-world shit. The [REST API docs](docs/rest-api.md) link to every endpoint and response shape.
+
+**Chart Deployments** endpoints (live-mode terminals only; gated by `chartctl.enabled`):
+
+```bash
+# Stage an expert and set file, then deploy
+curl -H "Authorization: Bearer $MT5_API_TOKEN" -F "expert=@MyEA.ex5" "$MT5_API_URL/experts"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" -F "set=@params.set"  "$MT5_API_URL/sets"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" -X POST "$MT5_API_URL/deployments" \
+  -H "Content-Type: application/json" \
+  -d '{"expert":"MyEA.ex5","set":"params.set","symbol":"EURUSD","timeframe":"M15"}'
+
+# Verify — status flips to "running" once the loader confirms attach
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/deployments"
+curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/loader"
+```
+
+Full protocol contract at [`docs/chart-control-protocol.md`](docs/chart-control-protocol.md).
 
 ## Development
 
