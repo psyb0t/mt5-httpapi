@@ -1,8 +1,9 @@
-"""Unit tests for mt5api.backtest.jobs sweep + summary parser."""
+"""Unit tests for mt5api.backtest.jobs sweep + retention + summary parser."""
 from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 
@@ -50,9 +51,74 @@ def test_sweep_handles_corrupt_files(tmp_jobs_dir):
     assert jobs.sweep_orphans() == 1
 
 
+def test_sweep_skips_stale_files(tmp_jobs_dir):
+    _write(tmp_jobs_dir, "fresh", "running")
+    _write(tmp_jobs_dir, "stale", "running")
+    old = time.time() - jobs.SWEEP_LOOKBACK_SECONDS - 3600
+    os.utime(tmp_jobs_dir / "stale.json", (old, old))
+    assert jobs.sweep_orphans() == 1
+    assert json.loads((tmp_jobs_dir / "fresh.json").read_text())["status"] == "failed"
+    assert json.loads((tmp_jobs_dir / "stale.json").read_text())["status"] == "running"
+
+
+def test_sweep_honors_custom_lookback(tmp_jobs_dir):
+    _write(tmp_jobs_dir, "oldish", "running")
+    old = time.time() - 7200
+    os.utime(tmp_jobs_dir / "oldish.json", (old, old))
+    assert jobs.sweep_orphans(lookback_seconds=3600) == 0
+    assert jobs.sweep_orphans(lookback_seconds=10800) == 1
+
+
 def test_sweep_no_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(jobs, "BACKTEST_JOB_DIR", str(tmp_path / "missing"))
     assert jobs.sweep_orphans() == 0
+
+
+def test_prune_removes_old_terminal_jobs_and_staging(tmp_jobs_dir, monkeypatch):
+    monkeypatch.setattr(jobs, "PRUNE_MIN_ENTRIES", 1)
+    _write(tmp_jobs_dir, "olddone", "completed")
+    _write(tmp_jobs_dir, "oldfail", "failed")
+    _write(tmp_jobs_dir, "newdone", "completed")
+    _write(tmp_jobs_dir, "activenow", "running")
+    (tmp_jobs_dir / "olddone").mkdir()
+    (tmp_jobs_dir / "newdone").mkdir()
+    old = time.time() - 10 * 24 * 3600
+    for name in ("olddone.json", "oldfail.json"):
+        os.utime(tmp_jobs_dir / name, (old, old))
+    assert jobs.prune_old_jobs(max_age_seconds=24 * 3600) == 2
+    assert not (tmp_jobs_dir / "olddone.json").exists()
+    assert not (tmp_jobs_dir / "olddone").exists()
+    assert not (tmp_jobs_dir / "oldfail.json").exists()
+    assert (tmp_jobs_dir / "newdone.json").exists()
+    assert (tmp_jobs_dir / "newdone").exists()
+    assert (tmp_jobs_dir / "activenow.json").exists()
+
+
+def test_prune_keeps_active_jobs_even_when_old(tmp_jobs_dir, monkeypatch):
+    monkeypatch.setattr(jobs, "PRUNE_MIN_ENTRIES", 1)
+    _write(tmp_jobs_dir, "stalequeued", "queued")
+    old = time.time() - 10 * 24 * 3600
+    os.utime(tmp_jobs_dir / "stalequeued.json", (old, old))
+    assert jobs.prune_old_jobs(max_age_seconds=24 * 3600) == 0
+    assert (tmp_jobs_dir / "stalequeued.json").exists()
+
+
+def test_prune_skips_small_dir(tmp_jobs_dir):
+    _write(tmp_jobs_dir, "olddone", "completed")
+    old = time.time() - 10 * 24 * 3600
+    os.utime(tmp_jobs_dir / "olddone.json", (old, old))
+    assert jobs.prune_old_jobs() == 0
+    assert (tmp_jobs_dir / "olddone.json").exists()
+
+
+def test_prune_honors_marker_interval(tmp_jobs_dir, monkeypatch):
+    monkeypatch.setattr(jobs, "PRUNE_MIN_ENTRIES", 1)
+    _write(tmp_jobs_dir, "olddone", "completed")
+    old = time.time() - 10 * 24 * 3600
+    os.utime(tmp_jobs_dir / "olddone.json", (old, old))
+    (tmp_jobs_dir / jobs.PRUNE_MARKER_NAME).write_text(str(int(time.time())))
+    assert jobs.prune_old_jobs() == 0
+    assert (tmp_jobs_dir / "olddone.json").exists()
 
 
 def test_summary_parser_returns_all_keys_for_empty_html():

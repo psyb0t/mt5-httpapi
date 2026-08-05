@@ -179,7 +179,12 @@ Only one tester runs at a time per API process (serialized by an internal lock);
 additional submissions queue.
 
 If the API restarts while a job is queued or running, startup recovery marks
-that orphaned job as `failed` with `API restarted before completion`.
+that orphaned job as `failed` with `API restarted before completion`. Recovery
+runs in a background thread so a large job history can never delay the API from
+serving, and only inspects jobs touched within the last `BACKTEST_SWEEP_LOOKBACK`
+(default `24h`). Completed/failed job state and staging dirs are pruned once
+older than `BACKTEST_JOB_RETENTION` (default `30d`), so job status/report/log
+URLs for pruned jobs return 404 once past that window.
 
 ### Asset sources
 

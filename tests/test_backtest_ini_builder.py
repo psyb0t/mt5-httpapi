@@ -10,7 +10,9 @@ from mt5api.backtest import ini_builder
 
 
 def _parse(text):
-    parser = configparser.ConfigParser()
+    # RawConfigParser to match how the builder writes and how MT5 reads: values
+    # are literals, so a '%' in one must not be treated as an interpolation.
+    parser = configparser.RawConfigParser()
     parser.optionxform = str
     parser.read_string(text)
     return parser
@@ -202,3 +204,22 @@ def test_set_must_end_with_set():
 def test_negative_last_days_rejected():
     with pytest.raises(ValueError, match="positive"):
         ini_builder.build_ini({"symbol": "X", "timeframe": "M15", "expert": "EA.ex5", "lastDays": -1})
+
+
+# --- INI values are literals, not interpolation templates ---------------------
+
+
+def test_percent_in_report_name_is_literal_text():
+    """A '%' is ordinary text in an MT5 INI value, and report names come
+    straight from the caller. configparser's default interpolation treats it as
+    a template escape and refuses the assignment, failing INI generation with
+    what surfaces as a 400 validation error."""
+    text = ini_builder.build_ini(_base(reportName="drawdown 5% run"))
+
+    assert _parse(text)["Tester"]["Report"] == "Reports\\drawdown 5% run.htm"
+
+
+def test_percent_in_symbol_is_literal_text():
+    text = ini_builder.build_ini(_base(symbol="EUR%USD"))
+
+    assert _parse(text)["Tester"]["Symbol"] == "EUR%USD"

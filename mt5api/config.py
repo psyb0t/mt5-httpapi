@@ -67,6 +67,7 @@ def _parse_args():
 
 _DURATION_RE = re.compile(
     r"^\s*(?P<sign>[+-])?\s*"
+    r"(?:(?P<d>\d+(?:\.\d+)?)\s*d)?\s*"
     r"(?:(?P<h>\d+(?:\.\d+)?)\s*h)?\s*"
     r"(?:(?P<m>\d+(?:\.\d+)?)\s*m)?\s*"
     r"(?:(?P<s>\d+(?:\.\d+)?)\s*s)?\s*$",
@@ -75,7 +76,7 @@ _DURATION_RE = re.compile(
 
 
 def parse_duration_to_seconds(value):
-    """Parse '3h', '3h30m', '-2h', '90m', '0' into integer seconds.
+    """Parse '3d', '3h', '3h30m', '-2h', '90m', '0' into integer seconds.
 
     Bare numbers (e.g. '3' or '3.5' or 3) are interpreted as HOURS for
     convenience — most brokers run on whole-hour offsets.
@@ -93,15 +94,16 @@ def parse_duration_to_seconds(value):
     except ValueError:
         pass
     m = _DURATION_RE.match(s)
-    if not m or not (m.group("h") or m.group("m") or m.group("s")):
+    if not m or not (m.group("d") or m.group("h") or m.group("m") or m.group("s")):
         raise ValueError(
             f"Invalid duration: {value!r}. "
-            "Use '3h', '3h30m', '-2h', '90m', or a bare number (hours)."
+            "Use '3d', '3h', '3h30m', '-2h', '90m', or a bare number (hours)."
         )
+    d = float(m.group("d") or 0)
     h = float(m.group("h") or 0)
     minutes = float(m.group("m") or 0)
     secs = float(m.group("s") or 0)
-    total = h * 3600 + minutes * 60 + secs
+    total = d * 86400 + h * 3600 + minutes * 60 + secs
     if m.group("sign") == "-":
         total = -total
     return int(round(total))
@@ -207,6 +209,22 @@ BACKTEST_TIMEOUT_RAW = (
 )
 BACKTEST_TIMEOUT = BACKTEST_TIMEOUT_RAW
 BACKTEST_TIMEOUT_SECONDS = parse_duration_to_seconds(BACKTEST_TIMEOUT)
+
+# Startup backtest-cleanup windows. sweep_orphans() only inspects state files
+# touched within the lookback: a live job rewrites its file on every state
+# transition and a run is bounded by its timeout, so anything older than the
+# window is dead history and needs no sweep. prune_old_jobs() retires terminal
+# (completed/failed) jobs older than the retention window so the shared
+# backtest-jobs dir — every backtest API on a VM points at it — cannot grow
+# without bound and make every boot's directory scan slower.
+_SWEEP_LOOKBACK_ENV = os.environ.get("BACKTEST_SWEEP_LOOKBACK")
+BACKTEST_SWEEP_LOOKBACK_SECONDS = parse_duration_to_seconds(
+    _SWEEP_LOOKBACK_ENV if _SWEEP_LOOKBACK_ENV not in (None, "") else "24h"
+)
+_JOB_RETENTION_ENV = os.environ.get("BACKTEST_JOB_RETENTION")
+BACKTEST_JOB_RETENTION_SECONDS = parse_duration_to_seconds(
+    _JOB_RETENTION_ENV if _JOB_RETENTION_ENV not in (None, "") else "30d"
+)
 _MODE_RAW = (_args.mode or _terminal_config.get("mode") or os.environ.get("MT5_MODE") or "live")
 MODE = str(_MODE_RAW).strip().lower() or "live"
 if MODE not in ("live", "backtest"):

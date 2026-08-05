@@ -126,6 +126,27 @@ def _background_init():
         time.sleep(RETRY_INTERVAL)
 
 
+def _run_backtest_startup_cleanup():
+    """Sweep orphaned in-flight jobs and retire old completed/failed jobs.
+
+    Runs in a background daemon thread so a large job history can never delay
+    the API from accepting connections. Every backtest API on a VM shares the
+    same backtest-jobs directory (the fast VM holds tens of thousands of files),
+    so scanning it synchronously at boot added minutes of outage. Best-effort
+    and idempotent: it is safe for every backtest API to run it in parallel
+    against the shared directory.
+    """
+    try:
+        swept = backtest_jobs.sweep_orphans()
+        if swept:
+            log.warning("Backtest sweep marked %d orphaned job(s) as failed.", swept)
+        pruned = backtest_jobs.prune_old_jobs()
+        if pruned:
+            log.info("Backtest retention retired %d old job(s).", pruned)
+    except Exception:
+        log.exception("Backtest startup cleanup failed.")
+
+
 def _handle_signal(sig, _frame):
     log.critical("Received signal %d — exiting.", sig)
     sys.exit(sig)
@@ -170,11 +191,13 @@ def main():
 
         start_monitor()
 
-    swept = backtest_jobs.sweep_orphans()
-    if swept:
-        log.warning("Backtest sweep marked %d orphaned job(s) as failed.", swept)
-
     _start_mcp_session_manager()
+
+    threading.Thread(
+        target=_run_backtest_startup_cleanup,
+        name="backtest-cleanup",
+        daemon=True,
+    ).start()
 
     log.info(
         "HTTP API listening on %s:%d (waitress, threads=%d, conn_limit=%d, max_queue_depth=%d)",

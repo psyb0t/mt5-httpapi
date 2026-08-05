@@ -112,3 +112,42 @@ def test_config_helper_nginx_conf_includes_instance_routes(duplicate_terminals_c
     assert "location /darwinex/live/b/" in content
     assert f"location /ictrading/demo/{helper.DEFAULT_INSTANCE}/" in content
     assert "location /ictrading/demo/" in content
+
+
+def test_check_health_probes_only_this_vms_terminals():
+    """The per-VM healthcheck must apply the same group filter as the launcher.
+
+    Probing every port in config.yaml means each VM reports the other VM's
+    terminals DOWN and the container is permanently unhealthy, which makes a
+    real failure indistinguishable from the standing noise. On 2026-08-04 the
+    fast VM had a 25,272-long failing streak listing only bulk-VM ports while
+    all 12 of its own terminals were serving.
+    """
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "check_health.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "_vm_group_filter" in src, "check_health.py no longer applies the per-VM filter"
+    assert "_in_group" in src
+    # The filter has to be applied to the list that gets probed, not merely
+    # imported and forgotten.
+    assert "_in_group(t, allowed)" in src
+
+
+def test_container_healthcheck_probes_only_this_vms_ports():
+    """The container healthcheck must scope its probes to this VM's terminals.
+
+    Docker surfaces this script's verdict as the container health status. Taking
+    every port in config.yaml means each VM probes the other VM's terminals and
+    reports unhealthy forever, so the status carries no signal and a real outage
+    looks exactly like the standing noise.
+    """
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "healthcheck.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "VM_GROUP=/shared/config/vm-group.txt" in src
+    assert 'groupfile="$VM_GROUP"' in src, "the group file is no longer passed to the filter"
+    # No group file must mean no filter, not zero ports — otherwise every
+    # single-VM install fails its healthcheck.
+    assert 'if (!have_group) { print port; return }' in src

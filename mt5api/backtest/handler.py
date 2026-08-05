@@ -24,6 +24,8 @@ import threading
 import time
 import uuid
 
+import psutil
+
 from flask import Response, abort, jsonify, request, send_file
 
 from mt5api.backtest import cache_parser, ini_builder, jobs, optimization_parser, set_builder
@@ -44,6 +46,15 @@ from mt5api.config import (
 from mt5api.logger import log
 
 RUN_LOCK = threading.Lock()
+
+# How long to keep looking for a replacement terminal process after the one we
+# launched exits 0 without a report. Covers the ~7s LiveUpdate gap with margin.
+RELAUNCH_GRACE_SECONDS = 30
+# Only a process that died fast enough to be an update restart is worth waiting
+# on; a genuine failure after a real run must still fail immediately.
+RELAUNCH_MAX_EXIT_SECONDS = 60
+# The report is written just before the terminal exits.
+REPORT_SETTLE_SECONDS = 2
 DIAGNOSTIC_TAIL_CHARS = 4000
 DEFAULT_TOP_PASSES = 50
 MAX_TOP_PASSES = 500
@@ -120,7 +131,11 @@ def _read_submission(upload, asset_name, asset_subdir, field, *, required, requi
 
 
 def _parse_ini(text):
-    parser = configparser.ConfigParser()
+    # RawConfigParser, not ConfigParser: MT5 INI values are literals and a bare
+    # '%' is ordinary text in them (EA comments, percentage inputs). Interpolation
+    # rejects those outright — ConfigParser raises InterpolationSyntaxError on
+    # "Risk 2% per trade" — which fails the submission before the test ever runs.
+    parser = configparser.RawConfigParser()
     parser.optionxform = str
     parser.read_string(text)
     if "Tester" not in parser:
@@ -263,6 +278,86 @@ def _tail_terminal_log(lines=20):
     if not tail_lines:
         return ""
     return "\n".join(tail_lines[-lines:])
+
+
+def _terminal_process_alive():
+    """True while a terminal64.exe belonging to THIS terminal directory runs.
+
+    Matched by directory rather than by the PID we spawned on purpose: the
+    point of this check is to see the process MT5 started to *replace* the one
+    we launched, which we never get a handle on.
+    """
+    for proc in psutil.process_iter(["name", "exe"]):
+        try:
+            if (proc.info.get("name") or "").lower() != "terminal64.exe":
+                continue
+            exe = proc.info.get("exe") or ""
+            if exe and TERMINAL_DIR.lower() in exe.lower():
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return False
+
+
+def _report_candidates(job):
+    """Every path that counts as this run's output.
+
+    Mode-3 optimizations write `<base>.symbols.xml` instead of the .htm the INI
+    asks for, so a mode-3 run has two acceptable outputs and checking only the
+    .htm would make a finished job look empty.
+    """
+    paths = [job["reportPath"]]
+    if job.get("optimizationType") == 3:
+        paths.append(f"{os.path.splitext(job['reportPath'])[0]}.symbols.xml")
+    return paths
+
+
+def _any_report_exists(paths):
+    return any(os.path.exists(path) for path in paths)
+
+
+def _await_self_relaunch(job_id, report_paths, deadline):
+    """Wait out an MT5 self-relaunch, returning True if the report then lands.
+
+    When a LiveUpdate is pending, MT5 applies it by having the process we
+    launched spawn the updater and exit 0 within a few seconds, then relaunches
+    itself to run the actual test. `subprocess.run` returns for that first,
+    short-lived process, so the report legitimately does not exist yet and the
+    job used to be failed as "Report not generated" while the backtest it was
+    reporting on went on to finish perfectly well minutes later.
+
+    Seen across the build 6090 rollout: terminal exits at T+3s, the replacement
+    starts at T+9s, and the test finishes at T+5m34s having written a valid
+    report. One sacrificial job per terminal, on every MT5 build push.
+    """
+    # The updater runs from AppData, not from TERMINAL_DIR, so there is a gap
+    # with no matching process at all between the exit and the relaunch —
+    # ~7s when observed. Poll the whole grace window before concluding that
+    # nothing is coming back.
+    grace_end = min(time.time() + RELAUNCH_GRACE_SECONDS, deadline)
+    while time.time() < grace_end:
+        if _terminal_process_alive():
+            break
+        if _any_report_exists(report_paths):
+            return True
+        time.sleep(1)
+    else:
+        return _any_report_exists(report_paths)
+
+    log.info(
+        "backtest terminal relaunched itself (pending LiveUpdate) broker=%s "
+        "account=%s job=%s — waiting for the replacement run",
+        BROKER, ACCOUNT, job_id,
+    )
+    while time.time() < deadline:
+        if not _terminal_process_alive():
+            break
+        time.sleep(2)
+
+    # MT5 writes the report and then exits, so the file can still be settling
+    # in the moment the process disappears.
+    time.sleep(REPORT_SETTLE_SECONDS)
+    return _any_report_exists(report_paths)
 
 
 def _parse_top_passes(raw_value):
@@ -506,6 +601,14 @@ def _execute_job(job_id):
             finishedAt=jobs.now_iso(),
         )
         return
+
+    # A clean exit with no report, fast enough to be an update restart rather
+    # than a real run, means MT5 probably relaunched itself — wait for the
+    # replacement rather than failing a backtest that is still going to finish.
+    report_paths = _report_candidates(job)
+    if duration < RELAUNCH_MAX_EXIT_SECONDS and not _any_report_exists(report_paths):
+        _await_self_relaunch(job_id, report_paths, start_time + job["timeoutSeconds"])
+        duration = round(time.time() - start_time, 3)
 
     if not os.path.exists(job["reportPath"]) and job.get("optimizationType") == 3:
         # MT5 writes mode-3 optimization output to <base>.symbols.xml.

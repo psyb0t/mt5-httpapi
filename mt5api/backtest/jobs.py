@@ -3,17 +3,26 @@
 Each job has one JSON file at logs/backtest-jobs/<jobId>.json. The in-memory
 dict (BACKTEST_JOBS) is a write-through cache guarded by JOB_LOCK. State files
 survive API restarts; sweep_orphans() marks any in-flight job as failed at
-startup so callers do not poll forever.
+startup so callers do not poll forever, and prune_old_jobs() retires terminal
+(completed/failed) jobs older than the retention window so the directory cannot
+grow without bound. Every backtest API on a VM shares this directory, so both
+passes only inspect recently-touched files and are safe to run concurrently.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import shutil
 import threading
+import time
 from datetime import datetime, timezone
 
-from mt5api.config import BACKTEST_JOB_DIR
+from mt5api.config import (
+    BACKTEST_JOB_DIR,
+    BACKTEST_JOB_RETENTION_SECONDS,
+    BACKTEST_SWEEP_LOOKBACK_SECONDS,
+)
 from mt5api.logger import log
 
 JOB_LOCK = threading.Lock()
@@ -22,6 +31,18 @@ BACKTEST_JOBS: dict = {}
 POLL_AFTER_SECONDS = 60
 TERMINAL_STATUSES = frozenset({"completed", "failed"})
 ACTIVE_STATUSES = frozenset({"queued", "running"})
+
+# Only state files touched within the last SWEEP_LOOKBACK_SECONDS can be an
+# active run that needs sweeping; anything older was long since terminal.
+SWEEP_LOOKBACK_SECONDS = BACKTEST_SWEEP_LOOKBACK_SECONDS
+# prune_old_jobs() retires terminal jobs older than JOB_RETENTION_SECONDS.
+JOB_RETENTION_SECONDS = BACKTEST_JOB_RETENTION_SECONDS
+# Don't bother listing a directory unless it has grown this big.
+PRUNE_MIN_ENTRIES = 1000
+# All APIs on a VM share the job dir, so gate pruning with a marker file: only
+# the first process to pass the gate scans the whole directory per interval.
+PRUNE_INTERVAL_SECONDS = 24 * 3600
+PRUNE_MARKER_NAME = ".job-prune-marker"
 
 
 def now_iso() -> str:
@@ -33,12 +54,20 @@ def _state_path(job_id: str) -> str:
     return os.path.join(BACKTEST_JOB_DIR, f"{job_id}.json")
 
 
-def _write(job: dict) -> None:
-    path = _state_path(job["jobId"])
+def _atomic_write(path: str, job: dict) -> None:
+    """Write job state atomically (tmp + rename).
+
+    A concurrent reader — including a sweep running in another API process that
+    shares this directory — must never observe a truncated file.
+    """
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(job, handle, indent=2, sort_keys=True)
     os.replace(tmp, path)
+
+
+def _write(job: dict) -> None:
+    _atomic_write(_state_path(job["jobId"]), job)
 
 
 def store_job(job: dict) -> None:
@@ -120,23 +149,44 @@ def public_payload(job: dict) -> dict:
     return payload
 
 
-def sweep_orphans() -> int:
+def sweep_orphans(lookback_seconds: int | None = None) -> int:
     """Mark any queued/running jobs on disk as failed.
 
-    Called at API startup. Returns the number of jobs swept.
+    Called at API startup. Only state files touched within the last
+    ``lookback_seconds`` are considered: a live job rewrites its file on every
+    state transition and a run is bounded by its timeout, so a file untouched
+    longer than the window cannot be an active run. Sweeping the whole history
+    parsed tens of thousands of files on every boot — and because every backtest
+    API on a VM shares the same job directory, that full scan repeated once per
+    process. Returns the number of jobs swept.
     """
+    if lookback_seconds is None:
+        lookback_seconds = SWEEP_LOOKBACK_SECONDS
     if not os.path.isdir(BACKTEST_JOB_DIR):
         return 0
+    cutoff = time.time() - lookback_seconds
+    recent = []
+    try:
+        with os.scandir(BACKTEST_JOB_DIR) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                try:
+                    if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                        continue
+                except OSError:
+                    continue
+                recent.append(entry.name)
+    except OSError:
+        return 0
     swept = 0
-    for entry in sorted(os.listdir(BACKTEST_JOB_DIR)):
-        if not entry.endswith(".json"):
-            continue
-        path = os.path.join(BACKTEST_JOB_DIR, entry)
+    for name in sorted(recent):
+        path = os.path.join(BACKTEST_JOB_DIR, name)
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 job = json.load(handle)
         except (OSError, json.JSONDecodeError) as exc:
-            log.warning("backtest sweep: cannot read %s: %s", entry, exc)
+            log.warning("backtest sweep: cannot read %s: %s", name, exc)
             continue
         if job.get("status") not in ACTIVE_STATUSES:
             continue
@@ -144,14 +194,92 @@ def sweep_orphans() -> int:
         job["error"] = "API restarted before completion"
         job["finishedAt"] = now_iso()
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(job, handle, indent=2, sort_keys=True)
+            _atomic_write(path, job)
         except OSError as exc:
-            log.warning("backtest sweep: cannot write %s: %s", entry, exc)
+            log.warning("backtest sweep: cannot write %s: %s", name, exc)
             continue
         swept += 1
-        log.info("backtest sweep: marked %s as failed (was %s)", job.get("jobId"), entry)
+        log.info("backtest sweep: marked %s as failed (was %s)", job.get("jobId"), name)
     return swept
+
+
+def _remove_job_state(json_path: str, job_id: str | None) -> None:
+    targets = [json_path]
+    if job_id:
+        targets.append(os.path.join(BACKTEST_JOB_DIR, job_id))
+    for target in targets:
+        try:
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+        except OSError as exc:
+            log.warning("backtest prune: cannot remove %s: %s", target, exc)
+
+
+def _touch(path: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(str(int(time.time())))
+    except OSError as exc:
+        log.warning("backtest prune: cannot write marker %s: %s", path, exc)
+
+
+def prune_old_jobs(max_age_seconds: int | None = None) -> int:
+    """Retire terminal (completed/failed) jobs older than the retention window.
+
+    Removes the state file and the per-job staging dir (staged .ex5/.set,
+    normalized.ini, tester.ini, run.log). Nothing reads old staging: the report
+    artifact lives in the terminal's own Reports dir, /backtest/<id>/log reads
+    run.log only as a best-effort fallback, and the backend archives both report
+    and log into its own data dir right after each job. Bounds the shared job
+    dir so startup stays cheap as jobs accumulate. Returns the number pruned.
+    """
+    if max_age_seconds is None:
+        max_age_seconds = JOB_RETENTION_SECONDS
+    if not os.path.isdir(BACKTEST_JOB_DIR):
+        return 0
+    marker = os.path.join(BACKTEST_JOB_DIR, PRUNE_MARKER_NAME)
+    try:
+        if time.time() - os.path.getmtime(marker) < PRUNE_INTERVAL_SECONDS:
+            return 0
+    except OSError:
+        pass
+    try:
+        with os.scandir(BACKTEST_JOB_DIR) as entries:
+            listed = list(entries)
+    except OSError:
+        return 0
+    if len(listed) < PRUNE_MIN_ENTRIES:
+        return 0
+    cutoff = time.time() - max_age_seconds
+    pruned = 0
+    for entry in listed:
+        if entry.name == PRUNE_MARKER_NAME or not entry.name.endswith(".json"):
+            continue
+        try:
+            if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        try:
+            with open(entry.path, "r", encoding="utf-8") as handle:
+                job = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("backtest prune: cannot read %s: %s", entry.name, exc)
+            continue
+        if job.get("status") in ACTIVE_STATUSES:
+            continue
+        _remove_job_state(entry.path, job.get("jobId"))
+        pruned += 1
+    _touch(marker)
+    if pruned:
+        log.info(
+            "backtest prune: retired %d terminal job(s) older than %ds",
+            pruned,
+            max_age_seconds,
+        )
+    return pruned
 
 
 # ── Report summary parser ───────────────────────────────────────────
