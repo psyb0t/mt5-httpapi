@@ -11,7 +11,7 @@ Strategy Tester silently rejects [Tester] Login under UTF-8.
 from __future__ import annotations
 
 import io
-from configparser import ConfigParser
+from configparser import RawConfigParser
 from datetime import date, datetime, timedelta, timezone
 
 # MT5 Strategy Tester modelling modes.
@@ -217,7 +217,12 @@ def build_ini(params: dict) -> str:
         raise ValueError("forwardMode must be 0..4")
     visual = int(bool(params.get("visual", 0)))
 
-    parser = ConfigParser()
+    # RawConfigParser, not ConfigParser: the values below are MT5 INI literals
+    # and a bare '%' is ordinary text in them — symbol, currency, report name
+    # and the uploaded filenames all reach here unfiltered. Interpolation
+    # rejects those on assignment ("invalid interpolation syntax"), surfacing
+    # as a 400 that looks like a validation error. Mirrors handler._parse_ini.
+    parser = RawConfigParser()
     parser.optionxform = str  # preserve key casing — MT5 is case-sensitive.
 
     parser["Common"] = {

@@ -25,7 +25,7 @@ COPY tests ./tests
 # docker-compose.yml.j2 is here because the compose-generation test renders the
 # REAL template — a stub would assert nothing about what actually ships.
 COPY requirements-api.txt requirements-mcpunifier.txt docker-compose.yml.example docker-compose.yml.j2 run.sh ./
-COPY scripts/config_helper.py scripts/start.bat ./scripts/
+COPY scripts/config_helper.py scripts/start.bat scripts/check_health.py scripts/healthcheck.sh ./scripts/
 
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1

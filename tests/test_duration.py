@@ -26,6 +26,12 @@ from mt5api.config import parse_duration_to_seconds
     ("1h2m3s", 3723),
     ("-2h", -7200),
     ("-1h30m", -5400),
+    # Day-suffixed forms (retention windows)
+    ("1d", 86400),
+    ("2d", 172800),
+    ("1d12h", 129600),
+    ("-3d", -259200),
+    ("0d", 0),
     # Whitespace tolerated
     ("  3h  ", 10800),
 ])
