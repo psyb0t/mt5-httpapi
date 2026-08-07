@@ -44,6 +44,14 @@ PRUNE_MIN_ENTRIES = 1000
 PRUNE_INTERVAL_SECONDS = 24 * 3600
 PRUNE_MARKER_NAME = ".job-prune-marker"
 
+# _remove_job_state does an unbounded shutil.rmtree keyed on jobId read back
+# from a state file inside BACKTEST_JOB_DIR — a directory every backtest API
+# process on the VM writes to. That delete must not trust the writer to be
+# well-behaved: a corrupted/malicious jobId (e.g. "../../etc") must never turn
+# into a path-traversal rmtree target. Every legitimate jobId is
+# uuid.uuid4().hex — 32 lowercase hex chars (see handler.py).
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
@@ -205,8 +213,10 @@ def sweep_orphans(lookback_seconds: int | None = None) -> int:
 
 def _remove_job_state(json_path: str, job_id: str | None) -> None:
     targets = [json_path]
-    if job_id:
+    if job_id and _JOB_ID_RE.fullmatch(job_id):
         targets.append(os.path.join(BACKTEST_JOB_DIR, job_id))
+    elif job_id:
+        log.warning("backtest prune: refusing to remove staging for suspicious jobId %r", job_id)
     for target in targets:
         try:
             if os.path.isdir(target) and not os.path.islink(target):

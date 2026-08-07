@@ -15,7 +15,7 @@ WORKDIR /app
 # collection time, so it must be present even when those tests don't execute.
 COPY requirements-api.txt /tmp/requirements-api.txt
 RUN grep -v -i '^MetaTrader5' /tmp/requirements-api.txt > /tmp/req-test.txt && \
-    pip install --no-cache-dir -r /tmp/req-test.txt pytest requests
+    pip install --no-cache-dir -r /tmp/req-test.txt pytest requests pytest-cov==7.1.0
 
 COPY mt5api ./mt5api
 COPY mcpunifier ./mcpunifier
@@ -25,7 +25,8 @@ COPY tests ./tests
 # docker-compose.yml.j2 is here because the compose-generation test renders the
 # REAL template — a stub would assert nothing about what actually ships.
 COPY requirements-api.txt requirements-mcpunifier.txt docker-compose.yml.example docker-compose.yml.j2 run.sh ./
-COPY scripts/config_helper.py scripts/start.bat scripts/check_health.py scripts/healthcheck.sh ./scripts/
+COPY scripts/config_helper.py scripts/start.bat scripts/check_health.py scripts/healthcheck.sh scripts/verify_binaries.py ./scripts/
+COPY assets/binaries.lock.json ./assets/
 
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -40,4 +41,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # it on the host instead.
 #
 # Everything under tests/ outside those two dirs is offline-safe.
-CMD ["pytest", "-v", "--tb=short", "--ignore=tests/real", "--ignore=tests/integration", "tests/"]
+#
+# --cov=mt5api scopes coverage to the API package only — scripts/ is
+# subprocess-driven (would misreport) and mcpunifier is covered by
+# test-integration, not here. Measured TOTAL on 2026-08-06 was 64%; floor is
+# set 2 points below that (rounded down) as a regression gate, not a target.
+# Raise this floor as coverage grows — never lower it to make a red build pass.
+CMD ["pytest", "-v", "--tb=short", "--ignore=tests/real", "--ignore=tests/integration", "--cov=mt5api", "--cov-report=term-missing:skip-covered", "--cov-fail-under=62", "tests/"]

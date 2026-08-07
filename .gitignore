@@ -72,3 +72,9 @@ fuckyeah.md
 # Per-run QA audit logs — never committed.
 .anustimes/
 .brutal_reviews/
+
+# Local orchestration scaffolding — never committed
+.plan-and-delegate/
+
+# Transient export used by the release script's secret scan
+.gitleaks-export/

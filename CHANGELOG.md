@@ -6,6 +6,87 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.12.0] — 2026-08-06
+
+Most of what this stack does is now tested in CI, and every vendored binary has
+to prove what it is.
+
+### Added
+
+- **`make verify-binaries` — a gate for vendored executables.** Every tracked
+  executable must be declared in `assets/binaries.lock.json` with its SHA-256,
+  size, upstream URL and observed code-signature state. An undeclared binary
+  fails the build, a changed one fails the build, and a signature that
+  degrades fails the build. It runs as the first step of `make test`, so CI
+  enforces it on every pull request. `scripts/verify_binaries.py` parses the PE
+  certificate directory and recomputes the Authenticode digest rather than
+  trusting that a file is what its filename says.
+
+  A repo that vendors executables has one hard problem: nobody can read them. A
+  reviewer skims thousands of lines of source and waves through the binary
+  beside it because there is nothing to skim. This makes that impossible to do
+  silently.
+
+- **`BACKTEST_MAX_TIMEOUT`** (default `48h`) bounds the `timeout` form field on
+  backtest submission. The terminal's run lock is held for the whole timeout,
+  so an unbounded value could park a terminal indefinitely.
+
+- **Roughly 130 new tests**, taking the unit suite from 244 to 379:
+  - `tests/test_live_api_contract.py` drives every flow that previously existed
+    only in `tests/real/` (account, symbols, rates, market and limit orders,
+    position management, history, ping, TA) through the real Flask app against
+    a scripted SDK — so the HTTP contract is exercised in CI without a
+    terminal, including asserting the request dictionaries actually sent to the
+    SDK.
+  - `tests/test_mt5client.py` and `tests/test_monitor.py` cover two modules
+    that had no direct tests.
+  - Five `clients/go/*_test.go` files cover every exported method on the Go
+    client — field decoding, error mapping and request encoding.
+  - `tests/test_healthcheck_behavior.py` runs the real `healthcheck.sh` awk
+    program against fixture configs, replacing assertions that only checked
+    whether certain substrings appeared in the script's source.
+
+- **Line-coverage floor.** `make test-unit` now reports coverage for `mt5api/`
+  and fails below 62% (currently 75%).
+
+### Fixed
+
+- **`parse_duration_to_seconds` raised `OverflowError` on non-finite input.**
+  `float("inf")`, `"1e400"` and friends passed the bare-number fast path and
+  then overflowed `int()`. Callers catch `ValueError`, so a `timeout=inf`
+  submission surfaced as a 500 instead of a 400. All three paths — the numeric
+  branch, the bare-number branch and the unit branch (`"9"*400 + "h"`
+  overflows too) — now reject non-finite values as `ValueError`.
+
+- **`prune_old_jobs` removed a directory named by data read back from disk.**
+  The per-job staging directory was resolved from the `jobId` inside the job's
+  own state file, then removed with `shutil.rmtree`. Job IDs are always
+  `uuid.uuid4().hex`, but the delete now requires that shape before it touches
+  anything, and logs a warning otherwise.
+
+- **`scripts/check_health.py` degraded silently.** Its per-VM filter import sits
+  behind `except ImportError` with permissive no-op fallbacks, so a failure
+  there quietly restored the probe-everything behaviour the filter exists to
+  prevent. It now says so on stderr.
+
+### Known
+
+- `scripts/defender-remover/PowerRun.exe` is vendored from the defender-remover
+  toolkit rather than from Sordum directly. Its certificate directory is not a
+  well-formed `WIN_CERTIFICATE`, so its signature cannot be validated, and its
+  hash matches no upstream Sordum release. It is not known to be malicious —
+  repacking is normal for that toolkit — but it is unverifiable, and
+  `assets/binaries.lock.json` records exactly that. `make verify-binaries`
+  warns about it on every run and fails if it ever changes.
+
+- `scripts/check_health.py` imports `_vm_group_filter` and `_in_group` from
+  `scripts/config_helper.py`, which does not define them, so that import always
+  falls back and the Python-side per-VM filter never actually runs. The
+  container-side filter in `scripts/healthcheck.sh` is unaffected and is
+  covered by the new behavioural tests. Recorded as a strict `xfail` in
+  `tests/test_terminal_instances.py` so implementing the functions turns into a
+  visible failure until the marker is removed.
+
 ## [v4.11.4] — 2026-08-01
 
 ### Changed

@@ -75,23 +75,67 @@ def test_sweep_no_directory(monkeypatch, tmp_path):
 
 
 def test_prune_removes_old_terminal_jobs_and_staging(tmp_jobs_dir, monkeypatch):
+    # jobId values MUST be real 32-hex uuid4().hex shapes here: prune's staging
+    # removal now refuses anything else (see _JOB_ID_RE), so this also proves
+    # the positive/legitimate-jobId path still works under that guard.
+    olddone_id = "a1" * 16
+    oldfail_id = "b2" * 16
+    newdone_id = "c3" * 16
+    activenow_id = "d4" * 16
     monkeypatch.setattr(jobs, "PRUNE_MIN_ENTRIES", 1)
-    _write(tmp_jobs_dir, "olddone", "completed")
-    _write(tmp_jobs_dir, "oldfail", "failed")
-    _write(tmp_jobs_dir, "newdone", "completed")
-    _write(tmp_jobs_dir, "activenow", "running")
-    (tmp_jobs_dir / "olddone").mkdir()
-    (tmp_jobs_dir / "newdone").mkdir()
+    _write(tmp_jobs_dir, olddone_id, "completed")
+    _write(tmp_jobs_dir, oldfail_id, "failed")
+    _write(tmp_jobs_dir, newdone_id, "completed")
+    _write(tmp_jobs_dir, activenow_id, "running")
+    (tmp_jobs_dir / olddone_id).mkdir()
+    (tmp_jobs_dir / newdone_id).mkdir()
     old = time.time() - 10 * 24 * 3600
-    for name in ("olddone.json", "oldfail.json"):
-        os.utime(tmp_jobs_dir / name, (old, old))
+    for jid in (olddone_id, oldfail_id):
+        os.utime(tmp_jobs_dir / f"{jid}.json", (old, old))
     assert jobs.prune_old_jobs(max_age_seconds=24 * 3600) == 2
-    assert not (tmp_jobs_dir / "olddone.json").exists()
-    assert not (tmp_jobs_dir / "olddone").exists()
-    assert not (tmp_jobs_dir / "oldfail.json").exists()
-    assert (tmp_jobs_dir / "newdone.json").exists()
-    assert (tmp_jobs_dir / "newdone").exists()
-    assert (tmp_jobs_dir / "activenow.json").exists()
+    assert not (tmp_jobs_dir / f"{olddone_id}.json").exists()
+    assert not (tmp_jobs_dir / olddone_id).exists()
+    assert not (tmp_jobs_dir / f"{oldfail_id}.json").exists()
+    assert (tmp_jobs_dir / f"{newdone_id}.json").exists()
+    assert (tmp_jobs_dir / newdone_id).exists()
+    assert (tmp_jobs_dir / f"{activenow_id}.json").exists()
+
+
+def test_prune_refuses_traversal_jobid_and_only_removes_json(tmp_jobs_dir, monkeypatch, caplog):
+    """jobId is read back from a state file inside the shared job dir, so
+    prune must not trust it to be a bare 32-hex id. A traversal-shaped jobId
+    (non-32-hex) must not turn into an rmtree target — only the .json is
+    removed, and the refusal is logged.
+    """
+    monkeypatch.setattr(jobs, "PRUNE_MIN_ENTRIES", 1)
+    decoy = tmp_jobs_dir / "escaped-decoy"
+    decoy.mkdir()
+    # Resolves back inside tmp_jobs_dir (parent + tmp dir's own name), so the
+    # decoy proves what an unguarded rmtree would have hit without leaving
+    # the test's sandbox.
+    traversal_job_id = f"../{tmp_jobs_dir.name}/escaped-decoy"
+    _write(tmp_jobs_dir, "traversal", "completed", jobId=traversal_job_id)
+    old = time.time() - 10 * 24 * 3600
+    os.utime(tmp_jobs_dir / "traversal.json", (old, old))
+    with caplog.at_level("WARNING", logger="mt5api"):
+        pruned = jobs.prune_old_jobs(max_age_seconds=24 * 3600)
+    assert pruned == 1
+    assert not (tmp_jobs_dir / "traversal.json").exists()
+    assert decoy.exists()
+    assert any(
+        "suspicious jobId" in rec.message and traversal_job_id in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_remove_job_state_none_job_id_removes_json_only(tmp_jobs_dir):
+    json_path = tmp_jobs_dir / "solo.json"
+    json_path.write_text("{}")
+    decoy = tmp_jobs_dir / "solo"
+    decoy.mkdir()
+    jobs._remove_job_state(str(json_path), None)
+    assert not json_path.exists()
+    assert decoy.exists()
 
 
 def test_prune_keeps_active_jobs_even_when_old(tmp_jobs_dir, monkeypatch):

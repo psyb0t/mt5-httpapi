@@ -288,7 +288,7 @@ Multipart form fields:
 | `set`          | no       | `.set` upload                                                  |
 | `set_name`     | no       | filename in `assets/sets/`                                     |
 | `topPasses`    | no       | For optimization jobs, keep the top `1..500` parsed XML passes in the status payload. Default `50`. |
-| `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`). Defaults to `backtest_timeout` from `config.yaml`, then hardcoded `6h`. |
+| `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`). Defaults to `backtest_timeout` from `config.yaml`, then hardcoded `6h`. Must be positive and at most `BACKTEST_MAX_TIMEOUT` (env, default `48h`) — out-of-range values are rejected with `400` rather than silently clamped, since the terminal's run lock is held for the whole timeout. |
 
 Responds `202 Accepted` with `Retry-After` header and the queued job payload:
 

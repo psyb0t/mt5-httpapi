@@ -38,6 +38,7 @@ from mt5api.config import (
     SYMBOL_SUFFIX,
     SYMBOL_SUFFIX_CONFIGURED,
     ASSETS_DIR,
+    BACKTEST_MAX_TIMEOUT_SECONDS,
     BACKTEST_TIMEOUT_SECONDS,
     BACKTEST_JOB_DIR,
     load_yaml_config,
@@ -397,6 +398,11 @@ def run_backtest():
             if timeout_value
             else BACKTEST_TIMEOUT_SECONDS
         )
+        if timeout_seconds <= 0 or timeout_seconds > BACKTEST_MAX_TIMEOUT_SECONDS:
+            raise ValueError(
+                f"timeout must be > 0 and <= {BACKTEST_MAX_TIMEOUT_SECONDS}s "
+                f"(got {timeout_seconds}s)"
+            )
         expert_filename, expert_bytes = _read_submission(
             request.files.get("expert"),
             request.form.get("expert_name", ""),

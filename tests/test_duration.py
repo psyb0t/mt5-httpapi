@@ -48,3 +48,25 @@ def test_parse_duration_valid(value, expected):
 def test_parse_duration_invalid(value):
     with pytest.raises(ValueError):
         parse_duration_to_seconds(value)
+
+
+@pytest.mark.parametrize("value", [
+    "inf",
+    "-inf",
+    "infinity",
+    "1e400",
+    "nan",
+    float("inf"),
+    float("nan"),
+    # The unit path overflows too: the regex accepts arbitrarily many digits,
+    # so a ~400-digit hours value makes float(m.group("h")) infinite.
+    "9" * 400 + "h",
+    "-" + "9" * 400 + "d",
+])
+def test_parse_duration_non_finite_raises_value_error(value):
+    # float(s) succeeds for all of these (and int(round(...)) previously
+    # raised an uncaught OverflowError for the inf-like ones) — must raise
+    # ValueError, never OverflowError, so callers' `except ValueError` path
+    # catches it.
+    with pytest.raises(ValueError):
+        parse_duration_to_seconds(value)

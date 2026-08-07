@@ -1,0 +1,26 @@
+{
+  "_why": [
+    "Every executable tracked in this repo is declared here with the bytes it is",
+    "supposed to have. scripts/verify_binaries.py enforces it, so an undeclared",
+    "binary or a changed one fails the build instead of riding along unread.",
+    "",
+    "To add a binary: record its upstream URL and version, verify the download",
+    "yourself once (compare against the vendor's published hash where one exists,",
+    "or against a freshly downloaded copy), then paste the sha256 and size here.",
+    "'signature' records what scripts/verify_binaries.py observes today — a",
+    "downgrade from that state fails the build."
+  ],
+  "binaries": [
+    {
+      "path": "scripts/defender-remover/PowerRun.exe",
+      "sha256": "a6fa768c4964c328c748558627c20c2ba455e589a1b87cfa3911d197da1688d2",
+      "size": 894016,
+      "product": "PowerRun",
+      "version": "1.6.0.0",
+      "vendor": "Sordum Software",
+      "source": "https://www.sordum.org/downloads/?power-run=",
+      "signature": "malformed",
+      "note": "REPACKED, NOT PRISTINE. Arrived vendored inside the defender-remover toolkit rather than from Sordum directly. Its certificate directory is not a well-formed WIN_CERTIFICATE (declared length 776284822, revision 0xc496, type 14951 against the required 0x200/2) and 512 bytes trail it, so the Authenticode signature cannot validate. Its hash matches no Sordum release: official v1.6.0.0 x64 is da77bc401ef0d7b8e23be3a9387660172aea176cd9d1248034130811d29942c9 (934464 bytes) and current v1.9.0.0 x64 is b305126c2881073a53073bd1782d0649764d198562e02fc02395fc07637dcec5. Not known to be malicious — repacking is normal for that toolkit — but it is unverifiable. Replacing it with an official Sordum download would let this entry move to signature=valid."
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-.PHONY: up down logs status lint format test test-unit test-integration test-go clean distclean help
+.PHONY: up down logs status lint format test test-unit test-integration test-go verify-binaries clean distclean help
 
 GO_TEST_IMAGE := golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647
 
@@ -47,9 +47,18 @@ format:
 # Run every automated test suite. Keep the scoped targets for fast local runs,
 # but CI and the canonical contributor command use this complete gate.
 test:
+	$(MAKE) verify-binaries
 	$(MAKE) test-unit
 	$(MAKE) test-integration
 	$(MAKE) test-go
+
+# Every tracked executable must be declared in assets/binaries.lock.json with
+# its upstream and sha256. Runs on the host rather than in a container because
+# it needs the COMPLETE checkout -- the test image COPYs a subset, and a gate
+# that reports "0 binaries checked" because it could not see them is worse than
+# no gate. Needs nothing but python3 and the repo.
+verify-binaries:
+	@python3 scripts/verify_binaries.py
 
 # Run unit tests in a throwaway Docker image. The image is built with a
 # unique tag, run, and removed afterwards (--rm + rmi) so nothing lingers

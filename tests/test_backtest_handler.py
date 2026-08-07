@@ -266,6 +266,51 @@ def test_invalid_backtest_timeout_returns_400(client):
     assert "invalid duration" in resp.get_json()["error"].lower()
 
 
+def test_infinite_backtest_timeout_returns_400(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(), "timeout": "inf"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_backtest_timeout_above_cap_returns_400(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(), "timeout": "999999h"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_zero_backtest_timeout_returns_400(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(), "timeout": "0"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_backtest_timeout_within_cap_is_accepted(client):
+    c, _ = client
+    resp = c.post(
+        "/backtest",
+        data={**_multipart(), "timeout": "1h"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202, resp.get_data(as_text=True)
+    job = jobs.load_job(resp.get_json()["jobId"])
+    assert job["timeoutSeconds"] == 3600
+
+
 def test_host_managed_asset_resolves(client):
     c, tmp = client
     expert_path = tmp / "assets" / "experts" / "Hosted.ex5"

@@ -27,6 +27,8 @@ except ImportError:
     def _in_group(terminal, allowed):
         return True
 
+    print('  WARN: config_helper import failed - per-VM filter disabled, probing ALL ports')
+
 SHARED = r'C:\Users\Docker\Desktop\Shared'
 CONFIG = os.path.join(SHARED, 'config', 'config.yaml')
 FULL_LOG = os.path.join(SHARED, 'logs', 'full.log')

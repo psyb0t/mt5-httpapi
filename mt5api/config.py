@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import re
 
@@ -84,15 +85,22 @@ def parse_duration_to_seconds(value):
     if value is None or value == "":
         return 0
     if isinstance(value, (int, float)):
-        return int(round(float(value) * 3600))
+        f = float(value)
+        if not math.isfinite(f):
+            raise ValueError(f"Invalid duration: {value!r}. Must be finite.")
+        return int(round(f * 3600))
     s = str(value).strip()
     if not s:
         return 0
     # Bare number → hours.
     try:
-        return int(round(float(s) * 3600))
+        f = float(s)
     except ValueError:
-        pass
+        f = None
+    if f is not None:
+        if not math.isfinite(f):
+            raise ValueError(f"Invalid duration: {value!r}. Must be finite.")
+        return int(round(f * 3600))
     m = _DURATION_RE.match(s)
     if not m or not (m.group("d") or m.group("h") or m.group("m") or m.group("s")):
         raise ValueError(
@@ -104,6 +112,12 @@ def parse_duration_to_seconds(value):
     minutes = float(m.group("m") or 0)
     secs = float(m.group("s") or 0)
     total = d * 86400 + h * 3600 + minutes * 60 + secs
+    # The unit path needs the same finiteness guard as the bare-number paths:
+    # the regex accepts arbitrarily many digits, so a ~400-digit hours value
+    # makes float() return inf and int(round(inf)) raise an uncaught
+    # OverflowError — a 500 where the caller should get a 400.
+    if not math.isfinite(total):
+        raise ValueError(f"Invalid duration: {value!r}. Must be finite.")
     if m.group("sign") == "-":
         total = -total
     return int(round(total))
@@ -209,6 +223,14 @@ BACKTEST_TIMEOUT_RAW = (
 )
 BACKTEST_TIMEOUT = BACKTEST_TIMEOUT_RAW
 BACKTEST_TIMEOUT_SECONDS = parse_duration_to_seconds(BACKTEST_TIMEOUT)
+
+# Upper bound on the per-request 'timeout' form field. Without a cap, a
+# caller-supplied timeout (e.g. a typo like '999999h') holds RUN_LOCK for
+# that entire duration, blocking every other backtest against this terminal.
+_BACKTEST_MAX_TIMEOUT_ENV = os.environ.get("BACKTEST_MAX_TIMEOUT")
+BACKTEST_MAX_TIMEOUT_SECONDS = parse_duration_to_seconds(
+    _BACKTEST_MAX_TIMEOUT_ENV if _BACKTEST_MAX_TIMEOUT_ENV not in (None, "") else "48h"
+)
 
 # Startup backtest-cleanup windows. sweep_orphans() only inspects state files
 # touched within the lookback: a live job rewrites its file on every state

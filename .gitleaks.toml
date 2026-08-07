@@ -1,0 +1,27 @@
+title = "mt5-httpapi secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Local scratch and vendored third-party. .plan-and-delegate and .logs are never
+committed; defender-remover is an upstream toolkit vendored wholesale, and its
+contents are not ours to rewrite.
+"""
+paths = [
+  '''(^|/)\.plan-and-delegate(?:/|$)''',
+  '''(^|/)\.logs(?:/|$)''',
+  '''(^|/)scripts/defender-remover(?:/|$)''',
+]
+
+[[allowlists]]
+description = """
+Test fixtures use deliberately fake credentials. tests/real/.env.example ships
+placeholders so a contributor knows which variables to set, and the API tests
+use obviously-fake account numbers and tokens.
+"""
+paths = [
+  '''(^|/)tests/''',
+  '''(^|/)examples/''',
+]
