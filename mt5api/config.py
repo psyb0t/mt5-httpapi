@@ -519,6 +519,64 @@ for _c in _candidates:
 
 TERMINAL_DIR = os.path.dirname(TERMINAL_PATH)
 INI_FILE = os.path.join(TERMINAL_DIR, "mt5start.ini")
+
+# Chart Deployments (chartctl) — live-mode only feature. Global default from
+# config.yaml `chartctl:` block; per-terminal `chartctl: false` in terminals[]
+# overrides it. Backtest-mode terminals never enable it: there is no running
+# terminal64.exe to manage charts on.
+_chartctl_cfg = load_yaml_config().get("chartctl") or {}
+_chartctl_terminal_override = _terminal_config.get("chartctl")
+# Opt-IN. Defaulting this on would auto-attach the loader EA to every live
+# terminal of any install that upgraded without asking for it - a fleet-wide
+# behaviour change nobody opted into. Absent chartctl block = unchanged API.
+_chartctl_global_enabled = bool(_chartctl_cfg.get("enabled", False))
+CHARTCTL_ENABLED = (
+    MODE == "live"
+    and _chartctl_global_enabled
+    and (_chartctl_terminal_override is not False)
+)
+def _chartctl_seconds(raw, default_text: str, floor: int) -> int:
+    """A duration from the chartctl block, never below `floor`.
+
+    `or <default>` already covers absent and zero, but NOT negative:
+    parse_duration_to_seconds accepts "-5s" on purpose, because west-of-UTC
+    broker offsets need the sign. Without the floor a negative is taken
+    literally - a stale window that calls every observation stale, or a hint
+    interval that is permanently due. Both present as a broken loader rather
+    than as a bad setting.
+
+    Clamped rather than refused, deliberately. This module is imported by the
+    whole API, so raising on an optional feature's tuning value would stop
+    trading and backtesting too. vm-watchdog makes the opposite call for the
+    opposite reason: it holds the Docker socket, so it refuses to start rather
+    than run on values nobody chose.
+    """
+    parsed = parse_duration_to_seconds(str(raw or default_text))
+    return max(floor, parsed or parse_duration_to_seconds(default_text))
+
+
+def _chartctl_bytes(raw, default: int, floor: int) -> int:
+    """A byte cap from the chartctl block, never below `floor`.
+
+    A negative cap makes read(cap + 1) return nothing and every upload fail the
+    length check, reporting a limit of -1 bytes.
+    """
+    return max(floor, int(raw or default))
+
+
+CHARTCTL_RECONCILE_HINT_SECONDS = _chartctl_seconds(
+    _chartctl_cfg.get("reconcile_hint_interval"), "5s", 1
+)
+CHARTCTL_OBSERVED_STALE_SECONDS = _chartctl_seconds(
+    _chartctl_cfg.get("observed_stale_after"), "60s", 1
+)
+CHARTCTL_COMMAND_TIMEOUT_SECONDS = _chartctl_seconds(
+    _chartctl_cfg.get("command_timeout"), "30s", 1
+)
+# Floor of 1 KiB: a cap below that rejects every real .ex5 and .set.
+CHARTCTL_MAX_UPLOAD_BYTES = _chartctl_bytes(
+    _chartctl_cfg.get("max_upload_bytes"), 16 * 1024 * 1024, 1024
+)
 IDENTITY = make_identity(BROKER, ACCOUNT, INSTANCE)
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FULL_LOG = os.path.join(LOG_DIR, "full.log")

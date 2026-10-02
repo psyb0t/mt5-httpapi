@@ -8,6 +8,39 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ## [Unreleased]
 
+Remote EA deployment: attach Expert Advisors to charts with set files over the
+HTTP API, no RDP and no terminal restart.
+
+### Added
+
+- **Chart Deployments feature** (`mt5api/chartctl/`, `mt5api/handlers/chartctl.py`). Stage `.ex5`/`.set` artifacts, declare deployments (expert + set + symbol + timeframe) as desired state, and a resident loader EA reconciles the terminal's charts to it. New endpoints: `POST/GET/DELETE /experts`, `POST/GET /sets` + `GET /sets/<name>`, `POST/GET /deployments` + `GET/PATCH/DELETE /deployments/<id>`, `POST /deployments/reconcile`, `GET /charts`, `GET /loader`, `POST /charts/<chart_id>/screenshot`.
+- **Chart Control Protocol v1** — a file-based contract in `MQL5\Files\chartctl\` (`desired.json` / `observed.json` / command channel). Documented in `docs/chart-control-protocol.md`. Deployments only report `running` once the loader confirms the expert is live on a chart; drift and failures surface in `observed.json`.
+- **Reference loader EA** `assets/experts/MT5ChartLoader.mq5` plus the portable include `assets/experts/include/ChartControl.mqh`, so an existing resident EA (e.g. an account tracker) can adopt the protocol with three calls instead of running a second EA. Single-loader mutex via a terminal GlobalVariable makes co-existence safe.
+- Config block `chartctl:` in `config.yaml` (enable flag, reconcile hint, staleness window, command timeout, upload cap). Live-mode terminals only; per-terminal `chartctl: false` override.
+- **Zero-touch loader bootstrap** — `scripts/compile-chartctl-loader.bat` auto-compiles the loader in every broker base on boot and propagates the `.ex5` to existing terminal instances; `config_helper.py write_ini` adds a `[StartUp] Expert=Advisors\MT5ChartLoader` section (honoring `symbol_suffix`) to live chartctl-enabled terminals, so the loader attaches itself at terminal launch. No RDP or manual attach anywhere in the deploy path. Duplicate loaders from re-fired `[StartUp]` lines self-close via the mutex.
+- Tests: `tests/test_chartctl_units.py`, `tests/test_chartctl_endpoints.py`, and a Python `tests/chartctl_fake_loader.py` that plays the EA side of the protocol so the full endpoint suite runs on Linux with no MT5.
+- **WebRequest allowlist provisioning** (`GET`/`PUT /webrequest`, `POST /webrequest/apply`; `mt5api/chartctl/webrequest.py`, `mt5api/chartctl/autoit_webrequest.py`, `mt5api/handlers/webrequest.py`). Set the terminal's `WebRequest()` allowed-URL list over the API instead of the Options dialog. A dedicated call (not a deployment field) since it's rarely needed. Two apply paths, chosen at runtime:
+  - **Windows VM (default here):** the allowlist is *not* stored in `common.ini` on this terminal build — it lives in the machine-bound `MQL5\experts.dat` and MT5 drops it on every restart. So it's set the way a user would: a bundled portable AutoIt interpreter (`assets/autoit/AutoIt3_x64.exe` + `set_webrequest.au3`) drives Tools → Options → Expert Advisors and types the URLs in. Takes effect immediately in-session (verified: a probe EA's `WebRequest()` returns HTTP 200 right after). Since MT5 forgets it on restart, `main.py` re-applies the persisted list automatically ~25 s after each terminal (re)start, surviving the periodic auto-reboot.
+  - **Bare metal:** where `common.ini` *is* the store, falls back to encoding the list into `common.ini` (`scripts/webrequest_allowlist_codec.py`, format reverse-engineered from `terminal64.exe`, verified byte-identical against 18 real broker blobs) + a terminal restart.
+
+  Desired list persisted per terminal (`Config/webrequest.json`); first use migrates from the terminal's existing list, preserving manually-configured URLs. GUI applies are serialized host-wide by a named Windows kernel mutex (`Global\mt5_httpapi_webrequest_autoit`; crash-safe via `WAIT_ABANDONED`) since desktop focus is shared across terminals, and each terminal's boot re-apply is staggered by its port — so many terminals per VM can provision URLs without keystroke collisions. `inspect_options.au3`/`selftest.au3` ship as GUI-automation diagnostics (`POST /webrequest/apply?script=`). Tests: `tests/test_webrequest.py`. Live-mode chartctl terminals only.
+
+- `POST /charts/<chart_id>/close` + a `close_chart` loader command — close any chart by id, including charts the loader cannot attribute to a deployment. The loader refuses to close its own chart.
+
+### Fixed
+
+- **WebRequest AutoIt apply drove the wrong terminal window (`options_not_found` / silent wrong-terminal writes).** The scripts matched the MT5 main window by title substring (the login), but `WinList()` also returns hidden windows and cloned terminals of the same account have byte-identical titles — so the apply could target the wrong terminal or fail to activate one at all. The API now resolves its terminal64.exe PID by executable path (WMI) and passes it to the scripts, which match only visible windows owned by that PID and verify the Options dialog belongs to it too, with activation retries. Legacy 3-arg script invocation still works (title fallback).
+
+- **Loader v1.0.2 — duplicate-chart leak across terminal restarts.** The `chartctl:<id>` chart-comment stamp does not survive MT5's profile save/restore cycle, so every terminal restart (including the periodic auto-reboot) left the loader unable to recognize its own chart and it opened a fresh duplicate — accumulating until the terminal's chart cap. Reconcile now first **adopts** an unowned chart already running the deployment's exact expert + symbol + timeframe before opening a new one; comment stamps are verified by read-back (`ChartSetString` is async); a failed attach closes the chart it opened (previously an expert-less chart leaked per attempt) and backs off for 60 s; and errors are tracked per deployment instead of in a single shared slot (one deployment's failure no longer masks another's).
+
+### Notes
+
+- All chartctl handlers are **lock-free** — pure file I/O against the terminal data dir — so they never queue behind the process-wide MT5 SDK lock.
+- Additive and **opt-in**: `chartctl.enabled` defaults to `false`. With the block
+  absent the API behaves exactly as before and no `[StartUp]` section is written.
+  Enabling it auto-attaches the loader EA to every live terminal, which is a
+  fleet-wide behaviour change and must never arrive by upgrade.
+
 ## [v4.15.0]: 2026-09-30
 
 `POST /compile` and everything under it was contributed by @Marinski in #16.

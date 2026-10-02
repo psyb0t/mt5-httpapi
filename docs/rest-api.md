@@ -13,6 +13,7 @@ One HTTP surface for routing, auth, health, terminal control, account state, and
 - [Trading and history](trading-and-history.md)
 - [Backtesting](backtesting.md)
 - [Compiling MQL5](compiling.md)
+- [Chart Deployments](chart-deployments.md)
 
 ## API
 

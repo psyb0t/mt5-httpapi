@@ -21,6 +21,17 @@
       "source": "https://www.sordum.org/downloads/?power-run=",
       "signature": "malformed",
       "note": "REPACKED, NOT PRISTINE. Arrived vendored inside the defender-remover toolkit rather than from Sordum directly. Its certificate directory is not a well-formed WIN_CERTIFICATE (declared length 776284822, revision 0xc496, type 14951 against the required 0x200/2) and 512 bytes trail it, so the Authenticode signature cannot validate. Its hash matches no Sordum release: official v1.6.0.0 x64 is da77bc401ef0d7b8e23be3a9387660172aea176cd9d1248034130811d29942c9 (934464 bytes) and current v1.9.0.0 x64 is b305126c2881073a53073bd1782d0649764d198562e02fc02395fc07637dcec5. Not known to be malicious — repacking is normal for that toolkit — but it is unverifiable. Replacing it with an official Sordum download would let this entry move to signature=valid."
+    },
+    {
+      "path": "assets/autoit/AutoIt3_x64.exe",
+      "sha256": "5d69a932a077fee044b193c28e84564143f5c7e51079ab48e88fef74ab0b77b7",
+      "size": 1107552,
+      "product": "AutoIt v3 Script (portable interpreter)",
+      "version": "3.3.18.0",
+      "vendor": "AutoIt Team",
+      "source": "https://www.autoitscript.com/site/autoit/downloads/",
+      "signature": "valid",
+      "note": "Bundled because this terminal build keeps the WebRequest allowlist in machine-bound MQL5\\\\experts.dat rather than common.ini, so the list can only be set by driving Tools > Options > Expert Advisors. Only AutoIt3_x64.exe is vendored - no installer, no Aut2Exe, no UDFs - and it runs only the .au3 scripts in this repo. Authenticode signature present and validating. AutoIt publishes no per-file sha256, but the file has since been verified BYTE-IDENTICAL (same sha256 as above) to AutoIt3_x64.exe inside the official portable archive at autoitscript.com/files/autoit3/autoit-v3.zip - independently by the upstream reviewer and by this repo's maintainer - in addition to the validating Authenticode signature. Redistribution terms: see EULA.htm and NOTICE.txt beside the binary (the EULA requires both to accompany every copy)."
     }
   ]
 }

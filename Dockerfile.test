@@ -34,6 +34,7 @@ COPY scripts/config_helper.py \
     scripts/wickworks-healthcheck.py \
     scripts/vm-watchdog.py \
     scripts/recreate-vm.sh \
+    scripts/webrequest_allowlist_codec.py \
     ./scripts/
 COPY assets/binaries.lock.json ./assets/
 

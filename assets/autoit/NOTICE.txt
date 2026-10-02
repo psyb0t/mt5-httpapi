@@ -1,0 +1,37 @@
+AutoIt — bundled copy, copyright and trademark notices
+======================================================
+
+This directory redistributes one unmodified component of AutoIt v3:
+
+    AutoIt3_x64.exe   version 3.3.18.0
+    sha256: 5d69a932a077fee044b193c28e84564143f5c7e51079ab48e88fef74ab0b77b7
+    byte-identical to the copy in AutoIt's official portable archive
+    (https://www.autoitscript.com/files/autoit3/autoit-v3.zip)
+
+Copyright notice (from the binary's own version resource):
+
+    © 1999-2025 Jonathan Bennett & AutoIt Team
+
+Trademark notice (from https://www.autoitscript.com/site/):
+
+    AutoIt is a trademark of AutoIt Consulting Ltd.
+
+Author  : Jonathan Bennett and the AutoIt Team
+WWW     : https://www.autoitscript.com/site/autoit/
+Email   : support at autoitscript dot com
+
+License
+-------
+
+AutoIt is redistributed here under its End-User License Agreement, which
+permits reproduction and distribution of copies "either in whole or in part"
+provided that "each copy should include all copyright and trademark notices,
+and shall be accompanied by a copy of this EULA".
+
+The unmodified official EULA accompanies this copy as EULA.htm in this
+directory, as published by the AutoIt Team in the AutoIt v3 documentation
+(https://www.autoitscript.com/autoit3/docs/license.htm, retrieved 2026-08-27,
+matching the release the bundled binary ships in).
+
+The .au3 scripts in this directory are NOT part of AutoIt. They are this
+repository's own automation, covered by this repository's license.

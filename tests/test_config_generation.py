@@ -219,6 +219,65 @@ def test_live_terminal_ini_declares_no_startup_expert(tmp_path, monkeypatch):
     assert content.count("[Experts]") == 1
 
 
+def test_startup_expert_is_written_only_when_chartctl_is_opted_in(tmp_path, monkeypatch):
+    """The other half of the guard above.
+
+    That test pins the default; this one pins that the feature still works when
+    asked for, so "no [StartUp]" cannot be satisfied by quietly breaking the
+    loader bootstrap. Chart Deployments is opt-IN: an upgrade must not start
+    attaching an EA to every live terminal in a fleet that never enabled it.
+    """
+    helper = _load_config_helper_module()
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({
+            "api_token": "test-token",
+            "chartctl": {"enabled": True},
+            "terminals": [{"broker": "acme", "account": "main", "port": 5001}],
+        }),
+        encoding="utf-8",
+    )
+    outpath = tmp_path / "terminal.ini"
+    monkeypatch.setattr(helper, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["config_helper.py", "write_ini", "acme", "main", str(outpath), "default", "live"],
+    )
+
+    helper.main()
+
+    content = outpath.read_text(encoding="utf-8")
+    assert "[StartUp]" in content
+    assert "Expert=Advisors\\MT5ChartLoader" in content
+
+
+def test_a_terminal_can_opt_out_even_when_chartctl_is_on(tmp_path, monkeypatch):
+    """Per-terminal `chartctl: false` has to beat the global enable, or there is
+    no way to keep one terminal clear of the loader."""
+    helper = _load_config_helper_module()
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({
+            "api_token": "test-token",
+            "chartctl": {"enabled": True},
+            "terminals": [
+                {"broker": "acme", "account": "main", "port": 5001, "chartctl": False}
+            ],
+        }),
+        encoding="utf-8",
+    )
+    outpath = tmp_path / "terminal.ini"
+    monkeypatch.setattr(helper, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["config_helper.py", "write_ini", "acme", "main", str(outpath), "default", "live"],
+    )
+
+    helper.main()
+
+    assert "[StartUp]" not in outpath.read_text(encoding="utf-8")
+
+
 def test_clean_start_uses_single_vm_compose_without_explicit_topology(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     run_script = (repo_root / "run.sh").read_text(encoding="utf-8")

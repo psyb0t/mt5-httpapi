@@ -130,6 +130,7 @@ The old README became a massive wall of API shit, so the details now live in sep
 | Copy working curl and Go examples instead of guessing | [Clients and examples](docs/clients-and-examples.md) |
 | Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](docs/operations.md) |
 | Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](docs/multi-vm-setup.md) |
+| Deploy EAs onto charts over HTTP instead of clicking through the Navigator | [Chart Deployments](docs/chart-deployments.md) |
 
 ## API at a glance
 
