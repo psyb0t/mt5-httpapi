@@ -11,6 +11,7 @@ from collections import namedtuple
 
 import pytest
 
+import mt5api.mt5client as mc
 from mt5api.handlers import account as account_handler
 from mt5api.handlers import history as history_handler
 from mt5api.handlers import terminal as terminal_handler
@@ -45,7 +46,27 @@ def test_ping_needs_no_terminal_at_all(api_client):
     resp = api_client.get("/ping")
 
     assert resp.status_code == 200
-    assert resp.get_json()["status"] == "ok"
+    body = resp.get_json()
+    assert body["status"] == "ok"
+    assert body["sdk_threads_alive"] == 0
+    assert body["sdk_oldest_alive_s"] is None
+
+
+def test_ping_reports_the_wedge_counters_while_a_call_is_wedged(api_client):
+    """docs/spec/mt5-httpapi-sdk-call-thread-leak.md step 0's acceptance
+    criterion: /ping answers AND names the wedge, without taking the MT5 lock
+    (no @with_mt5 on this route — a real lock would itself be wedged here)."""
+    mc._add_sdk_worker("terminal_info")
+    try:
+        resp = api_client.get("/ping")
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["status"] == "ok"
+        assert body["sdk_threads_alive"] == 1
+        assert body["sdk_oldest_alive_s"] >= 0
+    finally:
+        mc._sdk_workers.clear()
 
 
 def test_account_returns_the_logged_in_account(api_client, account):

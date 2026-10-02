@@ -21,6 +21,7 @@ from mt5api.mt5client import (
     session,
 )
 from mt5api.server import app
+from mt5api.wedge_watchdog import start_wedge_watchdog
 
 # Each handler that touches MT5 grabs a process-wide mutex for its full
 # duration (see @with_mt5 in mt5client.py), so only one MT5 worker runs at
@@ -188,6 +189,12 @@ def main():
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+
+    # Both modes: backtest-mode processes never start the health monitor
+    # below, so this is the only thing that can act on a wedged SDK call
+    # there. In live mode it races the monitor's own five-check restart and
+    # normally wins (180s vs ~300s) — see docs/spec/mt5-httpapi-sdk-call-thread-leak.md.
+    start_wedge_watchdog()
 
     if MODE == "backtest":
         log.info(

@@ -494,6 +494,39 @@ SYMBOL_SUFFIX_CONFIGURED = "symbol_suffix" in _terminal_config
 _SYMBOL_SUFFIX_RAW = _terminal_config.get("symbol_suffix")
 SYMBOL_SUFFIX = "" if _SYMBOL_SUFFIX_RAW is None else str(_SYMBOL_SUFFIX_RAW)
 
+# Wedge watchdog (docs/spec/mt5-httpapi-sdk-call-thread-leak.md). A stuck SDK
+# call blocks every later @with_mt5 call on this process (see mt5client's
+# single-flight guard); past MT5_WEDGE_EXIT_SECONDS of no recovery, the
+# watchdog exits the process outright rather than let the wedge persist until
+# a VM-wide recreate.
+#
+# MT5_WEDGE_EXIT_SECONDS (180): SESSION_ACQUIRE_TIMEOUT (60) + MT5_CALL_TIMEOUT
+#   (30) is 90s worst case for a healthy-but-slow init, so 180s leaves 2x
+#   margin before treating a stuck call as a genuine wedge rather than a slow
+#   one.
+# MT5_WEDGE_CHECK_INTERVAL_SECONDS (15): how often the watchdog polls; cheap
+#   (one lock-free dict read), so a short interval costs nothing.
+# MT5_WEDGE_DEFER_CEILING_SECONDS (1800 = 30 min): in backtest mode, the
+#   watchdog defers its exit while RUN_LOCK is held so it doesn't orphan a
+#   running tester job — but queued jobs can re-acquire RUN_LOCK back-to-back
+#   for up to ~6h, so an unbounded defer is effectively "never exit". This
+#   ceiling is measured from when the watchdog FIRST wanted to exit, not reset
+#   by a new job taking the lock, and bounds how long this terminal's
+#   @with_mt5 reads (symbols, rates, account) stay broken.
+MT5_WEDGE_EXIT_SECONDS = _positive_int_setting(
+    "MT5_WEDGE_EXIT_SECONDS", "mt5_wedge_exit_seconds", 180
+)
+MT5_WEDGE_CHECK_INTERVAL_SECONDS = _positive_int_setting(
+    "MT5_WEDGE_CHECK_INTERVAL_SECONDS", "mt5_wedge_check_interval_seconds", 15
+)
+MT5_WEDGE_DEFER_CEILING_SECONDS = _positive_int_setting(
+    "MT5_WEDGE_DEFER_CEILING_SECONDS", "mt5_wedge_defer_ceiling_seconds", 1800
+)
+
+# The single-flight guard's Retry-After default (mt5client.MT5_WEDGE_RETRY_AFTER_SECONDS)
+# is derived from MT5_CALL_TIMEOUT there, not configured here — MT5_CALL_TIMEOUT lives in
+# mt5client.py, which this module cannot import without a cycle.
+
 # Wickworks TA sidecar — reachable only from the mt5 container's net namespace
 # (compose: network_mode: "service:mt5", no published ports). From inside the
 # Windows VM, the dockurr/windows gateway address 20.20.20.1 routes to the

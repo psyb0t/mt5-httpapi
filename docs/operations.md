@@ -216,12 +216,13 @@ The MT5 Python SDK is single-connection-per-process and not remotely fucking thr
 
 Knock-on effects you'll observe:
 
-- **`/ping`** is the only handler that doesn't take the lock. Use it for liveness probes — it stays responsive even when the SDK is wedged.
-- Every `mt5.*` call has a hard 30s timeout. A wedged call returns **`504 mt5 call timed out`** and releases the lock. The orphaned C-thread is still spinning inside the SDK; the health monitor will detect a dead terminal and run `restart_terminal` to free it.
+- **`/ping`** is the only handler that doesn't take the lock. Use it for liveness probes — it stays responsive even when the SDK is wedged, and now also reports `sdk_threads_alive` and `sdk_oldest_alive_s` so a wedge shows up there before it shows up as a timeout anywhere else.
+- Every `mt5.*` call has a hard 30s timeout (`MT5_CALL_TIMEOUT`). A wedged call returns **`504 mt5 call timed out`** and releases the lock — but the orphaned C-thread is still spinning inside the SDK, uninterruptibly. The **single-flight guard** stops that from cascading: while that thread is still alive, every *later* call fails instantly with **`503 mt5 call is wedged` + `Retry-After: 30`** instead of running out its own 30s timeout too (see `docs/spec/mt5-httpapi-sdk-call-thread-leak.md` for the incident this fixes). The one exception is `restart_terminal`'s own reconnect right after it kills the terminal — that call is deliberately allowed through the guard it may have just tripped.
+- The **wedge watchdog** (`mt5-wedge-watchdog` thread, started in every mode) exits the process outright (`os._exit(75)`) once the oldest live SDK worker has been stuck longer than `MT5_WEDGE_EXIT_SECONDS` (default 180s) — checked every `MT5_WEDGE_CHECK_INTERVAL_SECONDS` (default 15s). In backtest mode it defers that exit while a tester run holds `RUN_LOCK`, up to `MT5_WEDGE_DEFER_CEILING_SECONDS` (default 1800s = 30 min) measured from when it first wanted to exit — a chain of queued jobs re-acquiring the lock does not reset that ceiling. `api_runner.bat`'s relaunch loop (applied by `deploy-mt5-scripts.sh`, not upstream) brings the process back up after such an exit; look for `PROCESS EXITED exit_code=75` in the VM logs.
 - When too many requests pile up on the lock, new ones get **`503 queue depth N exceeds max M`** instead of waiting. Default cap is 20; tune with `MT5_MAX_QUEUE_DEPTH=...` in the environment.
-- Per-call timing logs (`<req_id> mt5.<fn> dur_ms=...`) are emitted for every SDK call so wedge investigations have data to chew on.
+- Per-call timing logs (`<req_id> mt5.<fn> dur_ms=...`) are emitted for every SDK call so wedge investigations have data to chew on. A wedge itself logs as `WEDGED (...)` (not `TIMEOUT after 0.0ms`) and carries the process mode, request path, and live worker count.
 
-If you see persistent 503/504 from a single terminal, check `data/shared/logs/api-<broker>-<account>.log` for `mt5.* TIMEOUT` lines — that's the SDK call that wedged.
+If you see persistent 503/504 from a single terminal, check `data/shared/logs/api-<broker>-<account>.log` for `mt5.* TIMEOUT` and `WEDGED` lines — that's the SDK call that wedged, and whether later requests are hitting the guard or the raw SDK.
 
 ## VM recreate and the wickworks sidecar
 

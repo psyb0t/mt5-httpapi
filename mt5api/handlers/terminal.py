@@ -5,13 +5,23 @@ from mt5api.mt5client import (
     ensure_initialized,
     m,
     restart_terminal,
+    sdk_worker_snapshot,
     to_dict,
     with_mt5,
 )
 
 
 def ping():
-    return jsonify({"status": "ok", "mode": MODE})
+    # Deliberately does not take the MT5 lock (no @with_mt5) — this is the
+    # container healthcheck route and must answer even while every SDK call
+    # is wedged. sdk_worker_snapshot() only takes its own small lock.
+    count, oldest_age = sdk_worker_snapshot()
+    return jsonify({
+        "status": "ok",
+        "mode": MODE,
+        "sdk_threads_alive": count,
+        "sdk_oldest_alive_s": round(oldest_age, 1) if oldest_age is not None else None,
+    })
 
 
 @with_mt5
