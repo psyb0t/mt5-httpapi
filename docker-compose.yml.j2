@@ -103,24 +103,48 @@ services:
 
 {% endif %}
 {% endfor %}
-  # Daily log rotator. Rotates data/shared/logs/*.log to *.log.YYYYMMDD
-  # at the day boundary and prunes those archives plus dated MT5 terminal,
-  # Tester, and Tester Agent journals older than RETAIN_DAYS.
-  # Truncate-in-place so the Python API's open log handles keep working
-  # without reopening. Hourly check, idempotent (keyed on yesterday's
-  # archive existing).
+{%- set log_mounts = [] %}
+{%- set seen_log_dirs = [] %}
+{%- for vm in vms %}
+{%- if vm.log_dir and vm.log_dir not in seen_log_dirs %}
+{%- set _ = seen_log_dirs.append(vm.log_dir) %}
+{%- set _ = log_mounts.append(vm) %}
+{%- endif %}
+{%- endfor %}
+{%- if not log_mounts %}
+{%- set _ = log_mounts.append({'name': 'shared', 'log_dir': '/data/mt5-shared/logs'}) %}
+{%- endif %}
+  # Daily log rotator. Rotates every VM's logs/*.log to *.log.YYYYMMDD at the
+  # day boundary and prunes those archives plus dated MT5 terminal, Tester and
+  # Tester Agent journals older than RETAIN_DAYS. Truncate-in-place so the
+  # Python API's open log handles keep working without reopening. Hourly check,
+  # idempotent (keyed on yesterday's archive existing).
+  #
+  # A VM's log_dir is mounted OVER the shared /shared/logs, so VMs configured
+  # with different log_dirs write to different HOST directories and a single
+  # mount here rotates exactly one of them. That is not hypothetical: this
+  # service had /data/mt5-shared/logs hardcoded, which is only the fast VM's
+  # directory, so mt5-b's logs were never rotated at all -- found 2026-08-21
+  # with its full.log at 193 MB and not one archive beside it.
+  #
+  # Mounts and LOG_DIRS both come from vms.yaml, deduplicated by log_dir, so
+  # adding a VM extends them and two VMs sharing a directory rotate it once.
+  # A topology that sets no log_dir at all falls back to the shared directory,
+  # which is what a single-VM install uses.
   log-rotator:
     image: alpine:3.20
     restart: unless-stopped
     environment:
-      LOG_DIR: /logs
+      LOG_DIRS: "{% for vm in log_mounts %}/logs-{{ vm.name }}{% if not loop.last %}:{% endif %}{% endfor %}"
       TERMINALS_DIR: /terminals
       RETAIN_DAYS: "7"
       MAX_LOG_BYTES: "2147483648"
       IDLE_MINUTES: "30"
       INTERVAL: "3600"
     volumes:
-      - /data/mt5-shared/logs:/logs
+{% for vm in log_mounts %}
+      - {{ vm.log_dir }}:/logs-{{ vm.name }}
+{% endfor %}
       - /data/mt5-shared/terminals:/terminals
       - ./scripts/rotate-logs.sh:/rotate.sh:ro
     command: ["sh", "/rotate.sh"]

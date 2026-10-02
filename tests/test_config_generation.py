@@ -20,6 +20,23 @@ TWO_VMS = [
     {"name": "bulk", "service": "mt5-b", "container_name": "mt5-b", "novnc_port": 8007},
 ]
 
+TWO_VMS_WITH_LOG_DIRS = [
+    {
+        "name": "fast",
+        "service": "mt5",
+        "container_name": "mt5",
+        "novnc_port": 8006,
+        "log_dir": "/data/mt5-shared/logs",
+    },
+    {
+        "name": "bulk",
+        "service": "mt5-b",
+        "container_name": "mt5-b",
+        "novnc_port": 8007,
+        "log_dir": "/data/mt5-vm-b/logs",
+    },
+]
+
 TWO_VMS_WITH_WICKWORKS = [
     {
         "name": "fast",
@@ -323,7 +340,7 @@ def test_log_rotator_mounts_only_logs_and_terminal_journals(tmp_path, monkeypatc
     services = yaml.safe_load(outpath.read_text(encoding="utf-8"))["services"]
     rotator = services["log-rotator"]
     assert rotator["environment"] == {
-        "LOG_DIR": "/logs",
+        "LOG_DIRS": "/logs-shared",
         "TERMINALS_DIR": "/terminals",
         "RETAIN_DAYS": "7",
         # Age alone leaves today's journal unbounded, and one backtest can
@@ -334,7 +351,7 @@ def test_log_rotator_mounts_only_logs_and_terminal_journals(tmp_path, monkeypatc
         "INTERVAL": "3600",
     }
     assert rotator["volumes"] == [
-        "/data/mt5-shared/logs:/logs",
+        "/data/mt5-shared/logs:/logs-shared",
         "/data/mt5-shared/terminals:/terminals",
         "./scripts/rotate-logs.sh:/rotate.sh:ro",
     ]
@@ -364,3 +381,85 @@ def test_default_compose_exposes_terminal_retention_to_the_rotator():
         "./data/shared/terminals:/terminals",
         "./scripts/rotate-logs.sh:/rotate.sh:ro",
     ]
+
+
+def _generate(tmp_path, monkeypatch, vms):
+    helper = _load_config_helper_module()
+    config_path = _write_config(
+        tmp_path, [{"broker": "acme", "account": "main", "port": 5001}]
+    )
+    vms_path = _write_vms(tmp_path, vms)
+    outpath = tmp_path / "docker-compose.yml"
+    template_path = Path(__file__).resolve().parents[1] / "docker-compose.yml.j2"
+    monkeypatch.setattr(helper, "CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "VMS_PATH", str(vms_path))
+    monkeypatch.setattr(helper, "COMPOSE_TEMPLATE_PATH", str(template_path))
+    monkeypatch.setattr(helper, "COMPOSE_OUTPUT_PATH", str(outpath))
+    monkeypatch.setattr("sys.argv", ["config_helper.py", "generate_compose"])
+    helper.main()
+    return yaml.safe_load(outpath.read_text(encoding="utf-8"))["services"]
+
+
+def _rotator(services):
+    svc = services["log-rotator"]
+    mounts = {}
+    for vol in svc["volumes"]:
+        host, _, container = vol.partition(":")
+        if container.startswith("/logs"):
+            mounts[host] = container.split(":")[0]
+    return svc, mounts
+
+
+def test_log_rotator_covers_every_vm_log_directory(tmp_path, monkeypatch):
+    """A VM's log_dir is mounted OVER /shared/logs, so VMs with different
+    log_dirs write to different HOST directories. The rotator used to mount one
+    hardcoded path, which is why mt5-b's logs were never rotated at all."""
+    services = _generate(tmp_path, monkeypatch, TWO_VMS_WITH_LOG_DIRS)
+    svc, mounts = _rotator(services)
+
+    for vm in TWO_VMS_WITH_LOG_DIRS:
+        assert vm["log_dir"] in mounts, (vm["log_dir"], mounts)
+
+    listed = svc["environment"]["LOG_DIRS"].split(":")
+    assert sorted(listed) == sorted(mounts.values()), (listed, mounts)
+
+
+def test_log_rotator_rotates_a_shared_directory_only_once(tmp_path, monkeypatch):
+    """Two VMs may point at one directory; rotating it twice per pass is waste
+    at best and a race between two passes over the same files at worst."""
+    vms = [dict(vm, log_dir="/data/mt5-shared/logs") for vm in TWO_VMS_WITH_LOG_DIRS]
+    services = _generate(tmp_path, monkeypatch, vms)
+    svc, mounts = _rotator(services)
+
+    assert list(mounts) == ["/data/mt5-shared/logs"]
+    assert svc["environment"]["LOG_DIRS"].count(":") == 0, svc["environment"]["LOG_DIRS"]
+
+
+def test_log_rotator_falls_back_to_the_shared_directory(tmp_path, monkeypatch):
+    """A topology that names no log_dir is a single-VM install writing to the
+    shared directory. It must still be rotated, not silently skipped."""
+    services = _generate(tmp_path, monkeypatch, TWO_VMS)
+    svc, mounts = _rotator(services)
+
+    assert list(mounts) == ["/data/mt5-shared/logs"]
+    assert svc["environment"]["LOG_DIRS"] == "/logs-shared"
+
+
+def test_every_vm_log_dir_in_the_live_topology_is_rotated():
+    """Guards the real vms.yaml, not just a fixture: a VM added with a log_dir
+    and no matching rotator mount grows unbounded and nothing reports it."""
+    root = Path(__file__).resolve().parents[1]
+    vms_path = root / "vms.yaml"
+    compose_path = root / "docker-compose.yml"
+    if not (vms_path.exists() and compose_path.exists()):
+        pytest.skip("no generated topology to check")
+
+    vms = yaml.safe_load(vms_path.read_text(encoding="utf-8"))["vms"]
+    rotator = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"].get(
+        "log-rotator"
+    )
+    assert rotator, "the stack has no log-rotator"
+
+    mounted = {vol.split(":")[0] for vol in rotator["volumes"]}
+    missing = [vm["log_dir"] for vm in vms if vm.get("log_dir") and vm["log_dir"] not in mounted]
+    assert missing == [], missing

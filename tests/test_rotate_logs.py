@@ -1,7 +1,21 @@
-"""Behavioral tests for the log-rotator sidecar script."""
+"""rotate-logs.sh must walk every directory it is given, and gzip what it keeps.
+
+Each VM can mount its own host directory over /shared/logs, so the stack has
+more than one log directory. The rotator took a single $LOG_DIR and had one
+hardcoded mount, which meant the bulk VM's logs were never rotated -- its
+full.log reached 193 MB with no archive beside it and nothing reported the
+gap, because rotating the first directory looks exactly like rotating them all.
+
+Archives are gzipped because truncating the host file does not reset the
+Windows guest's write offset: the live log comes back as a hole, and a plain
+copy writes every one of those zeros out (2.18 GB of archives from 13 MB of
+real text in one pass). The tests below therefore pin the format as well as
+the coverage, including the migration of archives written before the change.
+"""
 
 from __future__ import annotations
 
+import gzip
 import os
 import signal
 import subprocess
@@ -40,7 +54,7 @@ def _terminal_dir(terminals_dir: Path, relative_path: Path | None = None) -> Pat
 
 
 def _rotated_log_name(name: str) -> str:
-    return name + "." + _journal_name(1).removesuffix(".log")
+    return name + "." + _journal_name(1).removesuffix(".log") + ".gz"
 
 
 def _run_rotator(
@@ -180,9 +194,10 @@ def test_missing_terminals_root_does_not_block_shared_log_rotation(tmp_path):
     )
 
     assert live_log.read_text(encoding="utf-8") == ""
-    assert (log_dir / _rotated_log_name(live_log.name)).read_text(
-        encoding="utf-8"
-    ) == "fixture\n"
+    with gzip.open(
+        log_dir / _rotated_log_name(live_log.name), "rt", encoding="utf-8"
+    ) as handle:
+        assert handle.read() == "fixture\n"
 
 
 def test_journal_cleanup_is_idempotent(tmp_path):
@@ -397,3 +412,174 @@ def test_invalid_retention_fails_before_deleting_journals(tmp_path, retain_days)
 
     assert result.returncode != 0
     assert journal.exists()
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "rotate-logs.sh"
+CONTENT = "line one\nline two\n"
+
+
+def _yesterday():
+    return (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%d")
+
+
+def _read_gz(path):
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _run(env_overrides, timeout_s=15):
+    """One pass, then kill: the script sleeps INTERVAL between cycles, so the
+    only way to observe a single pass is to let it finish and cut it off. A pass
+    over a handful of files is instantaneous; the 3s is slack, not a wait."""
+    env = {**os.environ, "RETAIN_DAYS": "7", "INTERVAL": "3600", **env_overrides}
+    proc = subprocess.run(
+        ["timeout", "-s", "KILL", "3", "sh", str(SCRIPT)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+    # Killed by `timeout` means it survived its pass and went to sleep, which is
+    # the success case here. Python reports that as -9 when it reaps the signal
+    # itself and as 137 when `timeout` exits on its behalf; either is fine, and
+    # anything else means the script died on its own.
+    assert proc.returncode in (-9, 137), (proc.returncode, proc.stdout, proc.stderr)
+    return proc.stdout
+
+
+def _log_dir(tmp_path, name, content=CONTENT):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "full.log").write_text(content, encoding="utf-8")
+    return d
+
+
+def _archive(d):
+    return d / f"full.log.{_yesterday()}.gz"
+
+
+def test_every_directory_in_log_dirs_is_rotated(tmp_path):
+    fast = _log_dir(tmp_path, "fast")
+    bulk = _log_dir(tmp_path, "bulk")
+
+    _run({"LOG_DIRS": f"{fast}:{bulk}"})
+
+    for d in (fast, bulk):
+        assert _archive(d).exists(), f"{d.name} was not rotated"
+        assert _read_gz(_archive(d)) == CONTENT
+        assert (d / "full.log").read_text(encoding="utf-8") == ""
+
+
+def test_a_missing_directory_does_not_stop_the_others(tmp_path):
+    """A compose/vms.yaml mismatch must not silently cost the other VMs their
+    rotation -- `set -eu` plus one bad path would abandon the whole pass."""
+    bulk = _log_dir(tmp_path, "bulk")
+    absent = tmp_path / "not-mounted"
+
+    out = _run({"LOG_DIRS": f"{absent}:{bulk}"})
+
+    assert _archive(bulk).exists()
+    assert "not mounted" in out, out
+
+
+def test_the_singular_log_dir_is_still_accepted(tmp_path):
+    """docker-compose.yml.example ships LOG_DIR; a clean single-VM install must
+    keep rotating without being regenerated."""
+    only = _log_dir(tmp_path, "only")
+
+    _run({"LOG_DIR": str(only)})
+
+    assert _archive(only).exists()
+
+
+def test_rotation_is_idempotent_across_directories(tmp_path):
+    fast = _log_dir(tmp_path, "fast")
+    bulk = _log_dir(tmp_path, "bulk")
+
+    _run({"LOG_DIRS": f"{fast}:{bulk}"})
+    (fast / "full.log").write_text("later\n", encoding="utf-8")
+    _run({"LOG_DIRS": f"{fast}:{bulk}"})
+
+    # Second pass must not overwrite the archive with the newer, shorter file.
+    assert _read_gz(_archive(fast)) == CONTENT
+    assert (fast / "full.log").read_text(encoding="utf-8") == "later\n"
+
+
+# ── the archive format ───────────────────────────────────────────────────────
+
+
+def test_a_hole_does_not_become_gigabytes_of_zeros(tmp_path):
+    """The live log is sparse -- truncating it does not reset the guest's write
+    offset, so it returns as a 1.7 GB hole with a few KB of text at the end. A
+    plain copy writes every zero out; the archive has to stay near the size of
+    the real content."""
+    d = tmp_path / "sparse"
+    d.mkdir()
+    live = d / "full.log"
+    with open(live, "wb") as fh:
+        fh.seek(256 * 1024 * 1024)  # the hole the guest's stale offset leaves
+        fh.write(CONTENT.encode())  # the real text, written past it
+
+    _run({"LOG_DIRS": str(d)})
+
+    assert _archive(d).stat().st_size < 512 * 1024, "the hole was written out"
+    assert _read_gz(_archive(d)).endswith(CONTENT)
+
+
+def test_archives_from_before_the_change_are_compressed(tmp_path):
+    """Otherwise the pre-gzip archives sit there holding the very zeros this
+    change exists to stop writing -- 13 GB of them when it shipped."""
+    d = _log_dir(tmp_path, "legacy")
+    plain = d / f"full.log.{_yesterday()}"
+    plain.write_text("older archive\n", encoding="utf-8")
+
+    _run({"LOG_DIRS": str(d)})
+
+    assert not plain.exists(), "the uncompressed archive was left behind"
+    assert _read_gz(_archive(d)) == "older archive\n"
+
+
+def test_the_changeover_day_is_not_rotated_twice(tmp_path):
+    """An uncompressed archive for today's key means an older version already
+    rotated it; re-rotating would overwrite it with a nearly empty live file."""
+    d = _log_dir(tmp_path, "changeover", content="written after rotation\n")
+    plain = d / f"full.log.{_yesterday()}"
+    plain.write_text("the real archive\n", encoding="utf-8")
+    (d / f"full.log.{_yesterday()}.gz").write_bytes(gzip.compress(b"the real archive\n"))
+
+    _run({"LOG_DIRS": str(d)})
+
+    assert _read_gz(_archive(d)) == "the real archive\n"
+    assert (d / "full.log").read_text(encoding="utf-8") == "written after rotation\n"
+
+
+def test_retention_prunes_both_archive_shapes_in_every_directory(tmp_path):
+    """Retention keys on the date, which now sits before a .gz. Reading the
+    suffix naively yields "gz" for every compressed archive, so nothing would
+    ever age out and the directory would grow forever."""
+    fast = _log_dir(tmp_path, "fast")
+    bulk = _log_dir(tmp_path, "bulk")
+    stale = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y%m%d")
+    for d in (fast, bulk):
+        (d / f"full.log.{stale}.gz").write_bytes(gzip.compress(b"ancient\n"))
+        (d / f"start.log.{stale}").write_text("ancient plain\n", encoding="utf-8")
+
+    _run({"LOG_DIRS": f"{fast}:{bulk}"})
+
+    for d in (fast, bulk):
+        assert not (d / f"full.log.{stale}.gz").exists(), f"{d.name} kept a stale .gz"
+        assert not (d / f"start.log.{stale}").exists(), f"{d.name} kept a stale archive"
+        assert not (d / f"start.log.{stale}.gz").exists(), f"{d.name} kept it compressed"
+
+
+def test_a_live_log_is_never_mistaken_for_an_archive(tmp_path):
+    """The compression pass globs *.log.[0-9]* — a rotated-looking name must be
+    a fixed-width date, or an unrelated file gets swallowed."""
+    d = _log_dir(tmp_path, "mixed")
+    decoy = d / "full.log.4"
+    decoy.write_text("not an archive\n", encoding="utf-8")
+
+    _run({"LOG_DIRS": str(d)})
+
+    assert decoy.exists(), "a non-archive was compressed"
+    assert decoy.read_text(encoding="utf-8") == "not an archive\n"
