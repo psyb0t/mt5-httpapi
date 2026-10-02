@@ -1663,3 +1663,166 @@ def test_an_invalid_compile_byte_cap_falls_back_to_the_default_with_a_warning(
     with caplog.at_level("WARNING", logger="mt5api.config"):
         assert config._positive_int_setting(name, name.lower(), 2 * 1024 * 1024) == 2 * 1024 * 1024
     assert name in caplog.text
+
+
+# ── MQL4: a `.mq4` filename selects the MT4 MetaEditor on the same route ─────
+
+MT4_SUCCESS_LOG = (
+    "ea.mq4 : information: compiling 'ea.mq4'\n"
+    "Result: 0 errors, 0 warnings, 87 msec elapsed\n"
+)
+
+
+@pytest.fixture
+def mt4_env(monkeypatch, tmp_path):
+    """An MT4 install that 'exists', and none of MT5's mirror state."""
+    mt4 = tmp_path / "mt4"
+    (mt4 / "MQL4" / "Include").mkdir(parents=True)
+    (mt4 / "MQL4" / "Include" / "stdlib.mqh").write_text("// stdlib")
+    (mt4 / "metaeditor.exe").write_bytes(b"MZ")
+    monkeypatch.setattr(compile_handler, "COMPILE_MT4_TERMINAL_DIR", str(mt4))
+    monkeypatch.setattr(compile_handler, "COMPILE_WORK_DIR", str(tmp_path / "work"))
+    monkeypatch.setattr(compile_handler, "COMPILE_LOCAL_CACHE", "")
+    monkeypatch.setattr(compile_handler, "COMPILE_TIMEOUT_SECONDS", 30)
+    monkeypatch.setattr(compile_handler, "_MT4_TOOLCHAIN", None)
+    monkeypatch.setattr(compile_handler, "_MT4_TOOLCHAIN_RESOLVED", False)
+    return mt4
+
+
+def _fake_mt4_editor(log_bytes, ex4_bytes=None, record=None):
+    def _run(cmd, **kwargs):
+        if record is not None:
+            record.append(cmd)
+        log_path = next(a.split(":", 1)[1] for a in cmd if a.startswith("/log:"))
+        src_path = next(a.split(":", 1)[1] for a in cmd if a.startswith("/compile:"))
+        with open(log_path, "wb") as fh:
+            fh.write(log_bytes)
+        if ex4_bytes is not None:
+            with open(os.path.splitext(src_path)[0] + ".ex4", "wb") as fh:
+                fh.write(ex4_bytes)
+        return FakeCompleted(0)
+    return _run
+
+
+@pytest.mark.parametrize("supplied,expected", [
+    ("ea.mq4", "ea"),
+    ("MyEA.MQ4", "MyEA"),
+    ("..\\..\\evil.mq4", "evil"),
+])
+def test_mq4_filename_is_reduced_to_a_harmless_stem(supplied, expected):
+    assert compile_handler._safe_stem(supplied) == expected
+
+
+@pytest.mark.parametrize("filename,expected", [
+    ("ea.mq4", "mt4"), ("EA.MQ4", "mt4"), (" ea.mq4 ", "mt4"),
+    ("ea.mq5", "mt5"), ("ea", "mt5"), ("", "mt5"), (None, "mt5"),
+    ("ea.mq4.mq5", "mt5"),
+])
+def test_platform_is_chosen_by_the_filename_extension(filename, expected):
+    assert compile_handler._platform_for(filename) == expected
+
+
+def test_mq4_compiles_with_the_mt4_editor_and_returns_an_ex4(
+    client, compile_env, mt4_env, monkeypatch
+):
+    recorded = []
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_mt4_editor(_utf16_log(MT4_SUCCESS_LOG), b"ex4-bytes", record=recorded),
+    )
+    resp = _post(client, {"source": "void start(){}", "filename": "ea.mq4"})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert base64.b64decode(body["ex4_base64"]) == b"ex4-bytes"
+    assert "ex5_base64" not in body
+    assert body["warnings"] == 0
+    # MetaEditor 4, the MT4 include tree, and a .mq4 source - never MT5's editor.
+    assert recorded[0][0] == str(mt4_env / "metaeditor.exe")
+    assert next(a for a in recorded[0] if a.startswith("/compile:")).endswith(".mq4")
+    assert next(a for a in recorded[0] if a.startswith("/inc:")) == f"/inc:{mt4_env / 'MQL4'}"
+
+
+def test_mq5_requests_are_unchanged_when_mt4_is_installed(
+    client, compile_env, mt4_env, monkeypatch
+):
+    recorded = []
+    monkeypatch.setattr(compile_handler, "COMPILE_LOCAL_CACHE", "")
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_metaeditor(_utf16_log(SUCCESS_LOG), b"ex5", record=recorded),
+    )
+    body = _post(client, {"source": "void OnTick(){}", "filename": "ea.mq5"}).get_json()
+    assert base64.b64decode(body["ex5_base64"]) == b"ex5"
+    assert "ex4_base64" not in body
+    assert recorded[0][0] == compile_env["editor"]
+
+
+def test_mq4_errors_take_the_same_422_path(client, compile_env, mt4_env, monkeypatch):
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_mt4_editor(_utf16_log(ERROR_LOG)),
+    )
+    resp = _post(client, {"source": "bad", "filename": "ea.mq4"})
+    assert resp.status_code == 422
+    assert resp.get_json()["errors"] == 3
+
+
+def test_clean_mq4_log_without_an_ex4_is_never_success(
+    client, compile_env, mt4_env, monkeypatch
+):
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_mt4_editor(_utf16_log(MT4_SUCCESS_LOG)),
+    )
+    resp = _post(client, {"source": "void start(){}", "filename": "ea.mq4"})
+    assert resp.status_code == 422
+    assert "no .ex4" in resp.get_json()["log"]
+
+
+def test_mq4_without_an_mt4_install_is_a_json_500_and_mq5_still_works(
+    client, compile_env, mt4_env, monkeypatch
+):
+    (mt4_env / "metaeditor.exe").unlink()
+    resp = _post(client, {"source": "void start(){}", "filename": "ea.mq4"})
+    assert resp.status_code == 500
+    assert resp.get_json()["log"] == "MT4 MetaEditor is not available on this host"
+
+    monkeypatch.setattr(compile_handler, "COMPILE_LOCAL_CACHE", "")
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_metaeditor(_utf16_log(SUCCESS_LOG), b"ex5"),
+    )
+    assert _post(client, {"source": "void OnTick(){}"}).status_code == 200
+
+
+def test_metaeditor64_is_preferred_over_the_32_bit_editor(mt4_env):
+    (mt4_env / "metaeditor64.exe").write_bytes(b"MZ")
+    assert compile_handler._mt4_editor(str(mt4_env)) == str(mt4_env / "metaeditor64.exe")
+
+
+def test_mt4_mirror_lives_under_its_own_subdirectory_and_is_built_once(
+    client, compile_env, mt4_env, monkeypatch, tmp_path
+):
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(compile_handler, "COMPILE_LOCAL_CACHE", str(cache))
+    recorded = []
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_mt4_editor(_utf16_log(MT4_SUCCESS_LOG), b"ex4", record=recorded),
+    )
+    copies = []
+    real_copy = compile_handler.shutil.copy2
+    monkeypatch.setattr(
+        compile_handler.shutil, "copy2",
+        lambda *a, **k: (copies.append(a[0]), real_copy(*a, **k))[1],
+    )
+    for _ in range(3):
+        assert _post(client, {"source": "x", "filename": "ea.mq4"}).status_code == 200
+
+    assert recorded[0][0] == str(cache / "mt4" / "metaeditor.exe")
+    assert (cache / "mt4" / "MQL4" / "Include" / "stdlib.mqh").exists()
+    # Not in the MT5 mirror's root, so the two cannot collide.
+    assert not (cache / "MQL4").exists()
+    assert len(copies) == 2, f"expected editor + one header, copied {copies}"

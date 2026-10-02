@@ -84,6 +84,9 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 call :log "%START_LOG%" "install.bat done."
+:: One-time compile-only MT4 install for POST /compile (.mq4). Never fatal, and
+:: a no-op unless compile-mt4\mt4setup.exe is staged. No terminals run yet.
+call "%SCRIPTS%\install-mt4-compiler.bat"
 
 :: ── Pip install ──────────────────────────────────────────────────
 :: Install base deps first (pyyaml required for config_helper.py below).

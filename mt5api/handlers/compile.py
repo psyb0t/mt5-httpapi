@@ -29,6 +29,11 @@ MetaEditor specifics worth knowing before editing this:
   * It emits the .ex5 beside the source file, not into a configurable output
     path — which is exactly why compiling inside the temp directory is enough
     to keep concurrent requests from colliding over output names.
+
+MQL4 rides the same route. A `filename` ending in `.mq4` selects the MT4
+MetaEditor (COMPILE_MT4_TERMINAL_DIR) and answers with `ex4_base64`; anything
+else is MQL5 exactly as before. MT4 is a compiler only here — there is no MT4
+terminal, account or tester behind it.
 """
 
 import base64
@@ -53,6 +58,7 @@ from mt5api.config import (
     COMPILE_MAX_EX5_BYTES,
     COMPILE_MAX_SOURCE_BYTES,
     COMPILE_METAEDITOR,
+    COMPILE_MT4_TERMINAL_DIR,
     COMPILE_TIMEOUT_SECONDS,
     COMPILE_WORK_DIR,
 )
@@ -570,6 +576,93 @@ def _local_toolchain():
     return _LOCAL_TOOLCHAIN
 
 
+#: MT4 toolchain, resolved once per process like the MT5 one above: the
+#: (metaeditor, include_dir) to compile with, or None when MT4 is not installed.
+_MT4_TOOLCHAIN = None
+_MT4_TOOLCHAIN_RESOLVED = False
+_MT4_INCLUDES_CHECKED_AT = 0.0
+
+#: MetaTrader 4 ships the editor as metaeditor.exe (32-bit) and, on newer
+#: builds, metaeditor64.exe. Prefer the 64-bit one when both are present.
+_MT4_EDITOR_NAMES = ("metaeditor64.exe", "metaeditor.exe")
+
+
+def _platform_for(filename):
+    """"mt4" for a .mq4 filename, otherwise "mt5" - the endpoint's original
+    behaviour, so a caller that never sends .mq4 sees no difference."""
+    if isinstance(filename, str) and filename.strip().lower().endswith(".mq4"):
+        return "mt4"
+    return "mt5"
+
+
+def _mt4_editor(directory):
+    """Path of the MT4 MetaEditor in `directory`, or None if there isn't one."""
+    for name in _MT4_EDITOR_NAMES:
+        candidate = os.path.join(directory, name)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _mt4_toolchain():
+    """(metaeditor_path, include_dir) for MQL4, or None if MT4 is not installed.
+
+    Mirrors the MT5 logic: with COMPILE_LOCAL_CACHE set the editor, its Config
+    and the MQL4 tree are copied to local disk (under <cache>/mt4, so it cannot
+    collide with the MT5 mirror) and compiled from there; the include tree is
+    re-validated every INCLUDE_REFRESH_SECONDS. Failure to mirror falls back to
+    the shared copy rather than failing the request.
+
+    Callers must hold _COMPILE_LOCK.
+    """
+    global _MT4_TOOLCHAIN, _MT4_TOOLCHAIN_RESOLVED, _MT4_INCLUDES_CHECKED_AT
+
+    source_editor = _mt4_editor(COMPILE_MT4_TERMINAL_DIR)
+    if not source_editor:
+        return None
+    shared = (source_editor, os.path.join(COMPILE_MT4_TERMINAL_DIR, "MQL4"))
+    if not COMPILE_LOCAL_CACHE:
+        return shared
+
+    cache = os.path.join(COMPILE_LOCAL_CACHE, "mt4")
+    src_inc = shared[1]
+    dst_inc = os.path.join(cache, "MQL4")
+    if _MT4_TOOLCHAIN_RESOLVED:
+        if (
+            _MT4_TOOLCHAIN
+            and os.path.isdir(src_inc)
+            and time.monotonic() - _MT4_INCLUDES_CHECKED_AT >= INCLUDE_REFRESH_SECONDS
+        ):
+            _MT4_INCLUDES_CHECKED_AT = time.monotonic()
+            try:
+                _mirror_tree(src_inc, dst_inc)
+            except Exception as exc:  # noqa: BLE001 - keep the mirrored copy
+                log.warning("compile: could not refresh MT4 includes (%s)", exc)
+        return _MT4_TOOLCHAIN or shared
+
+    _MT4_TOOLCHAIN_RESOLVED = True
+    _MT4_INCLUDES_CHECKED_AT = time.monotonic()
+    try:
+        os.makedirs(cache, exist_ok=True)
+        for item in (os.path.basename(source_editor), "Config", "MQL4"):
+            src = os.path.join(COMPILE_MT4_TERMINAL_DIR, item)
+            dst = os.path.join(cache, item)
+            if not os.path.exists(src):
+                continue
+            if os.path.isdir(src):
+                _mirror_tree(src, dst)
+            elif not _is_current(src, dst):
+                shutil.copy2(src, dst)
+        editor = os.path.join(cache, os.path.basename(source_editor))
+        if os.path.exists(editor):
+            _MT4_TOOLCHAIN = (editor, dst_inc if os.path.isdir(dst_inc) else src_inc)
+            log.info("compile: using local MT4 toolchain at %s", cache)
+    except Exception as exc:  # noqa: BLE001 - fall back, never fail the request
+        log.warning("compile: could not build local MT4 toolchain (%s), using shared copy", exc)
+        _MT4_TOOLCHAIN = None
+    return _MT4_TOOLCHAIN or shared
+
+
 def _tail(text, limit=MAX_LOG_BYTES):
     """Last `limit` bytes of a log, as a string. Never None."""
     if not text:
@@ -652,7 +745,7 @@ def _safe_stem(filename):
     # ntpath-style and posix separators, plus drive colons.
     stem = re.split(r"[\\/]", filename)[-1]
     stem = stem.split(":")[-1]
-    if stem.lower().endswith(".mq5"):
+    if stem.lower().endswith((".mq5", ".mq4")):
         stem = stem[:-4]
     stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem).strip("._-")
     return stem or "ea"
@@ -1026,8 +1119,16 @@ def _compile_source_inner(started):
         return _json({"ok": False, "log": refused}, 400)
 
     stem = _safe_stem(body.get("filename") or "ea.mq5")
+    platform = _platform_for(body.get("filename"))
 
-    if not os.path.exists(COMPILE_METAEDITOR):
+    if platform == "mt4":
+        if not _mt4_editor(COMPILE_MT4_TERMINAL_DIR):
+            log.error("compile: MT4 MetaEditor missing in %s", COMPILE_MT4_TERMINAL_DIR)
+            return _json(
+                {"ok": False, "log": "MT4 MetaEditor is not available on this host"},
+                500,
+            )
+    elif not os.path.exists(COMPILE_METAEDITOR):
         log.error("compile: MetaEditor missing at %s", COMPILE_METAEDITOR)
         # The path is for the operator's log, not the caller's response.
         return _json(
@@ -1068,14 +1169,14 @@ def _compile_source_inner(started):
                 504,
             )
         try:
-            return _run_compile(stem, source, ea_version, started, deadline)
+            return _run_compile(stem, source, ea_version, started, deadline, platform)
         finally:
             _COMPILE_LOCK.release()
     finally:
         _COMPILE_SLOTS.release()
 
 
-def _run_compile(stem, source, ea_version, started, deadline):
+def _run_compile(stem, source, ea_version, started, deadline, platform="mt5"):
     # Serialize against every OTHER PROCESS sharing this toolchain (see
     # _CROSS_PROCESS_LOCK_BASENAME) — _COMPILE_LOCK only serializes calls
     # inside this one process. Taken BEFORE _local_toolchain(): refreshing the
@@ -1095,19 +1196,29 @@ def _run_compile(stem, source, ea_version, started, deadline):
             504,
         )
     try:
-        return _compile_holding_lock(stem, source, ea_version, started)
+        return _compile_holding_lock(stem, source, ea_version, started, platform)
     finally:
         _release_cross_process_lock(cross_lock)
 
 
-def _compile_holding_lock(stem, source, ea_version, started):
-    local = _local_toolchain()
+def _compile_holding_lock(stem, source, ea_version, started, platform="mt5"):
+    if platform == "mt4":
+        local = _mt4_toolchain()
+        if not local:  # removed between the availability check and here
+            return _json(
+                {"ok": False, "log": "MT4 MetaEditor is not available on this host"},
+                500,
+            )
+        src_ext, bin_ext, bin_key = ".mq4", ".ex4", "ex4_base64"
+    else:
+        local = _local_toolchain()
+        src_ext, bin_ext, bin_key = ".mq5", ".ex5", "ex5_base64"
     metaeditor, include_dir = local if local else (COMPILE_METAEDITOR, COMPILE_INCLUDE_DIR)
 
     os.makedirs(COMPILE_WORK_DIR, exist_ok=True)
     work_dir = tempfile.mkdtemp(prefix="compile-", dir=COMPILE_WORK_DIR)
-    src_path = os.path.join(work_dir, f"{stem}.mq5")
-    ex5_path = os.path.join(work_dir, f"{stem}.ex5")
+    src_path = os.path.join(work_dir, f"{stem}{src_ext}")
+    ex5_path = os.path.join(work_dir, f"{stem}{bin_ext}")
     log_path = os.path.join(work_dir, "compile.log")
 
     try:
@@ -1124,8 +1235,8 @@ def _compile_holding_lock(stem, source, ea_version, started):
         ]
 
         log.info(
-            "compile start stem=%s ea_version=%s bytes=%d dir=%s",
-            stem, ea_version or "-", len(source), work_dir,
+            "compile start platform=%s stem=%s ea_version=%s bytes=%d dir=%s",
+            platform, stem, ea_version or "-", len(source), work_dir,
         )
 
         timed_out = False
@@ -1203,7 +1314,7 @@ def _compile_holding_lock(stem, source, ea_version, started):
             )
             body = {
                 "ok": True,
-                "ex5_base64": base64.b64encode(ex5_bytes).decode("ascii"),
+                bin_key: base64.b64encode(ex5_bytes).decode("ascii"),
                 "log": _tail(log_text),
                 "warnings": warnings,
             }
@@ -1213,7 +1324,9 @@ def _compile_holding_lock(stem, source, ea_version, started):
             # the tree cannot be read. Computed while the cross-process lock is
             # still held, so no other process's mirror refresh lands between
             # the compile and the hash.
-            digest = _include_hash(include_dir)
+            # MQL5 only: the digest cache is a single slot keyed on the MQL5
+            # tree, and an MT4 build has no shared library to track.
+            digest = _include_hash(include_dir) if platform == "mt5" else None
             if digest:
                 body["include_hash"] = digest
             # Only alongside the tree hash: on its own it would say which of a
@@ -1231,7 +1344,7 @@ def _compile_holding_lock(stem, source, ea_version, started):
             errors = 1
             log_text = (
                 (log_text.rstrip() + "\n" if log_text.strip() else "")
-                + f"compile produced no .ex5 (MetaEditor exit code {returncode})"
+                + f"compile produced no {bin_ext} (MetaEditor exit code {returncode})"
             )
 
         log.info(

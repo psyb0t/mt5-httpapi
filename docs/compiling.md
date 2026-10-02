@@ -39,7 +39,7 @@ curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `source` | string | yes | The complete `.mq5` text. Capped at `COMPILE_MAX_SOURCE_BYTES` (default 2 MB). |
-| `filename` | string | no | Cosmetic. Reduced to a bare stem — see [Security](#security). Defaults to `ea.mq5`. |
+| `filename` | string | no | Reduced to a bare stem — see [Security](#security). Defaults to `ea.mq5`. A name ending in `.mq4` compiles the source as MQL4 — see [MQL4](#mql4). |
 | `ea_version` | string | no | Recorded in the server log to correlate a compile with your build. Not passed to the compiler. 1–64 characters of `A-Z a-z 0-9 . _ + -`; anything else is a 400. |
 
 ## Responses
@@ -171,6 +171,7 @@ Environment overrides, all optional:
 | --- | --- | --- |
 | `COMPILE_API_TOKEN` | unset | Compile-only bearer token. |
 | `COMPILE_TERMINAL_DIR` | `terminals/metaquotes/base` | Terminal directory whose `MetaEditor64.exe` is used. |
+| `COMPILE_MT4_TERMINAL_DIR` | `compile-mt4` | Directory holding the MT4 MetaEditor and `MQL4` tree, used for `.mq4` requests. |
 | `COMPILE_INCLUDE_DIR` | `<terminal>/MQL5` | Passed to MetaEditor as `/inc:`. `#include <Foo.mqh>` resolves under `<this>/Include/`. |
 | `COMPILE_WORK_DIR` | `logs/compile-work` | Parent of the per-request temp directories. |
 | `COMPILE_LOCAL_CACHE` | unset | Mirror the toolchain onto local disk — see [Performance](#performance). |
@@ -208,6 +209,28 @@ builds within that window rather than at the next restart. If you have just
 changed a shared library and are about to rebuild everything that depends on
 it, let that window pass first — otherwise the first builds of the batch can
 still use the previous copy, and they will report success while doing it.
+
+## MQL4
+
+The same route compiles MQL4. Send `"filename": "MyEA.mq4"` and the server uses
+the MT4 MetaEditor instead of MetaEditor 5; anything else is MQL5 exactly as
+before. Nothing else about the request changes.
+
+The 200 response carries the binary as `ex4_base64` instead of `ex5_base64`
+(the two are never both present), and has no `include_hash` / `include_files`.
+422, 504, 413, 400, 401 mean what they do for MQL5.
+
+This is a compiler only. There is no MT4 terminal, account, or tester behind
+it, and it is not visible to anything that enumerates broker terminals.
+
+Set up by putting an MT4 installation in `COMPILE_MT4_TERMINAL_DIR` (default
+`compile-mt4/` beside `terminals/`, i.e. `C:\Users\Docker\Desktop\Shared\compile-mt4`
+in the guest). It needs `metaeditor64.exe` or `metaeditor.exe` and the `MQL4`
+folder next to it (the installer creates both; `MQL4\Include` must exist or
+`#include <stdlib.mqh>` fails with error 106). With `COMPILE_LOCAL_CACHE` set,
+the MT4 toolchain is mirrored to `<cache>\mt4` the same way as MQL5's. Without
+an install, an `.mq4` request answers `500 "MT4 MetaEditor is not available on
+this host"`. MQL5 is unaffected.
 
 ## Performance
 

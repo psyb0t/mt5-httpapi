@@ -247,6 +247,14 @@ COMPILE_TERMINAL_DIR = _compile_setting(
 ) or os.path.join(BROKERS_DIR, "metaquotes", "base")
 COMPILE_METAEDITOR = os.path.join(COMPILE_TERMINAL_DIR, "MetaEditor64.exe")
 
+# MQL4 compiles (a `.mq4` filename on POST /compile) use the MT4 MetaEditor in
+# this directory - metaeditor64.exe or metaeditor.exe, plus its MQL4 tree.
+# Compile-only: nothing here runs a terminal, and it sits outside terminals/ so
+# nothing that enumerates broker terminals can mistake it for an instance.
+COMPILE_MT4_TERMINAL_DIR = _compile_setting(
+    "COMPILE_MT4_TERMINAL_DIR", "compile_mt4_terminal_dir"
+) or os.path.join(BASE_DIR, "compile-mt4")
+
 # Passed to MetaEditor as /inc:. This is the MQL5 directory (the PARENT of
 # Include), because that is what /inc: expects - `#include <Foo.mqh>` resolves
 # to <inc>/Include/Foo.mqh.
