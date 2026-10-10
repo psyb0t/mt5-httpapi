@@ -139,6 +139,30 @@ if "!PIP_CHANGED!"=="1" (
     exit /b 0
 )
 
+:: -- Desktop heap ---------------------------------------------------------
+:: Every window, console and terminal in this session draws on the session's
+:: desktop heap. At the Windows default (20 MB) a VM running 20+ terminals
+:: runs out: Win32k event 243, then every new terminal aborts at startup with
+:: exit 10053. desktop_heap.py raises it to 64 MB; the new size only applies
+:: from the next boot, so reboot once. The marker (VM-local, not on Shared)
+:: stops a reboot loop if the raised value does not survive the reboot.
+set "HEAP_MARKER=%ProgramData%\mt5-httpapi-desktop-heap.reboot"
+"%PYDIR%\python.exe" "%SCRIPTS%\desktop_heap.py" >> "%START_LOG%" 2>&1
+set "HEAP_EC=!errorlevel!"
+if "!HEAP_EC!"=="3" (
+    if exist "!HEAP_MARKER!" (
+        call :log "%START_LOG%" "WARNING: desktop heap was raised before the last reboot and is low again; not rebooting twice"
+    ) else (
+        echo desktop-heap> "!HEAP_MARKER!"
+        call :log "%START_LOG%" "desktop heap raised, rebooting so it takes effect"
+        call "%SCRIPTS%\reboot.bat" desktop-heap
+        exit /b 0
+    )
+) else (
+    del "!HEAP_MARKER!" 2>nul
+    if not "!HEAP_EC!"=="0" call :log "%START_LOG%" "WARNING: desktop heap check failed (exit !HEAP_EC!), continuing"
+)
+
 :: -- Start Windows event log tailer (background) ----------------
 :: Streams Warning/Error/Critical from System + Application logs into
 :: %LOGDIR%\windows-events.log so OOM kills, BSODs, terminal64 crashes,

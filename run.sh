@@ -86,6 +86,7 @@ cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-wa
 
 cp "${DIR}/scripts/compile-chartctl-loader.bat" "${DIR}/data/shared/scripts/compile-chartctl-loader.bat"
 cp "${DIR}/scripts/check_health.py" "${DIR}/data/shared/scripts/check_health.py"
+cp "${DIR}/scripts/desktop_heap.py" "${DIR}/data/shared/scripts/desktop_heap.py"
 cp "${DIR}/scripts/config_helper.py" "${DIR}/data/shared/scripts/config_helper.py"
 cp "${DIR}/scripts/webrequest_allowlist_codec.py" "${DIR}/data/shared/scripts/webrequest_allowlist_codec.py"
 

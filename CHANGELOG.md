@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Terminals no longer abort at launch with exit code 10053 on a VM running many of them.** Every window, console and terminal in the VM's session takes memory from its desktop heap, which Windows caps at 20 MB. With 20 or more terminals running it ran out (`Win32k` event 243, `A desktop heap allocation failed`), and every terminal launched after that exited about a second after starting, before it signed in or started the tester, so backtests failed with `terminal64.exe exited with code 10053` in bursts. `start.bat` now raises the interactive desktop heap to 64 MB at boot through `scripts/desktop_heap.py` and reboots once for it to apply. See [docs/operations.md](docs/operations.md#many-terminals-per-vm-the-desktop-heap).
+
 ## [v4.28.1]: 2026-10-10
 
 ### Changed
