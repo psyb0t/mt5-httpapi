@@ -32,7 +32,7 @@ Every terminal serves `/mcp` beside its REST API. The tools are dedicated and ty
   - artifacts: `upload_expert(filename, content_base64, overwrite?)`, `list_experts`, `delete_expert`, `upload_set(filename, content? | content_base64?)`, `list_sets`, `get_set`, `delete_set`
   - deployments: `create_deployment(expert, symbol, timeframe, set_file?, enabled?)`, `list_deployments`, `get_deployment`, `update_deployment(deployment_id, enabled?, set_file?)`, `delete_deployment`, `reconcile_deployments`
   - charts: `list_charts`, `get_loader`, `screenshot_chart(chart_id, width?, height?)`, `close_chart`
-  - WebRequest allowlist: `get_webrequest`, `set_webrequest(urls? | add?, remove?, runas?)`, `apply_webrequest(runas?)`
+  - WebRequest allowlist: `get_webrequest`, `set_webrequest(urls? | add?, remove?, runas?)`, `apply_webrequest(runas?)`, `verify_webrequest` (`runas` is ignored and kept for older callers)
 - **Files**, only on terminals with the [file API](files.md) enabled: `list_files(path?, tree?)`, `get_file(path, tree?)`, `put_file(path, content? | content_base64?, extract?, tree?)`, `delete_file(path, recursive?, tree?)`. `tree` is `terminal` (the install directory) or `compile` (the MQL5 tree `/compile` builds against).
 - **Escape hatch** — `request(method, path, query?, body?)` + `endpoints` (route catalog) for JSON-compatible routes without a dedicated tool. Multipart uploads such as `POST /backtest` still use REST directly.
 

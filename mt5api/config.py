@@ -631,6 +631,32 @@ CHARTCTL_COMMAND_TIMEOUT_SECONDS = _chartctl_seconds(
 CHARTCTL_MAX_UPLOAD_BYTES = _chartctl_bytes(
     _chartctl_cfg.get("max_upload_bytes"), 16 * 1024 * 1024, 1024
 )
+
+
+def navigator_labels(raw) -> dict[str, list[str]]:
+    """chartctl.navigator_labels: translations of the Navigator's "Expert
+    Advisors" node and its "Refresh" item, for a terminal not running in
+    English. The English labels are always tried after these (winnavigator).
+    Anything malformed is dropped with a warning: the Navigator refresh then
+    works in English only, and trading is never stopped by this block."""
+    out: dict[str, list[str]] = {"expert_advisors": [], "refresh": []}
+    if raw in (None, {}):
+        return out
+    if not isinstance(raw, dict):
+        _setting_warning("chartctl.navigator_labels is not a mapping; using English labels only")
+        return out
+    for key in out:
+        value = raw.get(key, [])
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            _setting_warning("chartctl.navigator_labels.%s is not a list of strings; ignored", key)
+            continue
+        out[key] = [v.strip() for v in value if v.strip()]
+    return out
+
+
+CHARTCTL_NAVIGATOR_LABELS = navigator_labels(_chartctl_cfg.get("navigator_labels"))
 # File API: read, write and delete files under this terminal's install
 # directory (/files) and the compile tree (/compile/files). Opt-in, like
 # chartctl: it reaches everything an expert can, including DLLs in

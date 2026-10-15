@@ -32,8 +32,10 @@ def register_chartctl_routes(app: Flask) -> None:
     app.post("/charts/<chart_id>/screenshot")(chartctl.screenshot)
     app.post("/charts/<chart_id>/close")(chartctl.close_chart)
 
-    # Applied via AutoIt (VM) or a common.ini rewrite plus a terminal restart
-    # (bare metal). /apply re-applies on demand.
+    # Applied in the terminal's Options dialog with window messages (VM) or a
+    # common.ini rewrite plus a terminal restart (bare metal). /apply
+    # re-applies on demand; /verify reads the list the terminal really holds.
     app.get("/webrequest")(webrequest.get_webrequest)
     app.put("/webrequest")(webrequest.put_webrequest)
     app.post("/webrequest/apply")(webrequest.apply_webrequest)
+    app.post("/webrequest/verify")(webrequest.verify_webrequest)

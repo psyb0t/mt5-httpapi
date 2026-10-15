@@ -5,10 +5,18 @@ import time
 import MetaTrader5 as mt5
 from mt5api.config import INI_FILE
 from mt5api.logger import log
+import mt5api.mt5client as mt5client_module
 from mt5api.mt5client import SESSION_ACQUIRE_TIMEOUT, MT5LockTimeout, MT5Timeout, m, session
 
 CHECK_INTERVAL = 60
 DEAD_CHECKS_BEFORE_RESTART = 5
+# The generation watcher's check is a psutil call on one pid, so it can run
+# often: a terminal that restarted on its own gets its WebRequest list back
+# about this long plus the GUI settle time after it started.
+GENERATION_CHECK_INTERVAL = 10
+# A stored WebRequest list missing from the running terminal for longer than
+# this is logged as an error on every health pass, for the log alerts.
+WEBREQUEST_STALE_ALERT_SECONDS = 300
 
 
 def _check_ini_autotrading():
@@ -32,15 +40,106 @@ def _check_ini_autotrading():
     return False
 
 
+def _webrequest_stale_check(state: dict, now: float) -> None:
+    """Log loudly when the running terminal has gone without its stored
+    WebRequest list for WEBREQUEST_STALE_ALERT_SECONDS, and once when it is back.
+
+    Uses the generation the watcher last saw, so it never runs a pid lookup."""
+    from mt5api.chartctl import terminal_pid
+    from mt5api.chartctl import webrequest_apply as wa
+
+    if not wa.available():
+        return
+    generation = terminal_pid.last_generation()
+    if not wa.is_stale(generation):
+        if state.get("alerted"):
+            log.info("WebRequest list restored on the terminal (pid=%s).",
+                     generation[0] if generation else None)
+        state["since"] = None
+        state["alerted"] = False
+        return
+    if state.get("since") is None:
+        state["since"] = now
+    stale_for = now - state["since"]
+    if stale_for > WEBREQUEST_STALE_ALERT_SECONDS:
+        last = wa.load_status() or {}
+        log.error(
+            "!!! WEBREQUEST LIST NOT RESTORED !!! (pid=%d, stale %ds, last apply: %s/%s)",
+            generation[0], int(stale_for), last.get("status"), last.get("code"),
+        )
+        state["alerted"] = True
+
+
+def _generation_step(state: dict) -> None:
+    """One check of the generation watcher: when a new terminal64.exe is
+    running, reconnect the SDK to it and re-apply the WebRequest list.
+
+    The terminal may have restarted on its own (LiveUpdate), been started by
+    the SDK (ensure_initialized from a handler) or by hand after a crash; none
+    of those go through restart_terminal, which re-applies by itself. The SDK
+    is reconnected first because after such a restart it can stay attached to
+    the dead process: terminal_info() keeps failing and the health monitor
+    would kill the freshly started terminal after its dead checks."""
+    from mt5api import mt5client
+    from mt5api.backtest.handler import RUN_LOCK
+    from mt5api.chartctl import terminal_pid
+    from mt5api.chartctl import webrequest_apply as wa
+
+    generation = terminal_pid.current_generation()
+    if generation is None or generation == state.get("last_seen"):
+        return
+    if RUN_LOCK.locked():
+        return  # the tester's process runs from the same exe; look again after the run
+    if mt5client.RESTART_IN_PROGRESS.is_set():
+        return  # restart_terminal reconnects and re-applies itself; record nothing yet
+    previous = state.get("last_seen")
+    state["last_seen"] = generation
+    if previous is None:
+        # The first sighting after the API started: the start-up path connects
+        # and re-applies by itself (main._reapply_webrequest_once).
+        log.info("Terminal process: pid=%d", generation[0])
+        return
+    log.warning("Terminal process changed: pid=%d (was %d)", generation[0], previous[0])
+    try:
+        with session(bypass_queue_cap=True):
+            reconnected = mt5client.ensure_initialized()
+    except MT5LockTimeout:
+        log.warning("SDK reconnect after a terminal process change waited too long for the lock")
+        reconnected = False
+    except Exception:  # noqa: BLE001 - the re-apply below drives the window, not the SDK
+        log.exception("SDK reconnect after a terminal process change failed")
+        reconnected = False
+    if not reconnected:
+        log.warning("SDK did not reconnect to the new terminal process; "
+                    "the health monitor's dead checks take over")
+    if wa.is_stale(generation) and not wa.reapply_pending():
+        wa.reapply_in_background(wa.gui_settle_seconds(), "new terminal process")
+
+
+def _generation_loop():
+    state: dict = {"last_seen": None}
+    while True:
+        time.sleep(GENERATION_CHECK_INTERVAL)
+        try:
+            _generation_step(state)
+        except Exception:  # noqa: BLE001 - never kill the watcher thread
+            log.exception("Terminal generation check failed")
+
+
 def _monitor_loop():
     from mt5api.mt5client import _kill_terminal, restart_terminal
 
     prev_logged_in = None
     prev_trade_allowed = None
     dead_count = 0
+    stale_state: dict = {}
 
     while True:
         time.sleep(CHECK_INTERVAL)
+        try:
+            _webrequest_stale_check(stale_state, time.monotonic())
+        except Exception:  # noqa: BLE001 - an optional alert must not stop the health check
+            log.exception("WebRequest stale check failed")
 
         info = None
         acc = None
@@ -53,6 +152,9 @@ def _monitor_loop():
             with session(bypass_queue_cap=True):
                 try:
                     info = m(mt5.terminal_info, _timeout=15)
+                    if info is not None:
+                        # Cosmetic cache for lock-free readers (POST /webrequest/verify's build).
+                        mt5client_module.LAST_TERMINAL_INFO = info
                 except MT5Timeout:
                     info = None
                 except Exception:
@@ -135,7 +237,15 @@ def _monitor_loop():
 
 
 def start_monitor():
-    """Start the background health monitor daemon thread."""
+    """Start the background health monitor daemon thread, and in the VM the
+    terminal generation watcher beside it."""
+    from mt5api.chartctl import webrequest_apply as wa
+
     t = threading.Thread(target=_monitor_loop, daemon=True, name="mt5-monitor")
     t.start()
     log.info("Health monitor started (check every %ds).", CHECK_INTERVAL)
+    if wa.available():
+        g = threading.Thread(target=_generation_loop, daemon=True, name="terminal-generation")
+        g.start()
+        log.info("Terminal generation watcher started (check every %ds).",
+                 GENERATION_CHECK_INTERVAL)

@@ -20,7 +20,10 @@ import re
 
 from mt5api.config import TERMINAL_DIR, ASSETS_DIR
 
-EXPERTS_DIR = os.path.join(TERMINAL_DIR, "MQL5", "Experts", "Uploaded")
+# Uploaded experts live in this folder under MQL5\Experts; the Navigator
+# lists them under "Expert Advisors" > this folder.
+UPLOADED_FOLDER = "Uploaded"
+EXPERTS_DIR = os.path.join(TERMINAL_DIR, "MQL5", "Experts", UPLOADED_FOLDER)
 SETS_DIR = os.path.join(TERMINAL_DIR, "chartctl", "sets")
 REGISTRY_PATH = os.path.join(TERMINAL_DIR, "chartctl", "registry.json")
 PROTOCOL_DIR = os.path.join(TERMINAL_DIR, "MQL5", "Files", "chartctl")

@@ -16,7 +16,6 @@ from mt5api.config import (
     DISABLE_TERMINAL_MCP,
     FILLING_MAP,
     INI_FILE,
-    INSTANCE,
     MODE,
     ORDER_TYPE_MAP,
     TERMINAL_DIR,
@@ -487,51 +486,42 @@ def ensure_initialized():
 
 
 def _kill_terminal():
-    """Kill the terminal64.exe in our terminal directory."""
-    # WMI via PowerShell — can see and kill elevated processes
-    # (psutil can't read exe paths of elevated processes from non-elevated context)
-    if ACCOUNT:
-        path_filter = f"*\\{BROKER}\\{ACCOUNT}\\{INSTANCE}\\*"
-    else:
-        path_filter = f"*\\{BROKER}\\*"
-    ps_cmd = (
-        "$p = Get-WmiObject Win32_Process -Filter \"Name='terminal64.exe'\" "
-        "| Where-Object { $_.ExecutablePath -like '" + path_filter + "' }; "
-        "if ($p) { $p | ForEach-Object { $_.Terminate() }; 'KILLED' } "
-        "else { 'NONE' }"
-    )
+    """Kill this terminal's terminal64.exe, found by its exact executable path.
+
+    The old WMI filter matched ``*\\<broker>\\*`` when no account was
+    configured, so a restart terminated every terminal of the broker, and its
+    psutil fallback matched a substring of the directory, so ``...\\live``
+    also hit ``...\\live2``. chartctl/terminal_pid.py compares whole paths."""
+    from mt5api.chartctl import terminal_pid
+
+    procs = terminal_pid.matching_processes()
+    killed = [pid for pid, _started in procs if _kill_pid(pid)]
+    if killed:
+        log.info("Terminal process killed (pid %s).", ", ".join(str(p) for p in killed))
+        time.sleep(2)
+    return bool(killed)
+
+
+def _kill_pid(pid):
+    """Kill one process by its id. taskkill when psutil may not (a non-elevated
+    API next to an elevated terminal)."""
+    try:
+        proc = psutil.Process(pid)
+        proc.kill()
+        proc.wait(timeout=10)
+        return True
+    except psutil.NoSuchProcess:
+        return True
+    except (psutil.AccessDenied, psutil.TimeoutExpired) as exc:
+        log.warning("psutil could not kill terminal pid %d (%s), trying taskkill...", pid, exc)
     try:
         result = subprocess.run(
-            ["powershell", "-Command", ps_cmd],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            ["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True, timeout=30,
         )
-        if "KILLED" in result.stdout:
-            log.info("Terminal process killed.")
-            time.sleep(2)
-            return True
-        if "NONE" in result.stdout:
-            return False
-    except Exception as e:
-        log.warning("WMI kill failed (%s), trying psutil...", e)
-
-    # Fallback: psutil (match by name + directory, not exact path)
-    for proc in psutil.process_iter(["pid", "name", "exe"]):
-        try:
-            name = proc.info.get("name", "")
-            if not name or name.lower() != "terminal64.exe":
-                continue
-            exe = proc.info.get("exe") or ""
-            if TERMINAL_DIR.lower() not in exe.lower():
-                continue
-            log.info("Killing terminal PID %d via psutil", proc.pid)
-            proc.kill()
-            proc.wait(timeout=10)
-            return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
-            continue
-    return False
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("taskkill of terminal pid %d failed (%s)", pid, exc)
+        return False
 
 
 def _wait_for_journal(journal_log, offset, max_attempts=60):
@@ -553,7 +543,22 @@ def _wait_for_journal(journal_log, offset, max_attempts=60):
     return False
 
 
+# Set while restart_terminal runs. The terminal generation watcher
+# (monitor.py) sees the relaunched process within seconds, but restart_terminal
+# reconnects and re-applies the WebRequest list itself, so the watcher waits.
+RESTART_IN_PROGRESS = threading.Event()
+
+
 def restart_terminal():
+    """Kill terminal, relaunch, wait for journal 'started for', reconnect."""
+    RESTART_IN_PROGRESS.set()
+    try:
+        return _restart_terminal()
+    finally:
+        RESTART_IN_PROGRESS.clear()
+
+
+def _restart_terminal():
     """Kill terminal, relaunch, wait for journal 'started for', reconnect.
 
     Caller must hold the MT5 lock — this blocks the lock for ~minutes
@@ -640,9 +645,11 @@ def _reapply_webrequest_after_restart():
     """The terminal in the VM forgets its WebRequest allowlist on every
     restart, and the API's own start-up re-apply has long since run."""
     try:
-        from mt5api.chartctl import autoit_webrequest as autoit
+        from mt5api.chartctl import webrequest_apply
 
-        autoit.reapply_in_background(autoit.gui_settle_seconds(), "terminal restart")
+        webrequest_apply.reapply_in_background(
+            webrequest_apply.gui_settle_seconds(), "terminal restart"
+        )
     except Exception:  # noqa: BLE001 - the restart itself succeeded; never fail it here
         log.exception("WebRequest re-apply after restart could not start")
 

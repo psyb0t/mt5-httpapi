@@ -77,6 +77,12 @@ chartctl:
   observed_stale_after: "60s"   # observed.json older than this = loader stale
   command_timeout: "30s"        # wait for screenshot/one-shot loader replies
   max_upload_bytes: 16777216    # 16 MB cap on .ex5/.set uploads
+  # The Navigator refresh after an upload finds the "Expert Advisors" node and
+  # the "Refresh" menu item by label. English is built in and always tried; a
+  # terminal running MT5 in another language needs its labels here.
+  # navigator_labels:
+  #   expert_advisors: ["<the node's label, as the Navigator shows it>"]
+  #   refresh: ["<the Refresh item's label in its right-click menu>"]
 
 # File API: list, download, upload (single files or a zip with ?extract) and
 # delete files in each terminal's install directory (/files) and in the MQL5

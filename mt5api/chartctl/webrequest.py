@@ -27,6 +27,8 @@ import importlib.util
 import json
 import os
 
+from mt5api.chartctl.winoptions import is_url_row
+
 DESIRED_FILENAME = "webrequest.json"
 _BOM = b"\xff\xfe"
 
@@ -54,8 +56,26 @@ def desired_path(cfg_dir: str) -> str:
 
 
 # ── url hygiene ──────────────────────────────────────────────────────
+# Longest URL accepted. MT5's Options dialog refused a 1120-character URL on
+# build 6230 (the row it kept was shorter, so the apply read it as missing and
+# cancelled), and kept at least 760 characters in the same test, 2026-10-15.
+MAX_URL_LENGTH = 750
+
+
+def _acceptable(u: str) -> bool:
+    """An http(s) URL with a host, no whitespace, no ';' (the common.ini blob's
+    delimiter), no control characters and at most MAX_URL_LENGTH characters.
+    The Options-dialog driver counts a row as a URL by the same rule
+    (is_url_row): a URL it would not count, or that MT5 shortens, reads as
+    missing after the apply, and the whole apply is cancelled."""
+    return (
+        bool(u) and len(u) <= MAX_URL_LENGTH and ";" not in u
+        and not any(ord(c) < 0x20 for c in u) and is_url_row(u)
+    )
+
+
 def clean_urls(urls) -> list[str]:
-    """Trim, drop blanks/dupes, keep only http(s) URLs without the ';' delimiter."""
+    """Trim, drop blanks/dupes, keep only acceptable URLs (see _acceptable)."""
     out: list[str] = []
     if not isinstance(urls, (list, tuple)):
         return out
@@ -63,14 +83,26 @@ def clean_urls(urls) -> list[str]:
         if not isinstance(u, str):
             continue
         u = u.strip()
-        if not u or ";" in u or any(ord(c) < 0x20 for c in u):
-            continue
-        low = u.lower()
-        if not (low.startswith("http://") or low.startswith("https://")):
+        if not _acceptable(u):
             continue
         if u not in out:
             out.append(u)
     return out
+
+
+def invalid_urls(urls) -> list:
+    """The entries of a request's URL list that clean_urls would drop for
+    being malformed (not for being blank or a duplicate), so PUT can refuse
+    them instead of dropping them silently."""
+    if not isinstance(urls, (list, tuple)):
+        return []
+    bad = []
+    for u in urls:
+        if not isinstance(u, str):
+            bad.append(u)
+        elif u.strip() and not _acceptable(u.strip()):
+            bad.append(u)
+    return bad
 
 
 # ── desired-state store (survives reboots) ───────────────────────────

@@ -104,8 +104,8 @@ def _normalize_instance(value):
 COMPILE_PROXY_TIMEOUT = "180s"
 
 #: nginx read/send timeout for the routes that legitimately run for minutes:
-#: PUT /webrequest and /webrequest/apply wait up to 180s for the host's GUI
-#: lock plus the AutoIt run (or a bare-metal terminal restart), POST
+#: PUT /webrequest and /webrequest/apply can wait for a bare-metal terminal
+#: restart (in the VM they take seconds), POST
 #: /terminal/restart waits for the relaunched terminal's journal, a terminal's
 #: own /mcp proxies those same calls, and a /files upload or ?extract writes
 #: across the VM's shared folder. Matches the unified /mcp/ route.

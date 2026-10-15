@@ -43,7 +43,7 @@ CHARTCTL_TOOLS = frozenset({
     "list_deployments", "get_deployment", "create_deployment",
     "update_deployment", "delete_deployment", "reconcile_deployments",
     "list_charts", "get_loader", "screenshot_chart", "close_chart",
-    "get_webrequest", "set_webrequest", "apply_webrequest",
+    "get_webrequest", "set_webrequest", "apply_webrequest", "verify_webrequest",
 })
 
 _REJECTION = re.compile(r"returned HTTP (\d+): (.*)$", re.DOTALL)
@@ -388,13 +388,13 @@ def test_close_chart_round_trips_through_the_loader(server, chartctl_app):
 @pytest.fixture
 def applied(monkeypatch, tmp_path):
     """Point the WebRequest handlers at a tmp config dir and record applies
-    instead of driving AutoIt or restarting a terminal."""
+    instead of driving the terminal's windows or restarting it."""
     from mt5api.handlers import webrequest
 
     calls: list[tuple[list[str], bool]] = []
 
-    def record_apply(urls, use_runas=False):
-        calls.append((list(urls), use_runas))
+    def record_apply(urls, *, partial=False, reason="put"):
+        calls.append((list(urls), partial))
         return True, "test"
 
     cfg_dir = tmp_path / "Config"
@@ -408,11 +408,16 @@ def test_webrequest_tools_replace_edit_and_reapply(server, applied):
     async def scenario():
         assert (await server.ok("get_webrequest"))["urls"] == []
 
-        replaced = await server.ok(
-            "set_webrequest", urls=["https://a.example", "ftp://dropped.example"]
-        )
+        replaced = await server.ok("set_webrequest", urls=["https://a.example"])
         assert replaced["urls"] == ["https://a.example"]
         assert applied[-1] == (["https://a.example"], False)
+
+        status, body = await server.rejected(
+            "set_webrequest", urls=["https://a.example", "ftp://refused.example"]
+        )
+        assert status == 400
+        assert body["code"] == "INVALID_URL"
+        assert body["rejected"] == ["ftp://refused.example"]
 
         edited = await server.ok(
             "set_webrequest",
@@ -421,15 +426,24 @@ def test_webrequest_tools_replace_edit_and_reapply(server, applied):
             runas=True,
         )
         assert edited["urls"] == ["https://b.example"]
-        assert applied[-1] == (["https://b.example"], True)
+        assert applied[-1] == (["https://b.example"], False)
         assert (await server.ok("get_webrequest"))["urls"] == ["https://b.example"]
 
         reapplied = await server.ok("apply_webrequest", runas=True)
         assert reapplied["urls"] == ["https://b.example"]
-        assert applied[-1] == (["https://b.example"], True)
+        assert applied[-1] == (["https://b.example"], True)  # the re-apply is partial
 
         cleared = await server.ok("set_webrequest", urls=[])
         assert cleared["urls"] == []
+
+    _run(scenario())
+
+
+def test_verify_webrequest_is_refused_outside_the_vm(server, applied):
+    async def scenario():
+        status, body = await server.rejected("verify_webrequest")
+        assert status == 409
+        assert body["code"] == "UNAVAILABLE"
 
     _run(scenario())
 
@@ -560,11 +574,12 @@ def test_unified_upload_carries_the_bearer_token():
     [
         ("set_webrequest", {"urls": ["https://a.example"]}),
         ("apply_webrequest", {}),
+        ("verify_webrequest", {}),
     ],
 )
 def test_unified_webrequest_calls_outlast_the_default_timeout(tool, args):
-    """An apply can wait minutes for the host's GUI lock or a terminal
-    restart, longer than the 120s default request timeout."""
+    """An apply can wait minutes for a bare-metal terminal restart, longer
+    than the 120s default request timeout."""
     from mcpunifier.constants import (
         DEFAULT_REQUEST_TIMEOUT_SECONDS,
         WEBREQUEST_TIMEOUT_SECONDS,

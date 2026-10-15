@@ -20,9 +20,9 @@ DEFAULT_LISTEN_PORT = 6600
 # enough that a wedged terminal frees the caller instead of hanging the session.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 
-# PUT /webrequest and POST /webrequest/apply can wait up to 180s for the host's
-# GUI lock and 120s for the AutoIt run, or up to 300s for a bare-metal terminal
-# restart (mt5api/chartctl/autoit_webrequest.py, mt5client.restart_terminal).
+# PUT /webrequest and POST /webrequest/apply take seconds in the VM
+# (mt5api/chartctl/webrequest_apply.py) but up to 300s for a bare-metal
+# terminal restart (mt5client.restart_terminal).
 # nginx gives the unified /mcp/ route 300s (scripts/config_helper.py), so this
 # stays just under it: the agent gets this service's timeout error, not an
 # nginx 504.

@@ -28,7 +28,9 @@ def test_the_allowlist_reads_as_a_list(webrequest):
 def test_adding_and_removing_a_url_round_trips(webrequest, state_changes_allowed):
     if not flag("MT5_LIVE_WEBREQUEST"):
         pytest.skip("set MT5_LIVE_WEBREQUEST=1 to change the allowlist")
-    original = webrequest.call_json("get_webrequest")["urls"]
+    # Patches only: a patch keeps every other entry the terminal holds, and a
+    # full replace with the list stored before would delete URLs added by hand
+    # in the VM, which a patch adopts into the stored list.
     try:
         added = webrequest.call_json("set_webrequest", add=[TEST_URL])
         assert added["success"] is True
@@ -37,6 +39,7 @@ def test_adding_and_removing_a_url_round_trips(webrequest, state_changes_allowed
         removed = webrequest.call_json("set_webrequest", remove=[TEST_URL])
         assert TEST_URL not in removed["urls"]
     finally:
-        webrequest.call_json("set_webrequest", urls=original)
+        if TEST_URL in webrequest.call_json("get_webrequest")["urls"]:
+            webrequest.call_json("set_webrequest", remove=[TEST_URL])
 
-    assert webrequest.call_json("get_webrequest")["urls"] == original
+    assert TEST_URL not in webrequest.call_json("get_webrequest")["urls"]

@@ -108,17 +108,17 @@ _webrequest_reapplied = threading.Event()
 
 
 def _reapply_webrequest_once():
-    """Re-apply this terminal's desired WebRequest allowlist via AutoIt after
-    the API starts. MT5 on the VM drops the list every restart, so the API
+    """Re-apply this terminal's desired WebRequest allowlist in its Options
+    dialog after the API starts. MT5 on the VM drops the list every restart, so the API
     re-sets it once the terminal GUI is up. Guarded to run once per process;
     mt5client.restart_terminal re-applies after its own restarts."""
     if _webrequest_reapplied.is_set():
         return
     _webrequest_reapplied.set()
     try:
-        from mt5api.chartctl import autoit_webrequest as autoit
+        from mt5api.chartctl import webrequest_apply
 
-        autoit.reapply_in_background(autoit.gui_settle_seconds(), "api start")
+        webrequest_apply.reapply_in_background(webrequest_apply.gui_settle_seconds(), "api start")
     except Exception:  # noqa: BLE001 - never block startup on an optional feature
         log.exception("Boot WebRequest re-apply could not start")
 

@@ -105,15 +105,24 @@ curl -X DELETE "$MT5_API_URL/deployments/dep_a1b2c3" \
 
 ### `POST /experts` and the Navigator refresh
 
-MT5 only loads an expert it saw on disk when the terminal started, or that a Navigator refresh has picked up since. A template naming any other `.ex5` opens the chart with no expert on it, and the deployment fails with `EXPERT_NOT_ATTACHED`. So every successful `POST /experts`, including a re-upload of identical bytes, refreshes the terminal's Navigator by driving it with the bundled AutoIt (`assets/autoit/refresh_navigator.au3`), the same way a user would right-click "Expert Advisors" and choose Refresh. Deploying a host-managed expert for the first time does the same after copying it in.
+MT5 only loads an expert it saw on disk when the terminal started, or that a Navigator refresh has picked up since. A template naming any other `.ex5` opens the chart with no expert on it, and the deployment fails with `EXPERT_NOT_ATTACHED`. So every successful `POST /experts`, including a re-upload of identical bytes, refreshes the terminal's Navigator, the same way a user would right-click "Expert Advisors" and choose Refresh. The API does it with window messages sent straight to the Navigator (`mt5api/chartctl/winnavigator.py`): nothing is typed into whatever window has focus, and it works with no RDP or VNC viewer attached. It then checks that the expert is listed under Expert Advisors > Uploaded. Deploying a host-managed expert for the first time does the same after copying it in.
 
 The response's `navigator_refresh` says how that went:
 
 | Value | Meaning |
 | ----- | ------- |
-| `ok` | The terminal can load the expert; deploy away. |
-| `failed` | The refresh did not run (see `note`). Upload the same file again to retry, or restart the terminal. |
+| `ok` | The expert is in the Navigator; deploy away. `already_listed: true` means it was there before the refresh (a re-upload or an overwrite), so the check proved nothing new. |
+| `failed` | The expert is not in the Navigator after the refresh, or the refresh could not run; `navigator_error` says why (`expert_not_listed`, `navigator_not_found`, `backtest_running`, ...). Upload the same file again to retry, or restart the terminal. |
 | `unavailable` | No GUI automation on this host (a bare-metal terminal). Restart the terminal before deploying a newly uploaded expert. |
+
+The Navigator's "Expert Advisors" node and its Refresh item are found by label. English is built in; a terminal running MT5 in another language needs its labels in `config.yaml`:
+
+```yaml
+chartctl:
+  navigator_labels:
+    expert_advisors: ["<the node's label, as the Navigator shows it>"]
+    refresh: ["<the Refresh item's label in its right-click menu>"]
+```
 
 ### `POST /deployments`
 
@@ -215,9 +224,10 @@ deployments need no URLs):
 
 | Method | Endpoint                  | Description                           |
 | ------ | ------------------------- | ------------------------------------- |
-| `GET`  | `/webrequest`             | Current effective allowlist           |
-| `PUT`  | `/webrequest`             | Replace or add to the allowlist       |
-| `POST` | `/webrequest/apply`       | Re-apply current desired list now     |
+| `GET`  | `/webrequest`             | Stored allowlist and the last apply result (`last_apply`) |
+| `PUT`  | `/webrequest`             | Replace (`urls`) or patch (`add`/`remove`) the allowlist |
+| `POST` | `/webrequest/apply`       | Re-apply the stored list now          |
+| `POST` | `/webrequest/verify`      | Read the list the terminal really holds (VM only) |
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/webrequest"
@@ -225,21 +235,27 @@ curl -X PUT "$MT5_API_URL/webrequest" \
   -H "Authorization: Bearer $MT5_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"add":["https://api.telegram.org"]}'   # or {"urls":[...]} to replace
-# -> {"success":true,"urls":[...],"applied_via":"autoit:OK"}
+# -> {"success":true,"urls":[...],"applied_via":"win32:OK"}
 curl -X POST "$MT5_API_URL/webrequest/apply" \
   -H "Authorization: Bearer $MT5_API_TOKEN"   # re-apply current list now
+curl -X POST "$MT5_API_URL/webrequest/verify" \
+  -H "Authorization: Bearer $MT5_API_TOKEN"
+# -> {"urls":[...stored...],"live":{"enabled":true,"urls":[...]},"terminal_build":6257}
 ```
 
-Inside the Windows VM the allowlist is **not** stored in `common.ini`. It
-lives in the machine-bound `MQL5\experts.dat` and MT5 drops it on every
-restart. So the list is applied the way a user would: a bundled AutoIt
-interpreter (`assets/autoit/`; unmodified official binary, redistributed
-with its EULA and notices, see `assets/autoit/NOTICE.txt`) drives
-Tools → Options → Expert Advisors and types the URLs in. This takes effect immediately in-session (no restart). Because MT5 forgets the list on restart, the API re-applies the persisted list about 25 s after its own process starts, which covers the periodic auto-reboot, and the same delay after every terminal restart it performs itself (the health monitor's recovery restart, `POST /terminal/restart`). Call `POST /webrequest/apply` only after a restart made from outside the API. On a bare-metal terminal where `common.ini` *is* the store, it falls back to writing `common.ini` + restarting.
+- `{"urls": [...]}` makes the terminal's list exactly that, removing every other entry, including ones added by hand in the VM.
+- `{"add": [...], "remove": [...]}` changes only the URLs named. Every other entry the terminal holds stays, and the list read back becomes the stored list, so URLs added by hand survive restarts too.
+- Only `http(s)` URLs with a host, at most 750 characters (MT5 refused a 1120-character one) and no spaces, `;` or control characters are accepted. Anything else answers 400 `INVALID_URL` with the offending entries under `rejected`, and nothing is stored.
+- A failed apply answers with a `code`: 409 for a state to wait out (`BACKTEST_RUNNING`, or `TERMINAL_BUSY` when the terminal shows a dialog such as a login), 503 when the terminal is not running (`PID_NOT_FOUND`, `WINDOW_NOT_FOUND`), 500 otherwise. While a backtest runs on the terminal, `PUT` and `verify` answer 409: the tester runs from the same `terminal64.exe`. The background re-apply waits for the run to end.
+- `urls`, `add` and `remove` must be lists; anything else is a 400, never an empty list.
+- `verify` opens the Options dialog for a moment, so a second call within 10 seconds answers 429 with `Retry-After`. Use it to check an apply, not to poll.
+
+Inside the Windows VM every terminal starts with `/config:mt5start.ini`, and a terminal started that way never writes its settings back, so it forgets the list on every restart (the common.ini codec also cannot decode the lists builds 6238 and later write). So the list is set the way a user would, in Tools > Options > Expert Advisors, but with window messages sent straight to the dialog's controls (`mt5api/chartctl/winoptions.py`): nothing is typed into whatever window has focus, no window has to be in front, and it works with no RDP or VNC viewer attached. It takes effect immediately in-session and takes seconds. OK is pressed only when every change took; otherwise the dialog is cancelled and nothing is saved. Because MT5 forgets the list on restart, the API re-applies the persisted list about 25 s after its own process starts, which covers the periodic auto-reboot, and the same delay after every terminal restart it performs itself (the health monitor's recovery restart, `POST /terminal/restart`). A terminal that starts again without the API restarting it (a LiveUpdate, a terminal the SDK started after a crash, one started by hand) is noticed within about 10 seconds: the API reconnects to it and re-applies the list after the same settle delay. That re-apply, like `POST /webrequest/apply`, skips a stored URL the terminal will not take and reports it under `rejected` instead of leaving the terminal with no list. `GET /webrequest` shows the running terminal (`terminal_pid`, `terminal_started_at`) and `stale: true` while it has not been given the stored list yet; after 5 minutes stale the API log shows `!!! WEBREQUEST LIST NOT RESTORED !!!` on every health pass. `POST /webrequest/apply` is for when that error stays. On a bare-metal terminal where `common.ini` *is* the store, it falls back to writing `common.ini` + restarting.
 
 The desired list is persisted per terminal (`Config/webrequest.json`); the
 first call migrates whatever the terminal already has, so manually configured
-URLs are preserved. GUI applies are serialized across every terminal on a host
-by a named Windows kernel mutex (crash-safe, since a dead holder is auto-released),
-and each terminal's boot re-apply is staggered by its port, so many terminals
-per VM can safely provision WebRequest URLs without their keystrokes colliding.
+URLs are preserved. Every apply writes its outcome to `Config/webrequest_status.json`,
+which `GET /webrequest` returns as `last_apply` (`at`, `reason`, `status`, `code`,
+`rejected`). Since nothing depends on focus, terminals apply their lists in
+parallel; each terminal's boot re-apply is still staggered by its port so one
+VM's terminals do not all open their Options dialogs in the same second.

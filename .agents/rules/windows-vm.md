@@ -28,7 +28,7 @@ Everything under `scripts/*.bat`, `scripts/*.ps1`, `mt5api/`, `assets/` and the 
 - **WIN11:** Lock directories in the shared folder (`start.running`, `install.running`) survive VM reboots because the folder lives on the host. `run.sh` clears them on every start. Any new lock in the shared folder needs the same story for a VM killed mid-run.
 - **WIN12:** `logs/full.log` is shared by every API process and batch script; the API writes to it under a mkdir lock (`_LockedFileHandler` in `mt5api/logger.py`). Batch scripts append whole lines only.
 - **WIN13:** `/compile` serializes MetaEditor runs across API processes with a cross-process lock and bounds the waiting queue (`tests/test_compile.py` lock tests). Keep any new shared MetaEditor use behind the same lock.
-- **WIN14:** GUI automation (AutoIt for the WebRequest allowlist and the Navigator refresh) waits for the host's GUI lock; such calls can take minutes and need the long nginx and unifier timeouts (ARC16).
+- **WIN14:** GUI automation (the WebRequest allowlist in the Options dialog and the Navigator refresh) sends window messages to one terminal's own controls (`mt5api/chartctl/winoptions.py`, `winnavigator.py`), never keystrokes to whatever has focus, so terminals need no host-wide lock. It finds the terminal by its exact executable path (`terminal_pid.py`), never by window title, and refuses to run while a backtest holds `RUN_LOCK`. The API and the terminals both run elevated, which UIPI requires. A bare-metal fallback restart can still take minutes, so these routes keep the long nginx and unifier timeouts (ARC16).
 
 ## Binaries
 

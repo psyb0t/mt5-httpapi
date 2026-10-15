@@ -31,48 +31,10 @@ import mt5api.mt5client as mc
 _flask_app = flask.Flask(__name__)
 
 
-class FakeProc:
-    """Stand-in for a psutil.Process yielded by process_iter(["pid", "name", "exe"]).
-
-    `.info` is a property (like the real psutil.Process.info cache) so it can
-    be made to raise psutil.AccessDenied / psutil.NoSuchProcess the same way
-    the real thing would for a process this user can't inspect.
-    """
-
-    def __init__(self, pid, name, exe="", raise_on_info=None):
-        self.pid = pid
-        self._name = name
-        self._exe = exe
-        self._raise_on_info = raise_on_info
-        self.killed = False
-        self.waited_timeout = None
-
-    @property
-    def info(self):
-        if self._raise_on_info is not None:
-            raise self._raise_on_info
-        return {"pid": self.pid, "name": self._name, "exe": self._exe}
-
-    def kill(self):
-        self.killed = True
-
-    def wait(self, timeout=None):
-        self.waited_timeout = timeout
-
-
-class FakeCompletedProcess:
-    def __init__(self, stdout=""):
-        self.stdout = stdout
-
-
 def _raise_wmi_unavailable(*_args, **_kwargs):
-    """Stand-in for subprocess.run when the "powershell" binary is absent —
-    the real, portable way _kill_terminal falls through to the psutil path
-    on this Linux test box."""
+    """Stand-in for subprocess.run when the binary it starts (taskkill) is
+    absent, as on this Linux test box."""
     raise OSError("no shell")
-
-
-TEST_TERMINAL_DIR = r"C:\terminals\brokerX\live"
 
 
 @pytest.fixture(autouse=True)
@@ -800,105 +762,76 @@ def test_ensure_initialized_login_timeout_returns_false(monkeypatch):
     assert mc.ensure_initialized() is False
 
 
-# --- _kill_terminal — WMI path + psutil fallback ----------------------------
+# --- _kill_terminal — exact-path match (chartctl/terminal_pid.py) ----------
 
 
-def test_kill_terminal_wmi_filter_narrows_to_the_configured_account(monkeypatch):
-    """When ACCOUNT is configured, the WMI filter must scope to this
-    account+instance's own terminal — not every terminal for the broker."""
-    monkeypatch.setattr(mc, "ACCOUNT", "live")
-    monkeypatch.setattr(mc, "BROKER", "darwinex")
-    monkeypatch.setattr(mc, "INSTANCE", "a")
-    captured = {}
+class _KillableProc:
+    def __init__(self, pid, kill_raises=None):
+        self.pid = pid
+        self.killed = False
+        self.kill_raises = kill_raises
+
+    def kill(self):
+        if self.kill_raises:
+            raise self.kill_raises
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.waited_timeout = timeout
+
+
+def _kill_harness(monkeypatch, matches, procs):
+    from mt5api.chartctl import terminal_pid
+
+    monkeypatch.setattr(terminal_pid, "matching_processes", lambda: matches)
+    monkeypatch.setattr(mc.psutil, "Process", lambda pid: procs[pid])
+    sleeps = []
+    monkeypatch.setattr(mc.time, "sleep", lambda s: sleeps.append(s))
+    return sleeps
+
+
+def test_kill_terminal_kills_only_the_process_started_from_this_terminal(monkeypatch):
+    ours = _KillableProc(42)
+    sleeps = _kill_harness(monkeypatch, [(42, 1.0)], {42: ours})
+
+    assert mc._kill_terminal() is True
+    assert ours.killed is True
+    assert ours.waited_timeout == 10
+    assert sleeps == [2]
+
+
+def test_kill_terminal_reports_no_process_found(monkeypatch):
+    _kill_harness(monkeypatch, [], {})
+
+    assert mc._kill_terminal() is False
+
+
+def test_kill_terminal_falls_back_to_taskkill_when_psutil_is_denied(monkeypatch):
+    denied = _KillableProc(7, kill_raises=psutil.AccessDenied())
+    _kill_harness(monkeypatch, [(7, 1.0)], {7: denied})
+    seen = {}
 
     def fake_run(cmd, **kw):
-        captured["ps_cmd"] = cmd[-1]
-        return FakeCompletedProcess("NONE\n")
+        seen["cmd"] = cmd
+        return type("R", (), {"returncode": 0})()
 
     monkeypatch.setattr(mc.subprocess, "run", fake_run)
 
-    assert mc._kill_terminal() is False
-    assert r"*\darwinex\live\a\*" in captured["ps_cmd"]
+    assert mc._kill_terminal() is True
+    assert seen["cmd"] == ["taskkill", "/PID", "7", "/F"]
 
 
-def test_kill_terminal_wmi_kill_reports_success(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **kw: FakeCompletedProcess("KILLED\n"))
-    sleep_calls = []
-    monkeypatch.setattr(mc.time, "sleep", lambda s: sleep_calls.append(s))
+def test_kill_terminal_counts_a_process_already_gone_as_killed(monkeypatch):
+    gone = _KillableProc(9, kill_raises=psutil.NoSuchProcess(9))
+    _kill_harness(monkeypatch, [(9, 1.0)], {9: gone})
 
     assert mc._kill_terminal() is True
-    assert sleep_calls == [2]
 
 
-def test_kill_terminal_wmi_reports_no_process_found(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **kw: FakeCompletedProcess("NONE\n"))
-
-    assert mc._kill_terminal() is False
-
-
-def test_kill_terminal_falls_back_to_psutil_when_wmi_raises(monkeypatch):
-    def raising_run(*a, **kw):
-        raise FileNotFoundError("powershell not found")
-
-    monkeypatch.setattr(mc.subprocess, "run", raising_run)
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    proc = FakeProc(pid=42, name="terminal64.exe", exe=TEST_TERMINAL_DIR + r"\terminal64.exe")
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([proc]))
-
-    assert mc._kill_terminal() is True
-    assert proc.killed is True
-    assert proc.waited_timeout == 10
-
-
-def test_kill_terminal_falls_back_to_psutil_when_wmi_output_is_unrecognized(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", lambda *a, **kw: FakeCompletedProcess("garbage\n"))
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    proc = FakeProc(pid=7, name="terminal64.exe", exe=TEST_TERMINAL_DIR + r"\terminal64.exe")
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([proc]))
-
-    assert mc._kill_terminal() is True
-    assert proc.killed is True
-
-
-def test_kill_terminal_psutil_skips_process_with_a_different_name(monkeypatch):
+def test_kill_terminal_is_false_when_neither_psutil_nor_taskkill_can_kill(monkeypatch):
+    denied = _KillableProc(7, kill_raises=psutil.AccessDenied())
+    _kill_harness(monkeypatch, [(7, 1.0)], {7: denied})
     monkeypatch.setattr(mc.subprocess, "run", _raise_wmi_unavailable)
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    other = FakeProc(pid=1, name="notepad.exe", exe=r"C:\windows\notepad.exe")
-    ours = FakeProc(pid=2, name="terminal64.exe", exe=TEST_TERMINAL_DIR + r"\terminal64.exe")
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([other, ours]))
-
-    assert mc._kill_terminal() is True
-    assert other.killed is False
-    assert ours.killed is True
-
-
-def test_kill_terminal_psutil_skips_terminal_from_a_different_broker_directory(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", _raise_wmi_unavailable)
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    other_exe = r"C:\terminals\brokerY\live\terminal64.exe"
-    other_broker = FakeProc(pid=1, name="terminal64.exe", exe=other_exe)
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([other_broker]))
-
-    assert mc._kill_terminal() is False
-    assert other_broker.killed is False
-
-
-def test_kill_terminal_psutil_skips_access_denied_and_no_such_process(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", _raise_wmi_unavailable)
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    denied = FakeProc(pid=1, name="terminal64.exe", raise_on_info=psutil.AccessDenied())
-    gone = FakeProc(pid=2, name="terminal64.exe", raise_on_info=psutil.NoSuchProcess(2))
-    ours = FakeProc(pid=3, name="terminal64.exe", exe=TEST_TERMINAL_DIR + r"\terminal64.exe")
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([denied, gone, ours]))
-
-    assert mc._kill_terminal() is True
-    assert ours.killed is True
-
-
-def test_kill_terminal_returns_false_when_nothing_matches(monkeypatch):
-    monkeypatch.setattr(mc.subprocess, "run", _raise_wmi_unavailable)
-    monkeypatch.setattr(mc, "TERMINAL_DIR", TEST_TERMINAL_DIR)
-    monkeypatch.setattr(mc.psutil, "process_iter", lambda attrs=None: iter([]))
 
     assert mc._kill_terminal() is False
 
@@ -1012,7 +945,7 @@ def test_restart_terminal_seeks_past_pre_existing_journal_content(monkeypatch, t
 
 
 def _restart_harness(monkeypatch, reconnects: bool):
-    from mt5api.chartctl import autoit_webrequest
+    from mt5api.chartctl import webrequest_apply
 
     monkeypatch.setattr(mc, "m", lambda fn, *a, **kw: True)
     monkeypatch.setattr(mc, "_kill_terminal", lambda: True)
@@ -1022,7 +955,7 @@ def _restart_harness(monkeypatch, reconnects: bool):
     monkeypatch.setattr(mc, "init_mt5", lambda *a, **kw: reconnects)
     reapplied = []
     monkeypatch.setattr(
-        autoit_webrequest, "reapply_in_background",
+        webrequest_apply, "reapply_in_background",
         lambda delay, reason: reapplied.append(reason),
     )
     return reapplied

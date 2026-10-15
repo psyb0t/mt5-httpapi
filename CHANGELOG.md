@@ -8,9 +8,22 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ## [Unreleased]
 
+### Changed
+
+- **The WebRequest allowlist and the Navigator refresh drive MT5 with window messages instead of AutoIt.** Inside the VM the API now sets the allowlist in the terminal's Options dialog and refreshes the Navigator by sending window messages straight to their controls (`mt5api/chartctl/winoptions.py`, `winnavigator.py`), with no third-party automation runtime. Nothing is typed into whatever window has focus, so a URL can no longer land in another terminal, no RDP or VNC viewer is needed, and an apply takes seconds instead of queueing behind every other terminal's: the host-wide `Global\mt5_httpapi_webrequest_autoit` mutex is gone. OK is pressed only when every change took. `applied_via` reads `win32:OK` (or `win32:FAIL:<code>`). Upgrade every live-mode API process of a VM at once (a VM reboot), so no old AutoIt process runs beside the new code. See [docs/chart-deployments.md](docs/chart-deployments.md#webrequest-allowlist).
+- **`PUT /webrequest` with `add`/`remove` keeps entries nobody named.** In the VM a patch now changes only the URLs it names; URLs added by hand in the terminal stay, and the list read back becomes the stored list. `{"urls": [...]}` still replaces the whole list.
+- **`PUT /webrequest` refuses a URL it cannot apply.** A URL that is not `http(s)` with a host, at most 750 characters and no spaces, `;` or control characters answers 400 `INVALID_URL` (listed under `rejected`) instead of being dropped silently or failing every later apply.
+- **The boot and restart re-apply, and `POST /webrequest/apply`, skip a URL the terminal will not take** and report it under `rejected`, instead of leaving the terminal with no list.
+- **`POST /experts` reports `ok` only when the expert is in the Navigator.** The refresh now checks the tree under Expert Advisors > Uploaded; a miss is `failed` with a `navigator_error` code, and an expert listed before the refresh adds `already_listed: true`. Translated Navigator labels for a non-English terminal go in `chartctl.navigator_labels`.
+- **Terminal restarts kill only this terminal's process.** `_kill_terminal` and the GUI drivers find `terminal64.exe` by its exact path. With no account configured, a restart used to terminate every terminal of the broker.
+
 ### Added
 
 - Added FTMO to the README's [recommended brokers and prop firms](README.md#recommended-brokers-and-prop-firms), with its MT4 and MT5 support and simulated trading accounts described.
+- **`POST /webrequest/verify`** (MCP `verify_webrequest`) reads the list the running terminal really holds beside the stored one, with `terminal_build`. At most one call per 10 s (429 otherwise).
+- **`GET /webrequest` returns `last_apply`**, the outcome of the latest apply (`Config/webrequest_status.json`).
+- **GUI calls are refused while a backtest runs** on the terminal (409 `backtest_running`); the background re-apply waits for the run to end.
+- **A terminal that restarts on its own gets its WebRequest list back.** A LiveUpdate, a terminal the SDK started after a crash or one started by hand used to keep no allowlist until someone called `POST /webrequest/apply`. A watcher now checks every 10 seconds whether `terminal64.exe` is a new process, reconnects the SDK to it (so the health monitor no longer kills a freshly updated terminal for not answering) and re-applies the list. `GET /webrequest` adds `terminal_pid`, `terminal_started_at` and `stale`, and a list missing for 5 minutes is logged as `!!! WEBREQUEST LIST NOT RESTORED !!!`. See [docs/chart-deployments.md](docs/chart-deployments.md#webrequest-allowlist).
 
 ## [v4.29.0]: 2026-10-12
 

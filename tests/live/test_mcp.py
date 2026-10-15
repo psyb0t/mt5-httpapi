@@ -20,7 +20,7 @@ CHARTCTL_TOOLS = frozenset({
     "list_deployments", "get_deployment", "create_deployment",
     "update_deployment", "delete_deployment", "reconcile_deployments",
     "list_charts", "get_loader", "screenshot_chart", "close_chart",
-    "get_webrequest", "set_webrequest", "apply_webrequest",
+    "get_webrequest", "set_webrequest", "apply_webrequest", "verify_webrequest",
 })
 _HTTP_NOT_FOUND = 404
 

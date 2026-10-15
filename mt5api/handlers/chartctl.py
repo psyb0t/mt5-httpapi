@@ -3,20 +3,22 @@
 Lock-free by design: nothing here touches the MT5 SDK, so these routes
 never queue behind the process-wide MT5 lock (mt5client.py). Everything
 is file I/O against TERMINAL_DIR plus the loader-EA file protocol, except
-that staging an expert also refreshes the terminal's Navigator through
-AutoIt (_refresh_navigator).
+that staging an expert also refreshes the terminal's Navigator with window
+messages (_refresh_navigator).
 """
 import hashlib
 import os
 
 from flask import jsonify, request, send_file
 
-from mt5api.chartctl import autoit_webrequest as autoit
 from mt5api.chartctl import command as cmd
-from mt5api.chartctl import paths, registry
+from mt5api.chartctl import paths, registry, terminal_pid, winnavigator
+from mt5api.chartctl import webrequest_apply as wa
+from mt5api.chartctl.terminal_pid import TerminalPidError
+from mt5api.chartctl.winoptions import OptionsError
 from mt5api.chartctl.setparse import parse_set_bytes
 from mt5api.chartctl.tpl_builder import write_tpl
-from mt5api.config import CHARTCTL_MAX_UPLOAD_BYTES
+from mt5api.config import CHARTCTL_MAX_UPLOAD_BYTES, CHARTCTL_NAVIGATOR_LABELS
 from mt5api.logger import log
 
 _VALID_TIMEFRAMES = frozenset({
@@ -30,7 +32,6 @@ _VALID_TIMEFRAMES = frozenset({
 NAVIGATOR_REFRESH_OK = "ok"
 NAVIGATOR_REFRESH_FAILED = "failed"
 NAVIGATOR_REFRESH_UNAVAILABLE = "unavailable"
-_AUTOIT_OK = "OK"
 
 _NOTE_REFRESH_FAILED = (
     "the terminal's Navigator refresh failed, so a deployment of this expert "
@@ -47,31 +48,58 @@ def _err(status: int, code: str, message: str):
     return jsonify({"error": message, "code": code}), status
 
 
-def _refresh_navigator() -> dict:
-    """Make the running terminal see experts staged since it started.
+def _navigator_failed(code: str) -> dict:
+    return {
+        "navigator_refresh": NAVIGATOR_REFRESH_FAILED,
+        "navigator_error": code,
+        "note": _NOTE_REFRESH_FAILED,
+    }
+
+
+def _refresh_navigator(expert_file: str) -> dict:
+    """Make the running terminal see an expert staged since it started.
 
     MT5 loads only experts it saw at startup or after a Navigator refresh;
     a template naming any other .ex5 attaches nothing. Inside the VM the
-    refresh is driven with AutoIt. Returns the fields to add to the
+    refresh is sent with window messages and reported ``ok`` only when the
+    expert is then in the Navigator under Expert Advisors > Uploaded. An
+    expert already listed before the refresh proves nothing about it, so the
+    response says ``already_listed``. Returns the fields to add to the
     response.
     """
-    if not autoit.available():
+    if not wa.available():
         return {
             "navigator_refresh": NAVIGATOR_REFRESH_UNAVAILABLE,
             "note": _NOTE_REFRESH_UNAVAILABLE,
         }
+    if wa.backtest_running():
+        log.warning("chartctl navigator refresh skipped: a backtest is running")
+        return _navigator_failed(wa.CODE_BACKTEST_RUNNING)
+    name = expert_file[:-4] if expert_file.lower().endswith(".ex5") else expert_file
     try:
-        status, _autoit_log = autoit.refresh_navigator()
-    except (RuntimeError, ValueError, OSError) as exc:
-        log.warning("chartctl navigator refresh could not run: %s", exc)
-        status = repr(exc)
-    if status != _AUTOIT_OK:
-        log.warning("chartctl navigator refresh failed: %s", status)
-        return {
-            "navigator_refresh": NAVIGATOR_REFRESH_FAILED,
-            "note": _NOTE_REFRESH_FAILED,
-        }
-    return {"navigator_refresh": NAVIGATOR_REFRESH_OK}
+        pid, _started = terminal_pid.find_terminal()
+        result = winnavigator.refresh(
+            pid, [paths.UPLOADED_FOLDER, name], ("a", "c"),
+            ea_labels=winnavigator.labels_with_default(
+                CHARTCTL_NAVIGATOR_LABELS["expert_advisors"], winnavigator.EA_NODE),
+            refresh_labels=winnavigator.labels_with_default(
+                CHARTCTL_NAVIGATOR_LABELS["refresh"], winnavigator.REFRESH_LABEL),
+        )
+    except (OptionsError, TerminalPidError) as err:
+        log.warning("chartctl navigator refresh failed: %s %s diag=%s",
+                    err.code, err.message, err.diag)
+        return _navigator_failed(err.code)
+    except Exception:  # noqa: BLE001 - the upload itself succeeded; report the refresh as failed
+        log.exception("chartctl navigator refresh failed unexpectedly")
+        return _navigator_failed(wa.CODE_INTERNAL)
+    if not result.get("found"):
+        log.warning("chartctl navigator refresh: %s not listed after %s diag=%s",
+                    expert_file, result.get("tried"), result.get("diag"))
+        return _navigator_failed("expert_not_listed")
+    fields = {"navigator_refresh": NAVIGATOR_REFRESH_OK}
+    if result.get("already_listed"):
+        fields["already_listed"] = True
+    return fields
 
 
 def _sha256(path: str) -> str:
@@ -136,12 +164,12 @@ def upload_expert():
         # Refreshed even when skipped, so re-uploading retries a refresh
         # that failed the first time.
         return jsonify({"name": name, "sha256": new_hash, "skipped": True,
-                        **_refresh_navigator()})
+                        **_refresh_navigator(name)})
     paths.atomic_write_bytes(dest, data)
     log.info("chartctl expert staged: %s (%d bytes, %s)",
              name, len(data), new_hash[:12])
     return jsonify({"name": name, "sha256": new_hash, "size": len(data),
-                    **_refresh_navigator()}), 201
+                    **_refresh_navigator(name)}), 201
 
 
 def list_experts():
@@ -305,7 +333,7 @@ def create_deployment():
         with open(expert_path, "rb") as handle:
             paths.atomic_write_bytes(
                 os.path.join(paths.EXPERTS_DIR, expert_file), handle.read())
-        refresh_fields = _refresh_navigator()
+        refresh_fields = _refresh_navigator(expert_file)
     if set_file and _resolve_set(set_file) is None:
         return _err(404, "ARTIFACT_NOT_FOUND",
                     f"set {set_file} is not staged — upload it first")

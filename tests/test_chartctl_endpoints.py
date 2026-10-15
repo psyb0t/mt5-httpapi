@@ -354,19 +354,25 @@ def test_close_chart_bad_id(client):
 
 @pytest.fixture
 def navigator(monkeypatch):
-    """Pretend AutoIt is available and record each Navigator refresh."""
-    from mt5api.chartctl import autoit_webrequest as autoit
+    """Pretend the terminal's windows can be driven and record each Navigator
+    refresh: its pid, the Navigator path and the labels it was given."""
+    from mt5api.chartctl import terminal_pid, winnavigator
+    from mt5api.chartctl import webrequest_apply as wa
 
-    state = {"calls": 0, "result": ("OK", "")}
+    state = {"calls": 0, "result": {"found": True, "already_listed": False, "tried": ["a"]},
+             "backtest": False, "args": []}
 
-    def refresh(timeout=60):
+    def refresh(pid, path, variants, **kwargs):
         state["calls"] += 1
+        state["args"].append({"pid": pid, "path": path, "variants": variants, **kwargs})
         if isinstance(state["result"], Exception):
             raise state["result"]
         return state["result"]
 
-    monkeypatch.setattr(autoit, "available", lambda: True)
-    monkeypatch.setattr(autoit, "refresh_navigator", refresh)
+    monkeypatch.setattr(wa, "available", lambda: True)
+    monkeypatch.setattr(wa, "backtest_running", lambda: state["backtest"])
+    monkeypatch.setattr(terminal_pid, "find_terminal", lambda: (4242, 1.0))
+    monkeypatch.setattr(winnavigator, "refresh", refresh)
     return state
 
 
@@ -400,16 +406,80 @@ def test_a_refused_upload_does_not_refresh(client, navigator):
     assert navigator["calls"] == 1
 
 
-@pytest.mark.parametrize("result", [("FAIL", "log"), RuntimeError("no AutoIt")])
-def test_a_failed_refresh_is_reported_and_the_file_stays_staged(client, navigator, result):
-    navigator["result"] = result
+def _options_error(code):
+    from mt5api.chartctl.winoptions import OptionsError
+
+    return OptionsError(code, "test failure")
+
+
+@pytest.mark.parametrize(
+    ("result", "code"),
+    [
+        ({"found": False, "already_listed": False, "tried": ["a", "c"]}, "expert_not_listed"),
+        ("options_error", "navigator_not_found"),
+        (RuntimeError("ctypes blew up"), "internal_error"),
+    ],
+)
+def test_a_failed_refresh_is_reported_and_the_file_stays_staged(client, navigator, result, code):
+    navigator["result"] = _options_error(code) if result == "options_error" else result
 
     r = _upload_expert(client)
 
     assert r.status_code == 201
     assert r.get_json()["navigator_refresh"] == "failed"
+    assert r.get_json()["navigator_error"] == code
     assert "upload the same file again" in r.get_json()["note"]
     assert [e["name"] for e in client.get("/experts").get_json()["experts"]] == ["EA.ex5"]
+
+
+def test_the_refresh_verifies_the_expert_under_uploaded_with_variants_a_then_c(client, navigator):
+    _upload_expert(client)
+
+    call = navigator["args"][0]
+    assert call["pid"] == 4242
+    assert call["path"] == ["Uploaded", "EA"]
+    assert call["variants"] == ("a", "c")
+    assert call["ea_labels"][-1] == "Expert Advisors"
+    assert call["refresh_labels"][-1] == "Refresh"
+
+
+def test_an_expert_listed_before_the_refresh_says_so(client, navigator):
+    navigator["result"] = {"found": True, "already_listed": True, "tried": ["a"]}
+
+    body = _upload_expert(client).get_json()
+
+    assert body["navigator_refresh"] == "ok"
+    assert body["already_listed"] is True
+
+
+def test_a_fresh_expert_carries_no_already_listed_field(client, navigator):
+    body = _upload_expert(client).get_json()
+
+    assert body["navigator_refresh"] == "ok"
+    assert "already_listed" not in body
+
+
+def test_no_refresh_is_tried_while_a_backtest_runs(client, navigator):
+    navigator["backtest"] = True
+
+    body = _upload_expert(client).get_json()
+
+    assert body["navigator_refresh"] == "failed"
+    assert body["navigator_error"] == "backtest_running"
+    assert navigator["calls"] == 0
+
+
+def test_configured_navigator_labels_come_before_the_english_ones(client, navigator, monkeypatch):
+    from mt5api.handlers import chartctl as handler
+
+    monkeypatch.setattr(handler, "CHARTCTL_NAVIGATOR_LABELS",
+                        {"expert_advisors": ["Fake Node"], "refresh": ["Fake Refresh"]})
+
+    _upload_expert(client)
+
+    call = navigator["args"][0]
+    assert call["ea_labels"] == ("Fake Node", "Expert Advisors")
+    assert call["refresh_labels"] == ("Fake Refresh", "Refresh")
 
 
 def test_deploying_a_host_expert_refreshes_after_copying_it_in(client, navigator):

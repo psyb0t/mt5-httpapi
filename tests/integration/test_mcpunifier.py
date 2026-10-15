@@ -39,7 +39,7 @@ LIVE_ACCOUNT = "tenkchallenge"
 DOWN_BROKER = "roboforex"
 DOWN_ACCOUNT = "procent"
 
-EXPECTED_TOOL_COUNT = 49
+EXPECTED_TOOL_COUNT = 50
 EXPECTED_TERMINAL_COUNT = 2
 
 # What the stub terminal does with the chartctl paths it stands in for: echo

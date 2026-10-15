@@ -25,7 +25,7 @@ Tool families:
       charts:      ``list_charts``, ``get_loader``, ``screenshot_chart``,
                    ``close_chart``
       WebRequest:  ``get_webrequest``, ``set_webrequest``,
-                   ``apply_webrequest``
+                   ``apply_webrequest``, ``verify_webrequest``
   - Files, only when the file API is enabled on this terminal:
                    ``list_files``, ``get_file``, ``put_file``, ``delete_file``
   - Escape hatches   — ``request`` (JSON routes) and ``endpoints`` (route catalog)
@@ -132,7 +132,7 @@ _CHARTCTL_INSTRUCTIONS = (
     "update_deployment, delete_deployment, reconcile_deployments), inspect "
     "and capture charts (list_charts, get_loader, screenshot_chart, "
     "close_chart), and manage the WebRequest URL allowlist "
-    "(get_webrequest, set_webrequest, apply_webrequest). A running "
+    "(get_webrequest, set_webrequest, apply_webrequest, verify_webrequest). A running "
     "deployment is a live EA that can trade on this account, so create, "
     "enable, re-point or delete one only when the user asked for it."
 )
@@ -778,10 +778,12 @@ def _register_chartctl_tools(mcp: FastMCP) -> None:
         (``PUT /webrequest``).
 
         Either replace the whole list with ``urls`` (``[]`` clears it) or
-        edit it with ``add`` and/or ``remove``; not both. Only http(s) URLs
-        without ``;`` or control characters are kept; the rest are dropped
-        silently, so check the returned ``urls``. ``runas``: launch the GUI
-        automation elevated, needed when MT5 itself runs elevated.
+        edit it with ``add`` and/or ``remove``; not both. A patch changes only
+        the URLs named and keeps every other entry the terminal holds,
+        including ones added by hand in the VM, which then become part of
+        the stored list. Only http(s) URLs with a host and no spaces, ``;``
+        or control characters are accepted; anything else is refused with
+        400 ``INVALID_URL``. ``runas``: ignored (kept for older callers).
 
         Inside the Windows VM this drives the terminal's Options dialog. On
         a bare-metal terminal it rewrites ``common.ini`` and RESTARTS the
@@ -789,12 +791,10 @@ def _register_chartctl_tools(mcp: FastMCP) -> None:
 
         The new list is stored before it is applied, so it is kept even when
         the apply fails, and applied again whenever the API starts or
-        restarts the terminal. Applying
-        can take minutes while other terminals finish theirs. If the call
-        times out, the apply may still be running. ``get_webrequest`` shows
-        the stored list either way, so it does not prove the apply worked;
-        only the expert's own ``WebRequest()`` result does. Wait about five
-        minutes, then call ``apply_webrequest`` once if it is still refused.
+        restarts the terminal. Applying takes seconds; while a backtest runs
+        on the terminal the call answers 409 and should be retried after it.
+        ``get_webrequest`` shows the stored list and the last apply result;
+        ``verify_webrequest`` reads the list the terminal really holds.
         """
         body = _webrequest_changes(urls, add, remove)
         query = _RUNAS_QUERY if runas else None
@@ -811,12 +811,24 @@ def _register_chartctl_tools(mcp: FastMCP) -> None:
         ``WebRequest()`` is still refused. ``runas``: as in
         ``set_webrequest``.
 
-        On a bare-metal terminal this RESTARTS the terminal. Like
-        ``set_webrequest`` it can take minutes; after a timeout, wait about
-        five minutes before calling it again.
+        A stored URL the terminal will not take is skipped and listed under
+        ``rejected`` instead of failing the whole apply. On a bare-metal
+        terminal this RESTARTS the terminal.
         """
         query = _RUNAS_QUERY if runas else None
         return await _call("POST", "/webrequest/apply", query=query)
+
+    @mcp.tool()
+    async def verify_webrequest() -> dict[str, Any]:
+        """Read the ``WebRequest()`` allowlist the running terminal really
+        holds, beside the stored one (``POST /webrequest/verify``). Inside the
+        Windows VM only.
+
+        It opens the terminal's Options dialog for a moment, so it answers
+        429 when called again within 10 seconds and 409 while a backtest
+        runs. Use it to check an apply, not to poll.
+        """
+        return await _call("POST", "/webrequest/verify")
 
 
 def _register_files_tools(mcp: FastMCP) -> None:
