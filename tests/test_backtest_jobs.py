@@ -339,3 +339,112 @@ def test_owns_job_normalizes_the_instance(monkeypatch):
     assert jobs.owns_job({"broker": "darwinex", "account": "live", "instance": None})
     assert jobs.owns_job({"broker": "darwinex", "account": "live", "instance": "default"})
     assert not jobs.owns_job({"broker": "darwinex", "account": "live", "instance": "a"})
+
+
+# --- state writes on the VM share, and the cancelled status -------------------
+
+
+def test_rename_is_retried_through_a_brief_sharing_violation(tmp_jobs_dir, monkeypatch):
+    """os.replace on the share fails with WinError 5 while another handle has
+    the target open; it clears in milliseconds."""
+    real_replace = os.replace
+    failures = {"left": 2}
+
+    def _replace(src, dst):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(jobs.os, "replace", _replace)
+    monkeypatch.setattr(jobs.time, "sleep", lambda _s: None)
+
+    jobs.store_job({"jobId": "a" * 32, "status": "queued"})
+
+    assert json.loads((tmp_jobs_dir / f"{'a' * 32}.json").read_text())["status"] == "queued"
+
+
+def test_a_write_that_keeps_failing_does_not_take_the_run_down(tmp_jobs_dir, monkeypatch):
+    """The 29 Oct 2026 crash: the job carries on from memory, and the next
+    update writes the whole job again."""
+    job_id = "b" * 32
+    jobs.store_job({"jobId": job_id, "status": "queued"})
+    real_replace = os.replace
+    broken = {"on": True}
+
+    def _replace(src, dst):
+        if broken["on"]:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(jobs.os, "replace", _replace)
+    monkeypatch.setattr(jobs.time, "sleep", lambda _s: None)
+
+    updated = jobs.update_job(job_id, status="running")
+
+    assert updated["status"] == "running"
+    assert jobs.load_job(job_id)["status"] == "running"
+    assert json.loads((tmp_jobs_dir / f"{job_id}.json").read_text())["status"] == "queued"
+
+    broken["on"] = False
+    jobs.update_job(job_id, launchAttempts=1)
+    on_disk = json.loads((tmp_jobs_dir / f"{job_id}.json").read_text())
+    assert on_disk["status"] == "running"
+    assert on_disk["launchAttempts"] == 1
+
+
+def test_a_cancelled_job_keeps_its_status_against_a_late_write(tmp_jobs_dir):
+    job_id = "c" * 32
+    jobs.store_job({"jobId": job_id, "status": "running"})
+    jobs.update_job(job_id, status="cancelled", error="Cancelled by request", finishedAt="t1")
+
+    late = jobs.update_job(
+        job_id, status="failed", error="terminal64.exe exited with code 1",
+        finishedAt="t2", exitCode=1, durationSeconds=12.0,
+    )
+
+    assert late["status"] == "cancelled"
+    assert late["error"] == "Cancelled by request"
+    assert late["finishedAt"] == "t1"
+    assert late["exitCode"] == 1
+    assert late["durationSeconds"] == 12.0
+
+
+def test_cancelled_is_final_for_the_sweep_and_the_prune(tmp_jobs_dir):
+    _write(tmp_jobs_dir, "gone", "cancelled")
+    assert jobs.sweep_orphans() == 0
+    assert "cancelled" in jobs.TERMINAL_STATUSES
+    assert "cancelled" not in jobs.ACTIVE_STATUSES
+
+
+def test_an_unsaved_job_is_written_again_on_the_next_poll(tmp_jobs_dir, monkeypatch):
+    """A lost final write must not leave the disk saying "running": the rolling
+    restart reads that as busy, and a restart's sweep would fail a finished run."""
+    job_id = "d" * 32
+    jobs.store_job({"jobId": job_id, "status": "running"})
+    real_replace = os.replace
+    broken = {"on": True}
+
+    def _replace(src, dst):
+        if broken["on"]:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(jobs.os, "replace", _replace)
+    monkeypatch.setattr(jobs.time, "sleep", lambda _s: None)
+    jobs.update_job(job_id, status="completed")
+    assert job_id in jobs.UNSAVED_JOBS
+
+    broken["on"] = False
+    jobs.load_job(job_id)
+
+    assert json.loads((tmp_jobs_dir / f"{job_id}.json").read_text())["status"] == "completed"
+    assert job_id not in jobs.UNSAVED_JOBS
+
+
+def test_cancel_if_active_leaves_a_finished_job_alone(tmp_jobs_dir):
+    jobs.store_job({"jobId": "e" * 32, "status": "completed"})
+    assert jobs.cancel_if_active("e" * 32, error="x") is None
+    assert jobs.load_job("e" * 32)["status"] == "completed"
+    jobs.store_job({"jobId": "f" * 32, "status": "running"})
+    assert jobs.cancel_if_active("f" * 32, error="x")["status"] == "cancelled"

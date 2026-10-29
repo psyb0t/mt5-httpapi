@@ -455,7 +455,7 @@ JOB=$(curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
   -F "set_name=ea studio nzdjpy m15 1615044595.set" \
   | jq -r .job_id)
 
-# 3. Poll. Status is queued → running → completed (or failed).
+# 3. Poll. Status is queued → running → completed (or failed, or cancelled).
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/backtest/$JOB
 
 # 4. Fetch the report HTML and the terminal log.
@@ -516,6 +516,10 @@ is queued, running, or finished. It includes captured process output plus the
 latest terminal and Strategy Tester journal lines; `lines` defaults to `200`
 and is clamped to `10..1000`. The MCP `get_backtest` tool exposes the same data
 with `part: "tail"`.
+
+`POST /backtest/<job_id>/cancel` stops a queued or running job and marks it
+`cancelled` (a final status). It kills only that terminal's tester processes,
+and only when that job is the one running there; it is safe to repeat.
 
 ### Real backtest runbook — finish the fucking job
 
@@ -605,7 +609,7 @@ JOB=$(curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
   -F "expert_name=EA.ex5" \
   -F "set_name=EA.set" | jq -r .job_id)
 
-# 4. Poll until completed or failed, then download artifacts.
+# 4. Poll until completed, failed or cancelled, then download artifacts.
 curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
   "$MT5_API_URL/backtest/$JOB"
 curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \

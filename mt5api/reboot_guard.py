@@ -4,7 +4,8 @@ The VM reboots itself every reboot_interval minutes. Before it does,
 scripts/reboot_guard.py asks every API on the VM through GET /busy and holds
 the reboot while any of them is busy:
 
-- a backtest of this terminal is queued or running;
+- a backtest of this terminal is queued or running, or a cancelled one is
+  still stopping its tester processes;
 - a request that changes something is in flight: an order, a position
   change such as a new stop loss, a deployment, a file write, a compile, a
   terminal restart. Reads (GET, HEAD, OPTIONS) never hold a reboot.
@@ -21,6 +22,7 @@ import os
 import threading
 import time
 
+from mt5api.backtest import handler as backtest_handler
 from mt5api.backtest import jobs as backtest_jobs
 from mt5api.config import BASE_DIR
 from mt5api.logger import log
@@ -76,12 +78,16 @@ def _writes_in_flight() -> list[dict]:
 
 
 def _active_backtests() -> list[dict]:
+    # A cancelled job is final at once, but its worker goes on killing the
+    # terminal's tester processes; a reboot then would cut that short.
+    workers = backtest_handler.active_worker_ids()
     with backtest_jobs.JOB_LOCK:
         snapshot = list(backtest_jobs.BACKTEST_JOBS.values())
     return [
         {"job_id": job.get("jobId"), "status": job.get("status")}
         for job in snapshot
-        if job.get("status") in backtest_jobs.ACTIVE_STATUSES and backtest_jobs.owns_job(job)
+        if (job.get("status") in backtest_jobs.ACTIVE_STATUSES or job.get("jobId") in workers)
+        and backtest_jobs.owns_job(job)
     ]
 
 

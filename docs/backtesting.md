@@ -13,6 +13,7 @@ Build Strategy Tester files, launch the job, watch it run, and pull the reports 
 - [Poll job status](#get-backtestjob_id)
 - [Download report and log](#get-backtestjob_idreport--log)
 - [Read live diagnostic tails](#get-backtestjob_idtail)
+- [Cancel a job](#post-backtestjob_idcancel)
 - [Worked example](#worked-example)
 - [Optimization example](#optimization-example)
 - [Optimization guide](backtest-optimization.md)
@@ -49,6 +50,7 @@ symbols, set `symbol_suffix: ""` explicitly.
 | GET | `/backtest/<job_id>/report` | Download the raw MT5 report. |
 | GET | `/backtest/<job_id>/log` | Download the terminal log. |
 | GET | `/backtest/<job_id>/tail` | Read live diagnostic tails while a job runs. |
+| POST | `/backtest/<job_id>/cancel` | Stop a queued or running job and mark it cancelled. |
 
 For a plain backtest, leave `[Tester].Optimization=0` or omit it. For an
 optimization, set `[Tester].Optimization` to one of:
@@ -330,7 +332,7 @@ exit 10053 or 10012 ("not enough handles to start the platform").
 
 ### `GET /backtest/{job_id}`
 
-Status payload. `status` ∈ `queued` `running` `completed` `failed`. When
+Status payload. `status` ∈ `queued` `running` `completed` `failed` `cancelled`. When
 completed, includes a `summary` object parsed from the HTML report
 (`net_profit`, `profit_factor`, `recovery_factor`, `expected_payoff`, `sharpe_ratio`,
 `max_drawdown`, `total_trades`, `profit_trades`, `loss_trades`, …).
@@ -432,6 +434,29 @@ Return the live diagnostic guts for queued, running, or finished jobs as JSON.
 `?lines=N` controls the terminal/tester journal depth and is clamped to
 `10..1000` (default `200`). The response includes `run_log`, `terminal_log`,
 `tester_log`, status/timestamps, and the selected journal filenames.
+
+### `POST /backtest/{job_id}/cancel`
+
+Stop a job and mark it `cancelled`. Safe to repeat.
+
+| Job | What happens | Answer |
+| --- | --- | --- |
+| unknown | nothing | `404`, `code: JOB_NOT_FOUND` |
+| another terminal's (asked on the wrong instance) | nothing | `409`, `code: JOB_NOT_OWNED` |
+| `completed`, `failed` or `cancelled` | nothing | `200`, the job as it is |
+| `queued` | dropped before it launches; a run already on this terminal is not touched | `200` |
+| `running` | this terminal's `terminal64.exe`, its `metatester64.exe` agents and any stuck LiveUpdate updater are killed; the next job starts only once they are gone | `200`, or `202` if the worker is still stopping after 40 s |
+
+The answer is the job's status payload plus `killed` (processes signalled) and
+`stopped` (the worker has let go of the terminal). `cancelled` is final: a write
+from the worker that is still winding down cannot turn it back into `failed` or
+`completed`. A cancelled job has no report. While its worker is still stopping
+the tester processes, `GET /busy` lists it, so a scheduled reboot waits.
+
+A job's worker can no longer die and leave the job `running`: any exception
+outside the run's own error handling fails the job with `Backtest worker crashed
+before the run finished: ...`, and a state file that cannot be written on the VM
+share (WinError 5) is retried and then kept in memory instead of ending the run.
 
 ### Worked example
 

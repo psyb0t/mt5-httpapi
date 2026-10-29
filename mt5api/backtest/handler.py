@@ -1,4 +1,4 @@
-"""Backtest Flask views: build-ini, run, status, report, log.
+"""Backtest Flask views: build-ini, run, status, report, log, cancel.
 
 Run flow:
   1. Validate multipart inputs (ini text + expert/.set bytes or names).
@@ -11,10 +11,16 @@ Run flow:
      Login under UTF-8 — verified during the prior backtester branch
      work).
   6. Spawn a worker thread that holds RUN_LOCK while terminal64.exe runs.
+
+Cancel flow: POST /backtest/<jobId>/cancel marks the job cancelled and flags
+it; the worker checks the flag wherever it waits and stops there. A run that
+holds RUN_LOCK is this terminal directory's only one, so its tester processes
+are killed; a job still waiting is never allowed to touch the run in front.
 """
 from __future__ import annotations
 
 import configparser
+import contextlib
 import io
 import os
 import shutil
@@ -50,6 +56,33 @@ from mt5api.jsonkeys import accept_snake_keys, with_legacy_keys
 from mt5api.logger import log
 
 RUN_LOCK = threading.Lock()
+
+# Jobs a cancel was asked for, and jobs whose worker thread still runs, in this
+# process. Both are guarded by _CANCEL_LOCK.
+_CANCELLED: set = set()
+_ACTIVE_WORKERS: set = set()
+_CANCEL_LOCK = threading.Lock()
+# The job holding RUN_LOCK, if any. Only its tester processes may be killed by
+# a cancel: holding the lock is what makes this terminal directory's processes
+# that job's own.
+_LOCK_HOLDER = {"job_id": None}
+# How often a worker waiting for RUN_LOCK looks at its cancel flag.
+RUN_LOCK_POLL_SECONDS = 1
+# How long a cancelled run waits for its tester processes, agents included, to
+# exit before it lets the next job have the terminal. A metatester64 agent can
+# outlive terminal64.exe by seconds, and a launch while it still holds the
+# agent ports fails with "bind error [10048]".
+CANCEL_SETTLE_SECONDS = 60
+# How long POST /cancel waits for the worker to stop before answering 202.
+# Under nginx's default 60 s proxy timeout, with room for the kill's own grace.
+CANCEL_WAIT_SECONDS = 40
+# Terminate-to-kill grace for each kill the cancel route sends, and the spacing
+# between them while the worker has not stopped yet.
+CANCEL_KILL_GRACE_SECONDS = 5
+CANCEL_POLL_SECONDS = 0.5
+CANCEL_ERROR = "Cancelled by request"
+WORKER_CRASH_ERROR = "Backtest worker crashed before the run finished"
+WORKER_START_ERROR = "Backtest worker could not be started"
 
 # How long to keep looking for a replacement terminal process after the one we
 # launched exits 0 without a report. Covers the ~7s LiveUpdate gap with margin.
@@ -587,6 +620,8 @@ def _await_self_relaunch(job_id, report_paths, deadline):
     # nothing is coming back.
     grace_end = min(time.time() + RELAUNCH_GRACE_SECONDS, deadline)
     while time.time() < grace_end:
+        if _cancel_requested(job_id):
+            return False
         if _terminal_process_alive():
             break
         if _any_report_exists(report_paths):
@@ -601,6 +636,8 @@ def _await_self_relaunch(job_id, report_paths, deadline):
         BROKER, ACCOUNT, job_id,
     )
     while time.time() < deadline:
+        if _cancel_requested(job_id):
+            return False
         if not _terminal_process_alive():
             break
         time.sleep(2)
@@ -739,7 +776,20 @@ def run_backtest():
     }
     jobs.store_job(job)
 
-    threading.Thread(target=_execute_job, args=(job_id,), daemon=True).start()
+    with _CANCEL_LOCK:
+        _ACTIVE_WORKERS.add(job_id)
+    try:
+        threading.Thread(target=_execute_job, args=(job_id,), daemon=True).start()
+    except Exception:  # noqa: BLE001 - a job without a worker must not stay queued
+        log.exception(
+            "backtest worker start failed broker=%s account=%s job=%s", BROKER, ACCOUNT, job_id
+        )
+        with _CANCEL_LOCK:
+            _ACTIVE_WORKERS.discard(job_id)
+        jobs.update_job(
+            job_id, status="failed", error=WORKER_START_ERROR, finishedAt=jobs.now_iso()
+        )
+        return jsonify({"error": WORKER_START_ERROR, "code": "WORKER_START_FAILED"}), 503
 
     response = jsonify(jobs.public_payload(job))
     response.status_code = 202
@@ -750,9 +800,132 @@ def run_backtest():
 # ── Worker ──────────────────────────────────────────────────────────
 
 
-def _execute_job(job_id):
+class JobCancelled(Exception):
+    """The job was cancelled; raised where the worker notices, to stop it there."""
+
+
+def _cancel_requested(job_id):
+    with _CANCEL_LOCK:
+        return job_id in _CANCELLED
+
+
+def _raise_if_cancelled(job_id):
+    if _cancel_requested(job_id):
+        raise JobCancelled(job_id)
+
+
+def _worker_active(job_id):
+    with _CANCEL_LOCK:
+        return job_id in _ACTIVE_WORKERS
+
+
+def active_worker_ids():
+    """Jobs whose worker thread still runs, whatever their status says. A
+    cancelled job's worker can spend up to CANCEL_SETTLE_SECONDS (plus
+    RELAUNCH_GRACE_SECONDS after the lock) killing its tester processes."""
+    with _CANCEL_LOCK:
+        return frozenset(_ACTIVE_WORKERS)
+
+
+@contextlib.contextmanager
+def _run_lock(job_id):
+    """Hold RUN_LOCK for `job_id`, giving up the wait if the job is cancelled."""
+    while not RUN_LOCK.acquire(timeout=RUN_LOCK_POLL_SECONDS):
+        _raise_if_cancelled(job_id)
+    _LOCK_HOLDER["job_id"] = job_id
+    try:
+        yield
+    finally:
+        _LOCK_HOLDER["job_id"] = None
+        RUN_LOCK.release()
+
+
+def _settle_after_cancel(job_id, watch_seconds=0):
+    """Inside RUN_LOCK: stop the cancelled run and wait for its processes to go,
+    so the next job does not launch onto agents still holding their ports.
+
+    `watch_seconds` keeps watching that long and kills whatever appears: after
+    the launched process exits, MT5 can start its replacement (the run itself,
+    on a LiveUpdate hand-off) seconds later.
+    """
+    killed = kill_terminal_processes()
+    quiet_from = time.time() + watch_seconds
+    deadline = quiet_from + CANCEL_SETTLE_SECONDS
+    while True:
+        alive = any(True for _ in _terminal_processes())
+        now = time.time()
+        if not alive and now >= quiet_from:
+            break
+        if now >= deadline:
+            killed += kill_terminal_processes()
+            break
+        if alive and watch_seconds:
+            killed += kill_terminal_processes()
+        time.sleep(1)
+    log.info(
+        "backtest cancelled broker=%s account=%s job=%s killed=%d",
+        BROKER, ACCOUNT, job_id, killed,
+    )
+
+
+def _stop_after_lock_released(job_id):
+    """A cancel noticed after the worker left RUN_LOCK (the self-relaunch wait,
+    the report checks): take the lock back so no other job launches meanwhile,
+    then stop the run and watch for a replacement terminal. If another job
+    already holds the lock, its processes are its own and nothing is killed."""
+    if not RUN_LOCK.acquire(timeout=CANCEL_SETTLE_SECONDS):
+        log.warning(
+            "backtest cancel: another job holds the terminal broker=%s account=%s job=%s",
+            BROKER, ACCOUNT, job_id,
+        )
+        return
+    _LOCK_HOLDER["job_id"] = job_id
+    try:
+        _settle_after_cancel(job_id, watch_seconds=RELAUNCH_GRACE_SECONDS)
+    finally:
+        _LOCK_HOLDER["job_id"] = None
+        RUN_LOCK.release()
+
+
+def _fail_if_active(job_id, error):
     job = jobs.load_job(job_id)
-    if job is None:
+    if job is None or job.get("status") not in jobs.ACTIVE_STATUSES:
+        return
+    jobs.update_job(job_id, status="failed", error=error, finishedAt=jobs.now_iso())
+
+
+def _execute_job(job_id):
+    """Run one job and, whatever happens, never leave it queued or running.
+
+    The body used to run unguarded up to its first `try`: a WinError 5 from the
+    "running" state write on the VM share killed the thread there, and the job
+    answered "running" to every poll with no terminal ever started.
+    """
+    with _CANCEL_LOCK:
+        _ACTIVE_WORKERS.add(job_id)
+    try:
+        _run_job(job_id)
+    except JobCancelled:
+        log.info(
+            "backtest cancelled before launch broker=%s account=%s job=%s",
+            BROKER, ACCOUNT, job_id,
+        )
+    except BaseException as exc:  # noqa: BLE001 - a dead worker must not leave its job active
+        log.exception(
+            "backtest worker crashed broker=%s account=%s job=%s", BROKER, ACCOUNT, job_id
+        )
+        _fail_if_active(job_id, f"{WORKER_CRASH_ERROR}: {exc}")
+        if not isinstance(exc, Exception):
+            raise
+    finally:
+        with _CANCEL_LOCK:
+            _ACTIVE_WORKERS.discard(job_id)
+            _CANCELLED.discard(job_id)
+
+
+def _run_job(job_id):
+    job = jobs.load_job(job_id)
+    if job is None or _cancel_requested(job_id):
         return
 
     reports_dir = os.path.join(TERMINAL_DIR, "Reports")
@@ -786,7 +959,8 @@ def _execute_job(job_id):
 
     started_at = jobs.now_iso()
     start_time = time.time()
-    with RUN_LOCK:
+    with _run_lock(job_id):
+        _raise_if_cancelled(job_id)
         jobs.update_job(job_id, status="running", startedAt=started_at)
         try:
             shutil.copyfile(job["stagedExpertPath"], expert_dest)
@@ -806,6 +980,7 @@ def _execute_job(job_id):
             # A launch on top of a stuck updater starts another updater that
             # cannot finish either (see _updater_processes).
             _clear_stale_updaters()
+            _raise_if_cancelled(job_id)
             with open(job["logPath"], "w", encoding="utf-8") as log_handle:
                 try:
                     result = subprocess.run(
@@ -816,6 +991,8 @@ def _execute_job(job_id):
                         timeout=job["timeoutSeconds"],
                         check=False,
                     )
+                    # The cancel route killed the terminal, which is why it returned.
+                    _raise_if_cancelled(job_id)
                 except subprocess.TimeoutExpired:
                     duration = round(time.time() - start_time, 3)
                     # subprocess.run kills the process it started, but not the
@@ -840,6 +1017,9 @@ def _execute_job(job_id):
                         finishedAt=jobs.now_iso(),
                     )
                     return
+        except JobCancelled:
+            _settle_after_cancel(job_id)
+            return
         except Exception as exc:
             log.exception(
                 "backtest crashed broker=%s account=%s job=%s",
@@ -864,6 +1044,11 @@ def _execute_job(job_id):
                 except OSError:
                     pass
 
+    if _cancel_requested(job_id):
+        # Cancelled between the terminal's exit and here: nothing left to judge.
+        _stop_after_lock_released(job_id)
+        return
+
     duration = round(time.time() - start_time, 3)
     if result.returncode != 0:
         terminal_tail = _tail(_tail_terminal_log())
@@ -887,6 +1072,10 @@ def _execute_job(job_id):
     if duration < RELAUNCH_MAX_EXIT_SECONDS and not _any_report_exists(report_paths):
         _await_self_relaunch(job_id, report_paths, start_time + job["timeoutSeconds"])
         duration = round(time.time() - start_time, 3)
+        if _cancel_requested(job_id):
+            # Cancelled while waiting for MT5's replacement terminal: that one is the run.
+            _stop_after_lock_released(job_id)
+            return
 
     if not os.path.exists(job["reportPath"]) and job.get("optimizationType") == 3:
         # MT5 writes mode-3 optimization output to <base>.symbols.xml.
@@ -990,6 +1179,59 @@ def get_status(job_id):
     if job is None:
         return jsonify({"error": f"Backtest job not found: {job_id}"}), 404
     return jsonify(jobs.public_payload(job))
+
+
+def cancel_backtest(job_id):
+    """POST /backtest/<jobId>/cancel: stop a job and mark it cancelled.
+
+    Idempotent. A job already finished is answered as it is. A waiting job is
+    dropped before it launches. A running job that holds RUN_LOCK has this
+    terminal's tester processes killed, and the answer waits (up to
+    CANCEL_WAIT_SECONDS) until its worker has let go of the terminal: 200 when
+    it has, 202 while it is still stopping. A job whose worker is gone is only
+    marked: no other run's processes are touched.
+    """
+    job = jobs.load_job(job_id)
+    if job is None:
+        return jsonify({"error": f"Backtest job not found: {job_id}", "code": "JOB_NOT_FOUND"}), 404
+    if not jobs.owns_job(job):
+        return jsonify({
+            "error": f"Backtest job {job_id} belongs to another terminal",
+            "code": "JOB_NOT_OWNED",
+        }), 409
+    if job.get("status") in jobs.TERMINAL_STATUSES:
+        return jsonify(jobs.public_payload(job))
+
+    with _CANCEL_LOCK:
+        _CANCELLED.add(job_id)
+    if jobs.cancel_if_active(job_id, error=CANCEL_ERROR, finishedAt=jobs.now_iso()) is None:
+        # It finished between the check above and now: answer it as it is.
+        with _CANCEL_LOCK:
+            _CANCELLED.discard(job_id)
+        return jsonify(jobs.public_payload(jobs.load_job(job_id)))
+    log.info(
+        "backtest cancel requested broker=%s account=%s job=%s was=%s",
+        BROKER, ACCOUNT, job_id, job.get("status"),
+    )
+
+    killed = 0
+    next_kill_at = 0.0
+    deadline = time.time() + CANCEL_WAIT_SECONDS
+    while _worker_active(job_id) and time.time() < deadline:
+        if _LOCK_HOLDER["job_id"] == job_id and time.time() >= next_kill_at:
+            killed += kill_terminal_processes(grace_seconds=CANCEL_KILL_GRACE_SECONDS)
+            next_kill_at = time.time() + CANCEL_KILL_GRACE_SECONDS
+        time.sleep(CANCEL_POLL_SECONDS)
+
+    stopped = not _worker_active(job_id)
+    if stopped:
+        # A worker that was already gone never clears its own flag.
+        with _CANCEL_LOCK:
+            _CANCELLED.discard(job_id)
+    payload = jobs.public_payload(jobs.load_job(job_id))
+    payload["killed"] = killed
+    payload["stopped"] = stopped
+    return jsonify(payload), (200 if stopped else 202)
 
 
 def get_report(job_id):

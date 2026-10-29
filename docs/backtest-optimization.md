@@ -38,7 +38,7 @@ No matter which mode you pick, the dance is the same:
 2. Provide an `.ex5` expert.
 3. Provide a `.set` file containing MT5 optimization ranges.
 4. Submit `POST /backtest`.
-5. Poll `GET /backtest/<job_id>` until `completed` or `failed`.
+5. Poll `GET /backtest/<job_id>` until `completed`, `failed` or `cancelled`.
 6. Inspect `optimization_results`, `optimization_cache`, `/report`, and `/log`.
 
 ## Optimization Modes
@@ -319,7 +319,7 @@ curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB"
 
 Important fields:
 
-- `status`: `queued`, `running`, `completed`, or `failed`
+- `status`: `queued`, `running`, `completed`, `failed`, or `cancelled`
 - `optimization_type`: submitted MT5 mode
 - `optimization_results`: parsed top `N` rows exposed by the API
 - `optimization_cache`: metadata for the matched `.opt` file when cache parsing is used
@@ -377,7 +377,7 @@ while :; do
   STATUS_JSON=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB")
   STATUS=$(printf '%s' "$STATUS_JSON" | jq -r '.status')
   echo "Status: $STATUS"
-  [[ "$STATUS" == completed || "$STATUS" == failed ]] && break
+  [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break
   sleep 10
 done
 

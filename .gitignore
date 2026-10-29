@@ -45,6 +45,7 @@ vms.yaml
 run.log
 logs/
 __pycache__
+.coverage
 coverage.txt
 coverage.out
 profile.out

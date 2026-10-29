@@ -12,6 +12,7 @@ import pytest
 from flask import jsonify
 
 from mt5api import reboot_guard, server
+from mt5api.backtest import handler as backtest_handler
 from mt5api.backtest import jobs as backtest_jobs
 
 TOKEN = "guard-test-token"
@@ -104,11 +105,23 @@ def test_an_active_backtest_holds_the_reboot(client, status):
     assert body["reasons"] == [f"backtest {'a' * 32} {status}"]
 
 
-@pytest.mark.parametrize("status", ["completed", "failed"])
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
 def test_a_finished_backtest_does_not(client, status):
     backtest_jobs.BACKTEST_JOBS["b" * 32] = {"jobId": "b" * 32, "status": status}
 
     assert client.get("/busy", headers=AUTH).get_json()["busy"] is False
+
+
+def test_a_cancelled_backtest_still_stopping_holds_the_reboot(client, monkeypatch):
+    """Cancelled is final at once, but its worker is still killing the
+    terminal's tester processes; a reboot must wait for it."""
+    backtest_jobs.BACKTEST_JOBS["d" * 32] = {"jobId": "d" * 32, "status": "cancelled"}
+    monkeypatch.setattr(backtest_handler, "_ACTIVE_WORKERS", {"d" * 32})
+
+    body = client.get("/busy", headers=AUTH).get_json()
+
+    assert body["busy"] is True
+    assert body["backtests"] == [{"job_id": "d" * 32, "status": "cancelled"}]
 
 
 def test_another_terminals_backtest_is_not_ours_to_report(client):

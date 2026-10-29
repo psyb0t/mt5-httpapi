@@ -72,7 +72,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/m
 }
 ```
 
-`backtests` lists this terminal's queued and running backtests as `job_id` and `status`. `writes_in_flight` lists requests other than `GET`, `HEAD` and `OPTIONS` that have not finished. `draining` is true in the seconds before a reboot, when every write answers 503 `REBOOT_PENDING` with `Retry-After: 120`.
+`backtests` lists this terminal's queued and running backtests, and cancelled ones whose worker is still stopping, as `job_id` and `status`. `writes_in_flight` lists requests other than `GET`, `HEAD` and `OPTIONS` that have not finished. `draining` is true in the seconds before a reboot, when every write answers 503 `REBOOT_PENDING` with `Retry-After: 120`.
 
 ### Terminal
 

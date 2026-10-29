@@ -6,6 +6,16 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`POST /backtest/{job_id}/cancel` stops a job.** A queued job is dropped before it launches; a running one has this terminal's tester processes (agents and stuck updaters included) killed, and the next job starts only once they are gone. `cancelled` is a new final status that a late write from the worker cannot overwrite, and `GET /busy` keeps holding a scheduled reboot until a cancelled job's worker has stopped. See [docs/backtesting.md](docs/backtesting.md#post-backtestjob_idcancel).
+
+### Fixed
+
+- **A backtest worker can no longer die and leave its job `running` forever.** A `WinError 5` from the "running" state write on the VM share killed a worker before its terminal started, and the job answered `running` to every poll. Any exception the run does not handle itself now fails the job, a thread that cannot be started fails the submit with 503 `WORKER_START_FAILED`, and a state-file rename that hits a sharing violation is retried and then kept in memory (and written again on the next poll) instead of raising.
+
 ## [v4.31.1]: 2026-10-21
 
 ### Changed

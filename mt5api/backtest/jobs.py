@@ -33,10 +33,23 @@ from mt5api.logger import log
 
 JOB_LOCK = threading.Lock()
 BACKTEST_JOBS: dict = {}
+# Jobs whose latest state is in memory but not on disk (a write failed). The
+# next load_job or update_job writes them again; see _write.
+UNSAVED_JOBS: set = set()
 
 POLL_AFTER_SECONDS = 60
-TERMINAL_STATUSES = frozenset({"completed", "failed"})
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ACTIVE_STATUSES = frozenset({"queued", "running"})
+# Once a job is cancelled these fields keep the cancel's values: the worker can
+# still be winding down when POST /backtest/<id>/cancel answers, and its late
+# "failed" or "completed" must not turn a cancelled job back into a finished one.
+CANCEL_KEEPS_FIELDS = frozenset({"status", "error", "finishedAt"})
+
+# os.replace on the VM share fails with WinError 5 while any other handle has
+# the target open (a reader, Defender, an SMB oplock break). It clears within
+# milliseconds, so retry before giving up. On a two-VM install one such
+# failure killed a job's worker before its terminal started.
+REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
 
 # Only state files touched within the last SWEEP_LOOKBACK_SECONDS can be an
 # active run that needs sweeping; anything older was long since terminal.
@@ -77,11 +90,35 @@ def _atomic_write(path: str, job: dict) -> None:
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(job, handle, indent=2, sort_keys=True)
+    for delay in REPLACE_RETRY_DELAYS:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(delay)
     os.replace(tmp, path)
 
 
 def _write(job: dict) -> None:
-    _atomic_write(_state_path(job["jobId"]), job)
+    """Persist a job, or log why not.
+
+    The in-memory copy is what every poll is answered from while this process
+    lives, so a disk write that still fails after the retries must not take the
+    run down with it: the next update writes the whole job again, and after a
+    restart sweep_orphans() fails whatever the disk still calls active. A job
+    left unsaved is written again by the next load_job (every poll) or
+    update_job, so a lost final write does not leave the disk saying "running"
+    (which a restart's sweep_orphans() would then fail).
+    """
+    try:
+        _atomic_write(_state_path(job["jobId"]), job)
+    except OSError as exc:
+        UNSAVED_JOBS.add(job["jobId"])
+        log.warning(
+            "backtest job %s: state not saved to disk, kept in memory: %s", job["jobId"], exc
+        )
+        return
+    UNSAVED_JOBS.discard(job["jobId"])
 
 
 def store_job(job: dict) -> None:
@@ -100,6 +137,8 @@ def update_job(job_id: str, **changes) -> dict:
             with open(path, "r", encoding="utf-8") as handle:
                 job = json.load(handle)
             BACKTEST_JOBS[job_id] = job
+        if job.get("status") == "cancelled":
+            changes = {k: v for k, v in changes.items() if k not in CANCEL_KEEPS_FIELDS}
         job.update(changes)
         _write(job)
         return dict(job)
@@ -109,6 +148,8 @@ def load_job(job_id: str):
     with JOB_LOCK:
         job = BACKTEST_JOBS.get(job_id)
         if job is not None:
+            if job_id in UNSAVED_JOBS:
+                _write(job)
             return dict(job)
     path = _state_path(job_id)
     if not os.path.exists(path):
@@ -118,6 +159,22 @@ def load_job(job_id: str):
     with JOB_LOCK:
         BACKTEST_JOBS.setdefault(job_id, job)
     return dict(job)
+
+
+def cancel_if_active(job_id: str, **changes):
+    """Mark a queued or running job cancelled, atomically with the check.
+
+    Returns the updated job, or None when it had already finished (or is
+    unknown): a job completing between a caller's check and its write must not
+    turn into a cancelled one.
+    """
+    with JOB_LOCK:
+        job = BACKTEST_JOBS.get(job_id)
+        if job is None or job.get("status") not in ACTIVE_STATUSES:
+            return None
+        job.update(changes, status="cancelled")
+        _write(job)
+        return dict(job)
 
 
 def queue_position(job_id: str):
