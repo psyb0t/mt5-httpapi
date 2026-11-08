@@ -25,7 +25,7 @@ mt5-httpapi runs real Windows MetaTrader 5 terminals inside a `dockurr/windows` 
 
 ### How code reaches the VM
 
-The VM does not see the repo. `run.sh` (what `make up` runs) copies `config/config.yaml`, the broker installers from `mt5installers/`, the Windows scripts from `scripts/` and the whole `mt5api/` package into `data/shared/`, which the VM mounts. `assets/` is mounted read-only at `/shared/assets`. It then generates the nginx config and per-VM group files, and runs `docker compose up -d --build` (asking first if the stack is already up, and taking it down to restart). Inside Windows, `start.bat` runs on every logon: it takes a boot-scoped lock through `scripts/acquire_lock.ps1`, calls `install.bat` (idempotent prerequisites, Python, the MT5 installs; `*.done` flags in `data/shared` mark finished steps), installs the pip requirements, compiles the Chart Deployments loader when enabled, launches each terminal after writing its `mt5start.ini` through `config_helper.py write_ini`, and starts one `api_runner.bat` per terminal. The boot order and its rules are in [windows-vm.md](.agents/rules/windows-vm.md). A Python change therefore needs `make up` (or a VM restart after copying) before the running stack sees it.
+The VM does not see the repo. `run.sh` (what `make up` runs) copies `config/config.yaml`, the broker installers from `mt5installers/`, the Windows scripts from `scripts/` and the whole `mt5api/` package into `data/shared/`, which the VM mounts. `assets/` is mounted read-only at `/shared/assets`. It then generates the nginx config and per-VM group files, and runs `docker compose up -d --build` (asking first if the stack is already up, and taking it down to restart). Inside Windows, `start.bat` runs on every logon: it takes a boot-scoped lock through `scripts/acquire_lock.ps1`, calls `install.bat` (idempotent prerequisites, Python, the MT5 installs; `*.done` flags in `data/shared` mark finished steps), installs the pip requirements, compiles the Chart Deployments loader when enabled, runs `config/setup.bat` when present, launches each terminal after writing its `mt5start.ini` through `config_helper.py write_ini`, and starts one `api_runner.bat` per terminal. The boot order and its rules are in [windows-vm.md](.agents/rules/windows-vm.md). A Python change therefore needs `make up` (or a VM restart after copying) before the running stack sees it.
 
 ### Optional features
 
@@ -64,7 +64,7 @@ The enable rules live in `chartctl_enabled()` and `files_enabled()` in `mt5api/c
 | `clients/go/` | Typed public Go client, its own module (`go 1.26.1`). |
 | `examples/` | Python and shell examples (`examples/python/`, `examples/chartctl/`). |
 | `tests/` | Offline unit and contract tests; `tests/integration/` (testcontainers); `tests/live/` (against a running stack). |
-| `docs/` | User documentation, one file per area. |
+| `docs/` | User documentation, one file per area, published by GitHub Pages from `master` as <https://psyb0t.github.io/mt5-httpapi/> (Just the Docs, `docs/_config.yml`). |
 | `.agents/` | The agent skill (`skills/mt5-httpapi/`), the OpenClaw plugin (`plugins/mt5-httpapi/`), Claude and Codex plugin manifests, and these rules (`rules/`). |
 | `docker-compose.yml.j2`, `docker-compose.yml.example` | Compose template and the single-VM seed. The generated `docker-compose.yml` is the user's and is gitignored. |
 | `Dockerfile.test`, `Dockerfile.lint`, `Dockerfile.mcpunifier`, `Dockerfile.signals`, `Dockerfile.watchdog` | Test image, lint image, unifier image, signal copier image, watchdog image. |
@@ -86,6 +86,7 @@ Run `make help` for the list. The targets:
 | `make test-integration` | Host venv in `.venv-test`, then `pytest tests/integration/`: nginx routing against the generated config, the unifier image beside a stub terminal (tool surface, catalog against Flask's `url_map`, a down terminal failing alone), the vm-watchdog recovery and the wickworks sidecar lifecycle on disposable compose projects. Needs the Docker socket. |
 | `make test-go` | `go test -race ./...` on `clients/go` in a pinned Go image. |
 | `make telegram-login` | One interactive Telegram login in the pinned telethon-plus image; prints the session string for `telegram.session`. |
+| `make docs` | Builds `docs/` into `.testing/docs-site` with `ghcr.io/actions/jekyll-build-pages`, the image GitHub Pages uses. |
 | `make test-live` | `pytest tests/live/` against a running stack set by `MT5_LIVE_URL`, `MT5_LIVE_TOKEN`, `MT5_LIVE_BROKER`, `MT5_LIVE_ACCOUNT` and the other `MT5_LIVE_*` variables, or `tests/live/.env`. Pick modules with `LIVE_TESTS=...`, pass pytest args with `LIVE_ARGS=...`. Places real orders. |
 
 The `MetaTrader5` SDK is Windows only, so `tests/conftest.py` installs a stub module with the SDK constants before any `mt5api` import, and tests script SDK return values through its `RecordedMT5`, `api_client` and `patch_handler` fixtures. `pytest.ini` keeps `tests/live` and `tests/integration` out of the default collection. Details on the live suite: [docs/operations.md](docs/operations.md#testing-a-running-stack). Which layer to use for what: [.agents/rules/testing.md](.agents/rules/testing.md).

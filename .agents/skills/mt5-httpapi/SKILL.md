@@ -59,7 +59,7 @@ export MT5_API_TOKEN=<the-token-the-user-gives-you>
 
 If `MT5_API_URL` is not set in the environment, ask the user — do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
 
-A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to — set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=...` at compose time.
+A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to; set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=... make up`; `run.sh` keeps it in `.env` for later compose calls.
 
 **Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok", "mode": "live"}` for the normal API process. If not, the API isn't up yet (may still be initializing — it retries in the background).
 
@@ -71,7 +71,7 @@ Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.
 
 On terminals with [Chart Deployments](#chart-deployments) enabled, MCP also has the chartctl tools: `upload_expert`, `list_experts`, `delete_expert`, `upload_set`, `list_sets`, `get_set`, `delete_set`, `create_deployment`, `list_deployments`, `get_deployment`, `update_deployment`, `delete_deployment`, `reconcile_deployments`, `list_charts`, `get_loader`, `screenshot_chart`, `close_chart`, `get_webrequest`, `set_webrequest`, `apply_webrequest`, `verify_webrequest`. The upload tools take the file as base64 (`upload_set` also takes plain text) and send the multipart form for you. `screenshot_chart` returns the PNG as image content you can look at. On terminals with the [file API](#files) enabled, `list_files`, `get_file`, `put_file` and `delete_file` read and write files in the terminal's install directory or the compile tree.
 
-Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account; see Security & safety above.
+Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The Claude Code plugin registers the unified server (`<api_url>/mcp/`) itself; its `api_url` setting is the server root (`http://localhost:8888`) and feeds only that MCP server, while `MT5_API_URL` stays the terminal path the `curl` calls use. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account; see Security & safety above.
 
 A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts, each process mode (`live` or `backtest`), and whether Chart Deployments are enabled for each (`chartctl`); the mode does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once, and the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
 
@@ -176,7 +176,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/tick
 Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2` `H3` `H4` `H6` `H8` `H12` `D1` `W1` `MN1`
 
 Rates/ticks query model — two modes, mutually exclusive:
-- **Anchor + signed `count`:** `count=N` = N forward from `from`, `count=-N` = `\|N\|` ending at `from`, `count=0` = empty. Omit `from` to anchor at now.
+- **Anchor + signed `count`:** `count=N` = N forward from `from`, `count=-N` = `\|N\|` ending at `from`, `count=0` = empty. Omit `from` to anchor at now: the latest `\|N\|` bars or ticks up to now, whatever the sign of `count`. A `count` that is not an integer is a 400.
 - **Range (`from` + `to`):** all bars/ticks in the window, no count cap beyond `terminal_info().maxbars`. `to` requires `from` and rejects `count` (returns 400).
 
 `from` and `to` accept three formats (all real UTC): unix seconds (`1700000000`), full datetime `YYYY_MM_DD_HH_MM_SS` (`2024_01_15_14_30_00`), or date-only `YYYY_MM_DD` (midnight UTC).
@@ -276,6 +276,8 @@ Fill policies: `FOK`, `IOC` (default), `RETURN`
 Expiration: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`
 
 Required fields: `symbol`, `type`, `volume`. `price` auto-fills for market orders.
+
+Stop-limit and expiry: `stoplimit` is the limit price of a `BUY_STOP_LIMIT` / `SELL_STOP_LIMIT` order (`price` is then the stop trigger) and is required for those two types. `expiration` is integer unix seconds in real UTC; it is required with `SPECIFIED` / `SPECIFIED_DAY`, and sent without a `type_time` it selects `SPECIFIED`. `PUT /orders/<id>` takes both too, and a field left out keeps the order's current value. A missing or bad value is a 400.
 
 Trade result:
 

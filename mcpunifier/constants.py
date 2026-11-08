@@ -46,6 +46,8 @@ SKIP_HTTP_METHODS = frozenset({"HEAD", "OPTIONS"})
 # The terminal process mode that never runs chartctl. mt5api treats every other
 # mode, including a missing one, as live.
 MODE_BACKTEST = "backtest"
+# What mt5api reports and runs for every terminal whose mode is not "backtest".
+MODE_LIVE = "live"
 
 # Feature tags on route-catalog entries that exist only when chartctl or the
 # file API is on.

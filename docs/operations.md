@@ -1,3 +1,10 @@
+---
+title: "Operations"
+description: "Make targets, ports, Tailscale and Cloudflare Tunnel access, request queues, memory per API process, auto-recovery and logs."
+nav_order: 3
+has_children: true
+---
+
 # Operations — keeping the bastard alive
 
 The commands, ports, tunnels, locks, queues, and logs you need after the thing boots and eventually does something stupid.
@@ -16,6 +23,7 @@ The commands, ports, tunnels, locks, queues, and logs you need after the thing b
 ## Make Targets
 
 ```
+make             Same as make up (the default target)
 make up          Fire up the VM (downloads ISO if needed)
 make down        Shut it down
 make logs        Tail the logs
@@ -24,21 +32,24 @@ make lint        Lint every .ps1/.sh script in a throwaway Docker image
 make format      Apply shfmt formatting to the .sh files in place
 make test        Run the complete automated test suite
 make test-unit   Run unit and contract tests in a throwaway Docker image
-make test-integration  Container-backed suites: nginx routing + MCP unifier
+make test-integration  Container-backed suites: nginx routing, MCP unifier, vm-watchdog, wickworks
 make test-go     Compile and race-test the public Go client
 make test-live   Test a running stack end to end (see below)
 make telegram-login  Log in to Telegram once for the signal copier (docs/signals.md)
+make docs        Build the docs/ site into .testing/docs-site with GitHub Pages' Jekyll image
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
+make verify-binaries  Check every tracked executable against assets/binaries.lock.json
+make help        List the targets
 ```
 
-`make test` is the complete automated gate: it runs `make test-unit`,
-`make test-integration`, and `make test-go`. Use a scoped target directly while
-iterating.
+`make test` is the complete automated gate: it runs `make verify-binaries`,
+`make test-unit`, `make test-integration`, and `make test-go`. Use a scoped
+target directly while iterating.
 
 ### Testing a running stack
 
-`make test-live` points the suite in `tests/live/` at a deployed stack and one of its terminals, so you can check what is actually running after an update. Set the target in the environment or in `tests/live/.env` (copy `tests/live/.env.example`; the file is gitignored and never baked into an image):
+`make test-live` points the suite in [`tests/live/`](https://github.com/psyb0t/mt5-httpapi/tree/master/tests/live) at a deployed stack and one of its terminals, so you can check what is actually running after an update. Set the target in the environment or in `tests/live/.env` (copy [`tests/live/.env.example`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/live/.env.example); the file is gitignored and never baked into an image):
 
 ```bash
 MT5_LIVE_URL=http://127.0.0.1:8888 MT5_LIVE_TOKEN=... \
@@ -55,6 +66,8 @@ make test-live LIVE_TESTS="tests/live/test_rest.py tests/live/test_mcp.py tests/
 
 `LIVE_ARGS` passes extra pytest arguments, for example `LIVE_ARGS="-k chartctl"`.
 
+Other target settings: `MT5_LIVE_INSTANCE` picks a terminal clone (default `default`), `MT5_LIVE_TIMEFRAME` sets the timeframe of the Chart Deployments test deployment (default `M15`), and `MT5_LIVE_COMPILE_WORK_DEPTH` / `MT5_LIVE_COMPILE_INCLUDE_DEPTH` are read by [`tests/live/test_compile_reach.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/live/test_compile_reach.py).
+
 For a read-only regression check after deploying, run the health module on the Docker host with access to the deployment's logs:
 
 ```bash
@@ -70,7 +83,7 @@ The same module reads the latest process's `BLAS_RUNTIME` startup record for eve
 the MT5 SDK stubbed, so it needs nothing but docker and finishes in seconds.
 
 `make test-integration` is everything that needs real containers, driven by
-pytest + testcontainers in `tests/integration/`:
+pytest + testcontainers in [`tests/integration/`](https://github.com/psyb0t/mt5-httpapi/tree/master/tests/integration):
 
 - **nginx routing** renders the config `config_helper.py` generates and boots
   real nginx against it with one VM deliberately absent, proving a single dead
@@ -79,6 +92,10 @@ pytest + testcontainers in `tests/integration/`:
   terminal, and checks that it routes to the right terminal, that a terminal
   which is down fails only the calls naming it, and that a broker/account pair
   you never configured is refused rather than routed somewhere plausible.
+- **vm-watchdog** drives a real recovery through the built watchdog sidecar on
+  a disposable Compose project.
+- **wickworks lifecycle** recreates and restarts a VM with and without its
+  sidecar and checks which of those strand the sidecar's network namespace.
 
 It runs on the host because it starts sibling containers through the docker
 socket. Its dependencies live in a reusable, gitignored `.venv-test/`; the
@@ -89,13 +106,14 @@ the run, including on ordinary test failures.
 container. The source mount is read-only and module/build caches are ephemeral.
 
 `make status` is separate from the automated suite: it runs
-`scripts/status.sh` against an already-running MT5 deployment and reports the
+[`scripts/status.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/status.sh) against an already-running MT5 deployment and reports the
 live terminals and read-only API checks.
 
 `make lint` covers the scripts that run inside the VM as well as the host-side
-shell: `.ps1` gets a pure-ASCII check, a parse check, and PSScriptAnalyzer;
-`.sh` gets shellcheck and shfmt. The ASCII rule is not cosmetic — Windows
-PowerShell 5.1 reads `.ps1` as ANSI unless the file has a UTF-8 BOM, so a
+shell: `.ps1`, `.bat` and `.cmd` get a pure-ASCII check; `.ps1` also gets a
+parse check and PSScriptAnalyzer; `.sh` gets shellcheck and shfmt. The ASCII
+rule is not cosmetic: Windows PowerShell 5.1 reads `.ps1` as ANSI unless the
+file has a UTF-8 BOM, and `cmd.exe` reads batch files in the console code page, so a
 multi-byte character inside a string literal gets mangled into a parse error you
 won't see until the VM boots. `make format` fixes whatever shfmt flags.
 
@@ -105,6 +123,8 @@ won't see until the VM boots. `make format` fixes whatever shfmt flags.
 | ----- | ----------------------- | --------------------------------- |
 | 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`         |
 | 8888  | HTTP API (nginx, all terminals) | `API_HOST_PORT=9999 make up` |
+
+`run.sh` writes an override you pass to `.env`, so a later `docker compose` command, including the vm-watchdog's recreate, publishes the same port. `.env` is rebuilt on every `make up`, so an override you leave out of a run goes back to the default; pass it each time you run `make up`.
 
 In single-VM mode, only these two ports leave the docker network. A
 [multi-VM deployment](multi-vm-setup.md) publishes one distinct noVNC port per
@@ -134,9 +154,11 @@ The sidecar runs in TUN mode (`TS_USERSPACE=false`) so a real `tailscale0` inter
 
 2. Uncomment the `tailscale` block in `docker-compose.yml`. (nginx is always on — no need to uncomment anything for it.)
 
-3. `make up`. `run.sh` reads `config.yaml`, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--login-server=...` if Headscale) to `.env`, brings the stack up, waits for tailscaled to authenticate, and runs `tailscale serve --bg --http=80 http://nginx:80` inside the sidecar to wire the tailnet :80 listener to nginx. The Serve config persists in `.data/tailscale/state`, so subsequent `make up` calls don't need to redo it.
+3. `make up`. `run.sh` reads `config.yaml`, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--accept-dns=false --login-server=...` if Headscale) to `.env`, brings the stack up, waits for tailscaled to authenticate, and runs `tailscale serve reset` then `tailscale serve --bg --http=80 http://nginx:80` inside the sidecar to wire the tailnet :80 listener to nginx. It does that on every `make up` while `auth_key` is set and the sidecar is running; the Serve config also persists in `.data/tailscale/state`, so plain container restarts keep it.
 
 **State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login — `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
+
+**Hostname**: the tailnet name comes from `TS_HOSTNAME` (default `mt5-httpapi`) on the `tailscale` service in `docker-compose.yml`.
 
 **Multi-terminal URL scheme**:
 ```
@@ -205,15 +227,17 @@ config/                      Your config shit
   config.yaml.example        Committed template — copy to config.yaml
   signals.yml                Signal copier rules (gitignored, docs/signals.md)
   signals.yml.example        Committed template, copy to signals.yml
-  setup.bat                  Custom boot commands (optional)
+  setup.bat                  Copied into the VM if present; start.bat runs it every boot
   hosts                      Extra entries for the VM's hosts file (optional)
 
 vms.yaml                     VM topology definition (optional — absent = single VM)
 docker-compose.yml.j2        Jinja2 template for N-VM compose generation
 
-scripts/                     Scripts that run inside the Windows VM
+scripts/                     Windows VM scripts, plus host-side glue
+                             (config_helper.py, status.sh, healthcheck.sh,
+                             rotate-logs.sh, recreate-vm.sh, vm-watchdog.py)
   oem-install.bat            First-boot OEM script (creates startup entry)
-  install.bat                Setup (Python, MT5, firewall) — runs every boot
+  install.bat                Setup (Python, MT5, firewall), runs every boot
   start.bat                  Boot entrypoint (install + start terminals + APIs)
   reboot.bat                 The only reboot path — writes rebooting.flag and
                              releases both lock dirs before shutting down
@@ -229,7 +253,8 @@ signals/                     Signal copier service (docs/signals.md)
 
 mt5api/                      Python HTTP API server
   handlers/                  Route handlers
-  config.py                  Configuration (--broker, --account, --port CLI args)
+  config.py                  Configuration (--broker, --account, --instance,
+                             --port, --token, --utc-offset, --mode CLI args)
   mt5client.py               MT5 wrapper
   server.py                  Flask routes
 
@@ -243,10 +268,15 @@ data/                        Generated/volatile data (gitignored)
   shared/                    Shared folder with VM
     scripts/                 Bat scripts synced from scripts/
     config/                  Config synced from config/
-    terminals/               MT5 installs per broker/account
+    terminals/               MT5 installs per broker/account/instance
     logs/                    All log files
     mt5api/                  Python API package
   oem/                       First-boot scripts
+  vm-group-<name>.txt        Terminals each VM owns (written by make up)
+.data/                       Generated host-side state (gitignored)
+  nginx/nginx.conf           nginx routes, written by make up
+  tailscale/state/           Tailscale identity and Serve config
+  cloudflared/               Tunnel credentials and config (yours)
 ```
 
 ## Concurrency and backpressure
@@ -255,15 +285,15 @@ The MT5 Python SDK is single-connection-per-process and not remotely fucking thr
 
 Knock-on effects you'll observe:
 
-- **`/ping`** is the only handler that doesn't take the lock. Use it for liveness probes. It answers even when the SDK is stuck, and reports `sdk_threads_alive` and `sdk_oldest_alive_s`, so a stuck call shows up there first.
+- **`/ping`** is the only SDK route that doesn't take the lock. The Chart Deployments, file API and `/compile` handlers never call the SDK and never take it either. Use it for liveness probes. It answers even when the SDK is stuck, and reports `sdk_threads_alive` and `sdk_oldest_alive_s`, so a stuck call shows up there first.
 - Every `mt5.*` call has a hard 30s timeout (`MT5_CALL_TIMEOUT`). A call that runs past it returns **`504 mt5 call timed out`** and releases the lock, but its thread is still stuck inside the SDK and Python can't kill it.
 - While that thread is alive, every later SDK call on that terminal fails at once with **`503 mt5 call is wedged`** and `Retry-After: 30`, instead of piling a second call onto the stuck connection and waiting out its own 30s. Calls work again as soon as the stuck thread returns.
 - If it never returns, the live health monitor restarts the terminal. The restart kills the terminal without calling `mt5.shutdown`, reconnects, and once the reconnect succeeds it stops tracking the stuck thread, so calls go through again.
-- When too many requests pile up on the lock, new ones get **`503 queue depth N exceeds max M`** instead of waiting. Default cap is 20; tune with `MT5_MAX_QUEUE_DEPTH=...` in the environment.
+- When too many requests pile up on the lock, new ones get **`503 queue depth N exceeds max M`** instead of waiting. Default cap is 20. The API process reads `MT5_MAX_QUEUE_DEPTH` from its environment; there is no `config.yaml` key and nothing passes it into the VM, so changing it means setting it in [`scripts/api_runner.bat`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/api_runner.bat).
 - The health monitor is not subject to that cap, so client backpressure can't stop its check. It still waits for the lock like everyone else. If the lock stays held past 60s, that check counts as a dead terminal (logged as `!!! MT5 LOCK HELD FOR OVER 60s !!!`). After five in a row it kills the terminal without making an SDK call, which releases whatever was stuck holding the lock, and the next check restarts the terminal.
 - Every SDK call logs its timing (`<req_id> mt5.<fn> dur_ms=...`). A timeout or a refused call logs one error line with `TIMEOUT` or `WEDGED (<stuck call> stuck <N>s)`, plus the process mode, request path, and how many SDK threads are still alive.
 
-If you see persistent 503/504 from a single terminal, check `data/shared/logs/api-<broker>-<account>.log` for `TIMEOUT` and `WEDGED` lines. The first `TIMEOUT` names the call that got stuck; `WEDGED` lines are later requests refused because of it.
+If you see persistent 503/504 from a single terminal, check `data/shared/logs/api-<broker>-<account>-<instance>.log` for `TIMEOUT` and `WEDGED` lines. The first `TIMEOUT` names the call that got stuck; `WEDGED` lines are later requests refused because of it.
 
 ## Memory per API process
 
@@ -312,11 +342,11 @@ or, with the sidecar list discovered from the generated compose file:
 ```
 
 This is covered by the real Compose lifecycle regression in
-`tests/integration/test_wickworks_lifecycle.py`.
+[`tests/integration/test_wickworks_lifecycle.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/integration/test_wickworks_lifecycle.py).
 ## Auto-recovery
 
 The Windows VM(s) run inside `dockurr/windows` containers with a Docker healthcheck
-(`scripts/healthcheck.sh`) that probes every terminal port this VM owns. A crash
+([`scripts/healthcheck.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/healthcheck.sh)) that probes every terminal port this VM owns. A crash
 inside the guest — an unexpected shutdown (Event 6008), a wedged terminal, an
 OOM — leaves the **container** up while the **API** is dead, so
 `restart: unless-stopped` never fires and nothing recovers it on its own.
@@ -370,8 +400,9 @@ Behavior:
   back to Docker's short-id hostname only if that inspect fails) — and matches
   the image **repository exactly** (`dockurr/windows`, `dockurr/windows:5.14`,
   `dockurr/windows@sha256:…` — not `dockurr/windows-something`).
-- `WATCHDOG_DRY_RUN=1` (or `--dry-run`) prints what it would do without
-  touching any container.
+- `--dry-run` on its command line prints what it would do without touching
+  any container. There is no environment switch for it: the watchdog does not
+  read `WATCHDOG_DRY_RUN`.
 
 #### The stranded sidecar, which no VM ever reports
 
@@ -416,7 +447,7 @@ netns sidecars:
 **This makes an orphan-aware sidecar healthcheck a requirement, not a nicety.**
 A check that only probes loopback stays green inside a dead namespace, and
 Docker health is this daemon's only source of truth, so nothing here will ever
-fire for it. `scripts/wickworks-healthcheck.py` is the worked example: it
+fire for it. [`scripts/wickworks-healthcheck.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/wickworks-healthcheck.py) is the worked example: it
 probes the owner's gateway services, which disappear the moment the namespace
 does.
 
@@ -425,7 +456,7 @@ Set `WATCHDOG_WATCH_SIDECARS=0` to restore the VM-only scope.
 Environment overrides: `WATCHDOG_INTERVAL_SECONDS`, `WATCHDOG_MIN_FAILING_STREAK`,
 `WATCHDOG_IMAGE_FILTER`, `WATCHDOG_WATCH_SIDECARS`, `WATCHDOG_BACKOFF_ATTEMPTS`,
 `WATCHDOG_MAX_ATTEMPTS`, `WATCHDOG_RESET_SECONDS`, `WATCHDOG_COMPOSE_PROJECT`,
-`WATCHDOG_STATE_DIR`, `WATCHDOG_DOCKER_SOCKET`, `WATCHDOG_DRY_RUN`,
+`WATCHDOG_STATE_DIR`, `WATCHDOG_DOCKER_SOCKET`, `WATCHDOG_SELF_ID`,
 `WATCHDOG_PROJECT_DIR`, `WATCHDOG_RECREATE_SCRIPT`, `WATCHDOG_RECREATE_TIMEOUT`.
 
 `WATCHDOG_PROJECT_DIR` is the **host** path of this project, and the compose
@@ -444,9 +475,9 @@ That path reaches compose as `MT5_PROJECT_DIR`, and compose interpolates it on
   `MT5_PROJECT_DIR=<absolute host path of this directory>` in `.env` yourself.
 - The watchdog sets it explicitly in the environment of the `recreate-vm.sh` it
   runs (from its own `WATCHDOG_PROJECT_DIR`), because the container is not
-  handed the host's shell variables. `tests/test_vm_watchdog.py` runs the real
+  handed the host's shell variables. [`tests/test_vm_watchdog.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/test_vm_watchdog.py) runs the real
   helper under exactly that environment, and
-  `tests/integration/test_vm_watchdog_lifecycle.py` drives a real recovery
+  [`tests/integration/test_vm_watchdog_lifecycle.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/integration/test_vm_watchdog_lifecycle.py) drives a real recovery
   through the built sidecar on a disposable Compose project.
 
 ### Busy is not dead — and hung is not busy
@@ -473,7 +504,7 @@ and the watchdog's recovery is the whole VM — every other terminal on it, and
 whatever they were running, goes with it. That is the same rule the check has
 always applied to a dead port; it is just now applied to a hung one after the
 grace. When you catch a single wedged terminal before the watchdog does,
-`POST /terminal/restart` on that terminal (see `docs/rest-api.md`) is the
+`POST /terminal/restart` on that terminal (see [REST API](rest-api.md)) is the
 cheaper first response.
 
 This complements the in-VM `MT5AutoReboot` scheduled task (see [Scheduled reboots](#scheduled-reboots)); operators who disable that
@@ -483,7 +514,7 @@ task still get crash recovery from the watchdog.
 
 ### Scheduled reboots
 
-The `MT5AutoReboot` task in the VM runs `scripts/reboot.bat scheduled` every `reboot_interval` minutes. Before rebooting, `scripts/reboot_guard.py` asks every API on the VM through `GET /busy` whether it is doing something a reboot would break:
+The `MT5AutoReboot` task in the VM runs `scripts/reboot.bat scheduled` every `reboot_interval` minutes. Before rebooting, [`scripts/reboot_guard.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/reboot_guard.py) asks every API on the VM through `GET /busy` whether it is doing something a reboot would break:
 
 - a backtest of that terminal is queued or running;
 - a request that changes something is in flight: placing, modifying or closing an order or position (a new stop loss included), a deployment change, a file write, a compile, a terminal restart.
@@ -549,9 +580,9 @@ Inside the VM's shared folder (`data/shared/logs/`):
 - `install.log` - MT5 installation progress (install.bat)
 - `start.log` - Boot sequence log (start.bat)
 - `pip.log` - Python package installation
-- `api-<broker>-<account>.log` - Per-terminal API logs
+- `api-<broker>-<account>-<instance>.log` - Per-terminal API logs (`default` when `instance` is unset)
 - `windows-events.log` - Tailed Windows System + Application event logs (Warning/Error/Critical level only). Catches OOM kills (`Microsoft-Windows-Resource-Exhaustion-Detector`), terminal64.exe crashes (`Application Error`), BSODs (`BugCheck`), service failures, etc.
-- `full.log` - Single narrative of all of the above with `[start]` / `[install]` / `[api:<broker>/<account>]` / `[winevt]` tags. `tail -f full.log` is the one-stop diagnostic view.
+- `full.log` - Single narrative of all of the above with `[start]` / `[install]` / `[api:<broker>/<account>/<instance>]` / `[winevt]` / `[reboot]` / `[reboot-guard]` tags. `tail -f full.log` is the one-stop diagnostic view.
 
 ### Rotation
 

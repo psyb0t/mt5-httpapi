@@ -14,11 +14,13 @@ from collections import namedtuple
 import MetaTrader5 as mt5
 import pytest
 
+import mt5api.mt5client as mt5client
 from mt5api.handlers import orders as orders_handler
 
 Order = namedtuple(
     "Order",
-    "ticket symbol volume_current price_open sl tp type type_time time_expiration",
+    "ticket symbol volume_current price_open price_stoplimit sl tp type type_time "
+    "time_expiration",
 )
 OrderResult = namedtuple("OrderResult", "retcode deal order volume price comment")
 Tick = namedtuple("Tick", "bid ask")
@@ -34,6 +36,7 @@ def _order(**overrides):
         "symbol": "EURUSD",
         "volume_current": 0.10,
         "price_open": 1.2000,
+        "price_stoplimit": 0.0,
         "sl": 1.1900,
         "tp": 1.2100,
         "type": mt5.ORDER_TYPE_BUY_LIMIT,
@@ -356,3 +359,228 @@ def test_without_a_client_order_id_nothing_is_looked_up(api_client, orders):
     assert resp.status_code == 201
     assert [c["fn"] for c in orders.calls] == ["order_send"]
     assert "duplicate" not in resp.get_json()
+
+
+# --- stoplimit and expiration ------------------------------------------------
+
+EXPIRY_UTC = 1_800_000_000
+BROKER_OFFSET = 10_800  # a broker three hours ahead of real UTC
+TIME_TYPES = {
+    "SPECIFIED": mt5.ORDER_TIME_SPECIFIED,
+    "SPECIFIED_DAY": mt5.ORDER_TIME_SPECIFIED_DAY,
+}
+
+
+@pytest.fixture
+def broker_three_hours_ahead(monkeypatch):
+    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", BROKER_OFFSET)
+
+
+def _pending(**extra):
+    return {"symbol": "EURUSD", "type": "BUY_LIMIT", "volume": 0.1, "price": 1.1, **extra}
+
+
+@pytest.mark.parametrize(
+    ("order_type", "mt5_type"),
+    [
+        ("BUY_STOP_LIMIT", mt5.ORDER_TYPE_BUY_STOP_LIMIT),
+        ("SELL_STOP_LIMIT", mt5.ORDER_TYPE_SELL_STOP_LIMIT),
+    ],
+)
+def test_a_stop_limit_order_sends_its_limit_price(api_client, orders, order_type, mt5_type):
+    """price is the stop trigger, stoplimit the limit order it places. Dropping
+    the second price sends an order the broker cannot place."""
+    orders.set("order_send", _result())
+
+    resp = api_client.post("/orders", json=_pending(type=order_type, price=1.30, stoplimit=1.29))
+
+    assert resp.status_code == 201
+    sent = orders.sent_order()
+    assert sent["type"] == mt5_type
+    assert sent["price"] == 1.30
+    assert sent["stoplimit"] == 1.29
+
+
+@pytest.mark.parametrize("type_time", ["SPECIFIED", "SPECIFIED_DAY"])
+def test_an_expiring_order_sends_its_expiry_in_broker_time(
+    api_client, orders, broker_three_hours_ahead, type_time
+):
+    orders.set("order_send", _result())
+
+    resp = api_client.post(
+        "/orders", json=_pending(type_time=type_time, expiration=EXPIRY_UTC)
+    )
+
+    assert resp.status_code == 201
+    sent = orders.sent_order()
+    assert sent["expiration"] == EXPIRY_UTC + BROKER_OFFSET
+    assert sent["type_time"] == TIME_TYPES[type_time]
+
+
+def test_an_expiry_is_not_shifted_for_a_broker_on_utc(api_client, orders, monkeypatch):
+    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", 0)
+    orders.set("order_send", _result())
+
+    api_client.post("/orders", json=_pending(type_time="SPECIFIED", expiration=EXPIRY_UTC))
+
+    assert orders.sent_order()["expiration"] == EXPIRY_UTC
+
+
+def test_an_expiration_without_a_type_time_makes_the_order_expire(api_client, orders):
+    """The broker ignores an expiry on a GTC order, so naming one has to pick
+    the type that reads it."""
+    orders.set("order_send", _result())
+
+    api_client.post("/orders", json=_pending(expiration=EXPIRY_UTC))
+
+    assert orders.sent_order()["type_time"] == mt5.ORDER_TIME_SPECIFIED
+
+
+@pytest.mark.parametrize(
+    ("extra", "field"),
+    [
+        ({"type": "BUY_STOP_LIMIT"}, "stoplimit"),
+        ({"type": "SELL_STOP_LIMIT"}, "stoplimit"),
+        ({"type": "BUY_STOP_LIMIT", "stoplimit": 0}, "stoplimit"),
+        ({"stoplimit": "abc"}, "stoplimit"),
+        ({"stoplimit": -1.0}, "stoplimit"),
+        ({"stoplimit": True}, "stoplimit"),
+        ({"stoplimit": None}, "stoplimit"),
+        ({"stoplimit": [1.2]}, "stoplimit"),
+        ({"type_time": "SPECIFIED"}, "expiration"),
+        ({"type_time": "SPECIFIED_DAY"}, "expiration"),
+        ({"expiration": "soon"}, "expiration"),
+        ({"expiration": 1.5}, "expiration"),
+        ({"expiration": True}, "expiration"),
+        ({"expiration": 0}, "expiration"),
+        ({"expiration": -5}, "expiration"),
+        ({"expiration": None}, "expiration"),
+        ({"expiration": [EXPIRY_UTC]}, "expiration"),
+    ],
+)
+def test_a_bad_stoplimit_or_expiration_is_a_400_and_sends_nothing(
+    api_client, orders, extra, field
+):
+    resp = api_client.post("/orders", json=_pending(**extra))
+
+    assert resp.status_code == 400
+    assert field in resp.get_json()["error"]
+    assert orders.calls_to("order_send") == []
+
+
+def test_update_order_keeps_the_current_stoplimit_and_expiry_when_not_given(api_client, orders):
+    """The modify request carries every field, so sending sl alone must send
+    the order's own stoplimit and expiry back and not zero them."""
+    orders.set(
+        "orders_get",
+        [
+            _order(
+                type=mt5.ORDER_TYPE_BUY_STOP_LIMIT,
+                price_stoplimit=1.1950,
+                type_time=mt5.ORDER_TIME_SPECIFIED,
+                time_expiration=EXPIRY_UTC + BROKER_OFFSET,
+            )
+        ],
+    )
+    orders.set("order_send", _result())
+
+    resp = api_client.put(f"/orders/{TICKET}", json={"sl": 1.1850})
+
+    assert resp.status_code == 200
+    sent = orders.sent_order()
+    assert sent["stoplimit"] == 1.1950
+    assert sent["expiration"] == EXPIRY_UTC + BROKER_OFFSET
+    assert sent["type_time"] == mt5.ORDER_TIME_SPECIFIED
+
+
+def test_update_order_sets_a_new_stoplimit(api_client, orders):
+    orders.set(
+        "orders_get",
+        [_order(type=mt5.ORDER_TYPE_SELL_STOP_LIMIT, price_stoplimit=1.1950)],
+    )
+    orders.set("order_send", _result())
+
+    resp = api_client.put(f"/orders/{TICKET}", json={"stoplimit": 1.1975})
+
+    assert resp.status_code == 200
+    sent = orders.sent_order()
+    assert sent["stoplimit"] == 1.1975
+    assert sent["price"] == 1.2000
+
+
+def test_update_order_sets_a_new_expiry_in_broker_time(
+    api_client, orders, broker_three_hours_ahead
+):
+    orders.set("orders_get", [_order()])
+    orders.set("order_send", _result())
+
+    resp = api_client.put(f"/orders/{TICKET}", json={"expiration": EXPIRY_UTC})
+
+    assert resp.status_code == 200
+    sent = orders.sent_order()
+    assert sent["expiration"] == EXPIRY_UTC + BROKER_OFFSET
+    assert sent["type_time"] == mt5.ORDER_TIME_SPECIFIED
+
+
+def test_update_order_keeps_specified_day_when_only_the_expiry_changes(api_client, orders):
+    orders.set(
+        "orders_get",
+        [
+            _order(
+                type_time=mt5.ORDER_TIME_SPECIFIED_DAY,
+                time_expiration=EXPIRY_UTC - 86_400,
+            )
+        ],
+    )
+    orders.set("order_send", _result())
+
+    api_client.put(f"/orders/{TICKET}", json={"expiration": EXPIRY_UTC})
+
+    assert orders.sent_order()["type_time"] == mt5.ORDER_TIME_SPECIFIED_DAY
+
+
+def test_update_order_to_a_specified_type_needs_an_expiry(api_client, orders):
+    orders.set("orders_get", [_order(time_expiration=0)])
+    orders.set("order_send", _result())
+
+    resp = api_client.put(f"/orders/{TICKET}", json={"type_time": "SPECIFIED"})
+
+    assert resp.status_code == 400
+    assert "expiration" in resp.get_json()["error"]
+    assert orders.calls_to("order_send") == []
+
+
+def test_update_order_to_a_specified_type_reuses_the_expiry_it_already_has(api_client, orders):
+    orders.set("orders_get", [_order(time_expiration=EXPIRY_UTC + BROKER_OFFSET)])
+    orders.set("order_send", _result())
+
+    resp = api_client.put(f"/orders/{TICKET}", json={"type_time": "SPECIFIED"})
+
+    assert resp.status_code == 200
+    sent = orders.sent_order()
+    assert sent["type_time"] == mt5.ORDER_TIME_SPECIFIED
+    assert sent["expiration"] == EXPIRY_UTC + BROKER_OFFSET
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"stoplimit": "abc"}, "stoplimit"),
+        ({"stoplimit": -1}, "stoplimit"),
+        ({"stoplimit": True}, "stoplimit"),
+        ({"stoplimit": None}, "stoplimit"),
+        ({"expiration": "soon"}, "expiration"),
+        ({"expiration": 1.5}, "expiration"),
+        ({"expiration": 0}, "expiration"),
+        ({"expiration": False}, "expiration"),
+        ({"expiration": None}, "expiration"),
+    ],
+)
+def test_update_order_refuses_a_bad_stoplimit_or_expiration_before_any_sdk_call(
+    api_client, orders, body, field
+):
+    resp = api_client.put(f"/orders/{TICKET}", json=body)
+
+    assert resp.status_code == 400
+    assert field in resp.get_json()["error"]
+    assert orders.calls == []

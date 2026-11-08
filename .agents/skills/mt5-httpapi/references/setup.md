@@ -106,8 +106,9 @@ definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 | 8888 | HTTP API entry (nginx, all terminals) — override with `API_HOST_PORT`, bound to `127.0.0.1` |
 
 `MCP_LOG_LEVEL` controls the unified MCP service's log level. `NOVNC_PORT` and
-`API_HOST_PORT` are compose-time environment overrides; per-terminal ports are
-not published on the host.
+`API_HOST_PORT` are set on `make up` (`API_HOST_PORT=9999 make up`), and `run.sh`
+keeps them in `.env` so later compose calls publish the same ports; per-terminal
+ports are not published on the host.
 
 Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
 

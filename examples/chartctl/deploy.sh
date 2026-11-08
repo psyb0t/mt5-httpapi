@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Chart Deployments — example workflow
-# Stage an expert + set, deploy to a chart, verify, then tear down.
+# Chart Deployments example workflow
+# Stage an expert + set, deploy to a chart, wait until it runs, verify it on
+# /charts and save a screenshot. The deployment is left running: the script ends
+# by printing the DELETE command that removes it.
 #
 # Usage:
 #   export MT5_API_URL=http://localhost:8888/yourbroker/yourlogin
@@ -67,7 +69,7 @@ echo "=== Step 6: Take a screenshot ==="
 CHART_ID=$(curl -sS "${AUTH[@]}" "$MT5_API_URL/charts" |
     python3 -c "import sys,json; charts=json.load(sys.stdin).get('charts',[]); print([c['id'] for c in charts if c.get('deployment_id')=='$DEPLOY_ID'][0])" 2>/dev/null || echo "")
 if [ -n "$CHART_ID" ]; then
-    curl -sS "${AUTH[@]}" "$MT5_API_URL/charts/$CHART_ID/screenshot" -o "chartctl-${SYMBOL}-${TIMEFRAME}.png"
+    curl -sS -X POST "${AUTH[@]}" "$MT5_API_URL/charts/$CHART_ID/screenshot" -o "chartctl-${SYMBOL}-${TIMEFRAME}.png"
     echo "Screenshot saved to chartctl-${SYMBOL}-${TIMEFRAME}.png"
 fi
 

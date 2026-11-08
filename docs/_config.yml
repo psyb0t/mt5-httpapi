@@ -1,0 +1,56 @@
+title: mt5-httpapi
+tagline: MetaTrader 5 in a Windows VM, over REST and MCP
+description: Real Windows MetaTrader 5 terminals in a Docker VM behind one REST and MCP API, with server-side TA, backtests, EA deployment and a Telegram signal copier.
+lang: en
+url: https://psyb0t.github.io
+baseurl: /mt5-httpapi
+repository: psyb0t/mt5-httpapi
+author: Ciprian Mandache
+
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+color_scheme: mocha
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+  - jekyll-include-cache
+
+permalink: pretty
+
+relative_links:
+  enabled: true
+  collections: false
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+      seo:
+        type: TechArticle
+
+search:
+  heading_level: 3
+
+aux_links:
+  GitHub:
+    - https://github.com/psyb0t/mt5-httpapi
+aux_links_new_tab: true
+
+nav_external_links:
+  - title: Changelog
+    url: https://github.com/psyb0t/mt5-httpapi/blob/master/CHANGELOG.md
+
+gh_edit_link: true
+gh_edit_link_text: Edit this page on GitHub
+gh_edit_repository: https://github.com/psyb0t/mt5-httpapi
+gh_edit_branch: master
+gh_edit_source: docs
+gh_edit_view_mode: tree
+
+callouts:
+  warning:
+    title: Warning
+    color: red

@@ -270,6 +270,26 @@ if "!CHARTCTL_ON!"=="1" (
     call :log "%START_LOG%" "chartctl disabled in config.yaml -- skipping loader compile."
 )
 
+:: -- Custom setup hook (config\setup.bat, optional) ------------------
+:: The operator's own commands. run.sh copies config\setup.bat into %CONFIG%
+:: when the file exists; nothing is run when it does not. It runs on EVERY
+:: boot, after the prerequisites and pip packages and before any terminal is
+:: launched, so it must be safe to repeat. `call`, not `start`, so it has
+:: finished before the first terminal launches; its output goes to start.log.
+:: It must end with `exit /b`: a bare `exit` ends this console and the boot.
+:: Its failure never stops the boot (a typo in a customisation must not take
+:: the whole stack down): the errorlevel is logged and boot goes on.
+if exist "%CONFIG%\setup.bat" (
+    call :log "%START_LOG%" "Running config\setup.bat..."
+    call "%CONFIG%\setup.bat" >> "%START_LOG%" 2>&1
+    set "SETUP_EC=!errorlevel!"
+    if "!SETUP_EC!"=="0" (
+        call :log "%START_LOG%" "config\setup.bat finished."
+    ) else (
+        call :log "%START_LOG%" "WARN: config\setup.bat exited with errorlevel !SETUP_EC!, continuing boot."
+    )
+)
+
 :: -- Launch MT5 terminals -----------------------------------------
 call :log "%START_LOG%" "Launching MT5 terminals..."
 set TERM_COUNT=0

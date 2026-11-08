@@ -6,6 +6,32 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.33.0]: 2026-11-08
+
+### Added
+
+- **The docs are now a website: <https://psyb0t.github.io/mt5-httpapi/>.** GitHub Pages builds it from `docs/` on `master`, with navigation, search and one page per area; the README links there. `make docs` builds the same site locally with GitHub's Jekyll image.
+- **`POST /orders` and `PUT /orders/<ticket>` take `stoplimit` and `expiration`.** `stoplimit` is the limit price of a `BUY_STOP_LIMIT` or `SELL_STOP_LIMIT` order and is required for those types. `expiration` is real UTC unix seconds, converted with the terminal's `utc_offset`; it is required with `type_time` `SPECIFIED` or `SPECIFIED_DAY`, and on its own it selects `SPECIFIED`. The `create_order` and `modify_order` MCP tools and the Go client's `UpdateOrderRequest` take both. Before, neither field reached MT5, so stop-limit orders went out without a limit price and expiring orders never expired. See [Trading and history](https://psyb0t.github.io/mt5-httpapi/trading-and-history/).
+- **The Claude Code plugin registers the unified MCP server** at `<api_url>/mcp/` with the API token as its bearer header. Before, it installed only the skill. Set `api_url` to the server root, such as `http://localhost:8888`. See [MCP and agents](https://psyb0t.github.io/mt5-httpapi/mcp-and-agents/).
+- A Buy Me a Coffee link in the README's new Sponsor section and in the repository's Sponsor button.
+
+### Fixed
+
+- **The signal copier sends every leg of a signal even when one fails.** A terminal error on one leg (unreachable, or an HTTP error) ended the leg loop, so the later legs were never sent and, since the message was already marked seen, never retried. Each leg is now sent on its own and a failed one logs `terminal call failed, leg not sent`. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
+- **`GET /symbols/<symbol>/ticks` without `from` returns the latest ticks.** It read forward from 2000-01-01 and so returned the oldest ticks the terminal had. A backward read (no `from`, or a negative `count`) now also searches back up to about 2.8 days, so it crosses a weekend close instead of coming back empty. A non-integer `count` on the rates and ticks routes answers 400 instead of 500. See [Market data](https://psyb0t.github.io/mt5-httpapi/market-data/).
+- **`config/setup.bat` runs again.** `make up` copied it into the VM but nothing ran it. `start.bat` now calls it on every boot before the terminals launch; a failure is logged and the boot goes on. See [Installation and configuration](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/).
+- **Without `vms.yaml` the stack is one VM.** `config_helper.py` fell back to `vms.yaml.example` for the VM list, so `run.sh` wrote VM group files and DNAT rules for its two example VMs instead of the single `mt5` container. See [Multi-VM setup](https://psyb0t.github.io/mt5-httpapi/multi-vm-setup/).
+- **`NOVNC_PORT` and `API_HOST_PORT` given to `make up` stay set.** `run.sh` now writes them into `.env`, so later compose calls, including the watchdog's VM recreate, publish the same ports, and `make status` checks the right one. See [Operations](https://psyb0t.github.io/mt5-httpapi/operations/).
+- **With `compile_local_cache` on, a custom `compile_include_dir` is used.** The local mirror was always built from `<compile_terminal_dir>/MQL5`, so files uploaded through `/compile/files` never reached a compile. See [Compiling MQL5](https://psyb0t.github.io/mt5-httpapi/compiling/).
+- `list_terminals` on the unified MCP server reports `live` for a terminal entry without a `mode`, as the API runs it, instead of `unknown`.
+- The Python examples send `MT5_API_TOKEN` as the bearer token; they got 401 against a stack with auth on. `examples/chartctl/deploy.sh` requests its screenshot with `POST`, the only method the route takes.
+
+### Changed
+
+- **The docs were checked against the code, page by page, and corrected.** Each page now says what the code does, including error answers and status codes. Among the larger corrections: the Chart Deployments response examples (`POST /deployments`, `GET /loader`, `GET /charts`, chart close) show the real shapes and the protocol page no longer describes a loader watchdog that does not exist; a pending order answers retcode 10008, not 10009; backtest `/log` serves `run.log` while the job runs and the example polling loops stop on `cancelled`; adding a VM needs `make up`, not `docker compose up -d`; log file names include the instance.
+- Settings that were only in `config/config.yaml.example` are now documented: the rest of the `chartctl` block, the global body caps `max_request_body_bytes` and `max_upload_body_bytes`, and the `compile_*` keys under their `config.yaml` names.
+- `make help` lists `verify-binaries`.
+
 ## [v4.32.0]: 2026-11-08
 
 ### Added

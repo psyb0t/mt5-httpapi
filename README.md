@@ -19,6 +19,7 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 - [Development](#development)
 - [Project layout](#project-layout)
 - [Recommended brokers and prop firms](#recommended-brokers-and-prop-firms)
+- [Sponsor](#sponsor)
 - [License](#license)
 
 > [!WARNING]
@@ -31,7 +32,7 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 - **The useful MT5 shit over HTTP** — terminal state, market data, orders, positions, history, and Strategy Tester jobs.
 - **Built-in technical analysis** — [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
 - **MCP for the robot overlords** — one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
-- **Optional Telegram signal copier**: follow signal channels or a websocket feed and place their trades on as many accounts as you want, each with its own sizing and open-trade limits. Off until you turn it on. See [docs/signals.md](docs/signals.md).
+- **Optional Telegram signal copier**: follow signal channels or a websocket feed and place their trades on as many accounts as you want, each with its own sizing and open-trade limits. Off until you turn it on. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
 - **Optional multi-VM fuckery** — spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
 
 ## Requirements
@@ -41,7 +42,7 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 - About 20 GB of disk for the ISO, VM, and MT5 installations
 - Enough RAM for however hard you plan to abuse the Windows VM; the default low-memory setup leans heavily on host swap
 
-MT5 hoards loaded chart history like a greedy little bastard and does not give the memory back. Deep history scraping can blow each terminal up to several gigabytes, so read the [actual sizing details](docs/installation-and-configuration.md#requirements) before hammering it.
+MT5 hoards loaded chart history like a greedy little bastard and does not give the memory back. Deep history scraping can blow each terminal up to several gigabytes, so read the [actual sizing details](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/#requirements) before hammering it.
 
 ## Quick start
 
@@ -116,24 +117,24 @@ client
 
 ## Where the fuck is everything documented?
 
-The old README became a massive wall of API shit, so the details now live in separate files where you can actually find them:
+The old README became a massive wall of API shit, so the details now live on the [documentation site](https://psyb0t.github.io/mt5-httpapi/), with search, where you can actually find them:
 
 | You need | Read this |
 | --- | --- |
-| Get Windows + MT5 running, size the host, and configure accounts | [Installation and configuration](docs/installation-and-configuration.md) |
-| Figure out routing, auth, health, terminal state, accounts, and broker time | [REST API overview](docs/rest-api.md) |
-| Pull symbols, ticks, bars, and server-side TA | [Market data API](docs/market-data.md) |
-| Place/close shit and inspect orders, positions, and history | [Trading and history API](docs/trading-and-history.md) |
-| Run Strategy Tester jobs and get the artifacts back | [Backtesting](docs/backtesting.md) |
-| Throw giant parameter sweeps at the Strategy Tester | [Backtest optimization](docs/backtest-optimization.md) |
-| Turn MQL5 source into an `.ex5` without touching MetaEditor | [Compiling MQL5](docs/compiling.md) |
-| Wire the MCP endpoints into your agent of choice | [MCP and agent integrations](docs/mcp-and-agents.md) |
-| Copy working curl and Go examples instead of guessing | [Clients and examples](docs/clients-and-examples.md) |
-| Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](docs/operations.md) |
-| Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](docs/multi-vm-setup.md) |
-| Deploy EAs onto charts over HTTP instead of clicking through the Navigator | [Chart Deployments](docs/chart-deployments.md) |
-| Push libraries, DLLs and data into a terminal, zipped or not, and read its files and logs back | [File API](docs/files.md) |
-| Copy trade signals from Telegram channels or a websocket feed onto your accounts, sized per account | [Signal copier](docs/signals.md) |
+| Get Windows + MT5 running, size the host, and configure accounts | [Installation and configuration](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/) |
+| Figure out routing, auth, health, terminal state, accounts, and broker time | [REST API overview](https://psyb0t.github.io/mt5-httpapi/rest-api/) |
+| Pull symbols, ticks, bars, and server-side TA | [Market data API](https://psyb0t.github.io/mt5-httpapi/market-data/) |
+| Place/close shit and inspect orders, positions, and history | [Trading and history API](https://psyb0t.github.io/mt5-httpapi/trading-and-history/) |
+| Run Strategy Tester jobs and get the artifacts back | [Backtesting](https://psyb0t.github.io/mt5-httpapi/backtesting/) |
+| Throw giant parameter sweeps at the Strategy Tester | [Backtest optimization](https://psyb0t.github.io/mt5-httpapi/backtest-optimization/) |
+| Turn MQL5 source into an `.ex5` without touching MetaEditor | [Compiling MQL5](https://psyb0t.github.io/mt5-httpapi/compiling/) |
+| Wire the MCP endpoints into your agent of choice | [MCP and agent integrations](https://psyb0t.github.io/mt5-httpapi/mcp-and-agents/) |
+| Copy working curl and Go examples instead of guessing | [Clients and examples](https://psyb0t.github.io/mt5-httpapi/clients-and-examples/) |
+| Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](https://psyb0t.github.io/mt5-httpapi/operations/) |
+| Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](https://psyb0t.github.io/mt5-httpapi/multi-vm-setup/) |
+| Deploy EAs onto charts over HTTP instead of clicking through the Navigator | [Chart Deployments](https://psyb0t.github.io/mt5-httpapi/chart-deployments/) |
+| Push libraries, DLLs and data into a terminal, zipped or not, and read its files and logs back | [File API](https://psyb0t.github.io/mt5-httpapi/files/) |
+| Copy trade signals from Telegram channels or a websocket feed onto your accounts, sized per account | [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/) |
 
 ## API at a glance
 
@@ -156,7 +157,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" \
   "$MT5_API_URL/symbols/EURUSD/rates?timeframe=H1&count=100"
 ```
 
-That is just the hello-world shit. The [REST API docs](docs/rest-api.md) link to every endpoint and response shape.
+That is just the hello-world shit. The [REST API docs](https://psyb0t.github.io/mt5-httpapi/rest-api/) link to every endpoint and response shape.
 
 JSON keys are snake_case everywhere, the same as the MT5 fields the API passes through (`time_msc`, `volume_real`). The backtest and TA routes used to answer in camelCase (`jobId`, `startedAt`, `wickworksStatus`), so for now they still send those keys next to the snake_case ones and still accept camelCase in request bodies. **The camelCase keys are deprecated and go away in v5.0.0.** Move your clients to the snake_case names.
 
@@ -173,7 +174,7 @@ make logs              # watch the logs scream
 make down              # stop only this project's stack
 ```
 
-Run `make help` when you forget the rest. The [operations guide](docs/operations.md#make-targets) explains what the targets actually do.
+Run `make help` when you forget the rest. The [operations guide](https://psyb0t.github.io/mt5-httpapi/operations/#make-targets) explains what the targets actually do.
 
 ### Vendored binaries
 
@@ -201,6 +202,9 @@ mcpunifier/      one MCP endpoint that fronts every configured terminal
 signals/         optional signal copier: Telegram and websocket signals in, orders out
 clients/go/      typed Go client so you do not have to hand-roll requests
 scripts/         Windows bootstrap and host-side glue
+assets/          loader EAs, vendored binaries and their lock file, mounted read-only into the VM
+mt5installers/   your broker installers, named mt5setup-<broker>.exe (gitignored)
+examples/        Python and shell examples for the API and Chart Deployments
 tests/           unit, contract, integration, and race-test shit
 docs/            all the details that no longer clog up this README
 ```
@@ -210,6 +214,10 @@ docs/            all the details that no longer clog up this README
 - [RoboForex](https://my.roboforex.com/en/?a=zswg)
 - [TeleTrade](https://my.teletrade-dj.com/agent_pp.html?agent_pp=26834897)
 - [FTMO](https://join.ftmo.com/uYaZPRmKowRZIKtuXdkE): prop firm with MT4 and MT5 support. Trading accounts use simulated capital.
+
+## Sponsor
+
+<a href="https://www.buymeacoffee.com/psyb0t"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me a Coffee" height="60" width="217"></a>
 
 ## License
 

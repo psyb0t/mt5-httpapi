@@ -1,10 +1,10 @@
-"""The unifier's per-terminal chartctl and files flags, read from config.yaml.
+"""The unifier's per-terminal mode, chartctl and files flags, read from config.yaml.
 
 list_terminals reports them so an agent knows which terminals serve the Chart
-Deployments and file API tools, so they have to agree with what mt5api itself
-decides for the same config.yaml. These tests compare them against mt5api's
-own functions (match_terminal_config, normalize_mode, chartctl_enabled,
-files_enabled) rather than a copy of the rule.
+Deployments and file API tools and which process mode each one runs in, so they
+have to agree with what mt5api itself decides for the same config.yaml. These
+tests compare them against mt5api's own functions (match_terminal_config,
+normalize_mode, chartctl_enabled, files_enabled) rather than a copy of the rule.
 """
 import pytest
 import yaml
@@ -109,6 +109,29 @@ def test_unifier_and_api_agree_on_whether_a_terminal_serves_files(
 
     assert _api_files(config) is expected
     assert terminal.files is expected
+
+
+@pytest.mark.parametrize(
+    ("terminal_extra", "expected"),
+    [
+        # mt5api runs a terminal with no mode, an empty one or an unknown one as live.
+        ({}, "live"),
+        ({"mode": None}, "live"),
+        ({"mode": ""}, "live"),
+        ({"mode": "paper"}, "live"),
+        ({"mode": "live"}, "live"),
+        ({"mode": " LIVE "}, "live"),
+        ({"mode": "backtest"}, "backtest"),
+        ({"mode": " Backtest "}, "backtest"),
+    ],
+)
+def test_unifier_reports_the_process_mode_mt5api_runs(tmp_path, terminal_extra, expected):
+    path, config = _write_config(tmp_path, terminal_extra)
+
+    (terminal,) = load_settings(str(path)).terminals.values()
+
+    assert api_config.normalize_mode(_matched(config)["mode"]) == expected
+    assert terminal.mode == expected
 
 
 @pytest.mark.parametrize("name", ["chartctl", "files"])

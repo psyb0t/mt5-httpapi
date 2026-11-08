@@ -4,7 +4,8 @@ Per target, in order: map the symbol, read the symbol from the terminal, check
 that the price has not already passed the SL or TP1 and is within the entry
 slippage, check the open-signal limits, size the volume, split it into legs
 and send one order per leg. Any check that fails skips the signal on that
-target only and logs why.
+target only and logs why. A leg the terminal fails on is logged and the other
+legs are still sent.
 
 One lock per terminal keeps two signals for the same account from both
 passing a limit before either has opened anything.
@@ -272,7 +273,17 @@ class Engine:
             logger.info("dry run, order not sent", extra=leg_fields)
             return
 
-        status, body = await self._client.place(target, order)
+        # A leg is sent on its own: when the terminal fails on this one the
+        # later legs still go out, because the message is marked seen either
+        # way and nothing would send them again.
+        try:
+            status, body = await self._client.place(target, order)
+        except (TerminalUnreachable, TerminalRejected) as err:
+            logger.warning(
+                "terminal call failed, leg not sent",
+                extra={**leg_fields, "reason": type(err).__name__, "error": str(err)},
+            )
+            return
         if body.get("duplicate"):
             logger.info(
                 "order already placed",

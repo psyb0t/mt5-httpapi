@@ -9,7 +9,9 @@ and the damage only surfaced when a container tried to start.
 
 import importlib.util
 import re
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -63,8 +65,12 @@ WICKWORKS_IMAGE = (
 )
 
 
+HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "config_helper.py"
+COMPOSE_TEMPLATE = Path(__file__).resolve().parents[1] / "docker-compose.yml.j2"
+
+
 def _load_config_helper_module():
-    module_path = Path(__file__).resolve().parents[1] / "scripts" / "config_helper.py"
+    module_path = HELPER_PATH
     spec = importlib.util.spec_from_file_location("config_helper_gen_test", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -94,9 +100,6 @@ def _generate_nginx_conf(helper, config_path, tmp_path, monkeypatch, vms_path=No
         helper,
         "VMS_PATH",
         str(vms_path) if vms_path else str(tmp_path / "absent-vms.yaml"),
-    )
-    monkeypatch.setattr(
-        helper, "_VMS_EXAMPLE_PATH", str(tmp_path / "absent-vms.example.yaml")
     )
     monkeypatch.setattr("sys.argv", ["config_helper.py", "nginx_conf", str(outpath)])
 
@@ -225,6 +228,86 @@ def test_absent_vms_file_keeps_every_terminal_on_the_default_container(
     assert "http://mt5:5001" in content
     assert "http://mt5:5002" in content
     assert "mt5-b" not in content
+
+
+def _checkout_with_only_the_example_topology(tmp_path):
+    """A throwaway checkout: config_helper.py resolves vms.yaml, the compose
+    template and config/ from its own location, so the real script runs against
+    files laid out the way an install without a vms.yaml has them. Only
+    vms.yaml.example is there, with two VMs no terminal belongs to.
+    """
+    (tmp_path / "scripts").mkdir()
+    script = tmp_path / "scripts" / "config_helper.py"
+    shutil.copy(HELPER_PATH, script)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "api_token": "test-token",
+                "terminals": [{"broker": "acme", "account": "main", "port": 5001}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "vms.yaml.example").write_text(
+        yaml.safe_dump({"vms": TWO_VMS}), encoding="utf-8"
+    )
+    return script
+
+
+def _run_helper(script, *args):
+    return subprocess.run(
+        [sys.executable, str(script), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def test_without_vms_yaml_the_only_vm_is_the_default_one_not_the_examples(tmp_path):
+    """run.sh builds its VM list from `config_helper.py vms`: it writes a
+    vm-group file and sets up DNAT for every name printed. It read
+    vms.yaml.example when vms.yaml was absent and so listed that file's
+    example VMs, while the compose file it seeds without a vms.yaml runs one
+    `mt5` service.
+    """
+    script = _checkout_with_only_the_example_topology(tmp_path)
+
+    vms = _run_helper(script, "vms")
+    service = _run_helper(script, "vm_info", "default", "service")
+
+    assert vms.returncode == 0, vms.stderr
+    assert vms.stdout.split() == ["default"]
+    assert service.stdout.strip() == "mt5"
+    assert _run_helper(script, "vm_info", "fast").returncode != 0
+
+
+def test_a_real_vms_yaml_still_defines_the_vm_list(tmp_path):
+    script = _checkout_with_only_the_example_topology(tmp_path)
+    (tmp_path / "vms.yaml").write_text(
+        yaml.safe_dump({"vms": TWO_VMS_WITH_LOG_DIRS}), encoding="utf-8"
+    )
+
+    vms = _run_helper(script, "vms")
+
+    assert vms.stdout.split() == ["fast", "bulk"]
+
+
+def test_generate_compose_refuses_to_render_the_example_topology(tmp_path):
+    """It overwrites the user's docker-compose.yml, so with no vms.yaml it
+    must not quietly render the example's VMs (or the default VM, which has no
+    ram or disk size for the template to use)."""
+    script = _checkout_with_only_the_example_topology(tmp_path)
+    shutil.copy(COMPOSE_TEMPLATE, tmp_path / "docker-compose.yml.j2")
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    result = _run_helper(script, "generate_compose")
+
+    assert result.returncode == 1
+    assert "vms.yaml not found" in result.stderr
+    assert "vms.yaml.example" in result.stderr
+    assert (tmp_path / "docker-compose.yml").read_text(encoding="utf-8") == "services: {}\n"
 
 
 def test_live_terminal_ini_declares_no_startup_expert(tmp_path, monkeypatch):

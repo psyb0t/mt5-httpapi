@@ -263,10 +263,18 @@ INCLUDE_REFRESH_SECONDS = 60
 _INCLUDES_CHANGED_MARKER = ".includes-changed"
 _INCLUDES_CHECKED_WALL = 0.0
 
-#: What MetaEditor actually needs to compile. Deliberately NOT the whole
-#: terminal directory - that also holds terminal64.exe, metatester64.exe and
-#: Bases, roughly 350MB of things a compile never reads.
-_TOOLCHAIN_ITEMS = ("MetaEditor64.exe", "Config", "MQL5")
+#: What MetaEditor needs to compile besides the include tree, taken from the
+#: terminal directory. Deliberately NOT the whole terminal directory - that also
+#: holds terminal64.exe, metatester64.exe and Bases, roughly 350MB of things a
+#: compile never reads.
+_TOOLCHAIN_ITEMS = ("MetaEditor64.exe", "Config")
+
+#: The include tree inside the mirror, and so the mirror's /inc: directory. It is
+#: mirrored from COMPILE_INCLUDE_DIR, not from the terminal directory: that is
+#: the tree /compile/files writes into and the one MetaEditor reads without a
+#: mirror, and it only equals <terminal dir>/MQL5 while compile_include_dir is
+#: left at its default.
+_MIRRORED_INCLUDES = "MQL5"
 
 #: Compile a throwaway EA in the background shortly after start, so the first
 #: REAL caller does not pay MetaEditor's cold load - measured at 30-55s on a
@@ -510,11 +518,11 @@ def mark_includes_changed():
 
 
 def _refresh_mirrored_includes():
-    """Re-validate the mirrored include tree against the source.
+    """Re-validate the mirrored include tree against COMPILE_INCLUDE_DIR.
 
-    Runs at most once every INCLUDE_REFRESH_SECONDS, and only walks MQL5 - not
-    MetaEditor64.exe, which is 105MB and does not change under a running
-    process.
+    Runs at most once every INCLUDE_REFRESH_SECONDS, and only walks the include
+    tree - not MetaEditor64.exe, which is 105MB and does not change under a
+    running process.
 
     This exists because an edited shared header must reach subsequent builds.
     Without it the mirror is resolved once per process and an updated .mqh is
@@ -535,8 +543,8 @@ def _refresh_mirrored_includes():
 
     _INCLUDES_CHECKED_AT = time.monotonic()
     _INCLUDES_CHECKED_WALL = time.time()
-    src = os.path.join(os.path.dirname(COMPILE_METAEDITOR), "MQL5")
-    dst = os.path.join(COMPILE_LOCAL_CACHE, "MQL5")
+    src = COMPILE_INCLUDE_DIR
+    dst = os.path.join(COMPILE_LOCAL_CACHE, _MIRRORED_INCLUDES)
     if not os.path.isdir(src):
         return
     try:
@@ -580,8 +588,9 @@ def _local_toolchain():
     source_dir = os.path.dirname(COMPILE_METAEDITOR)
     try:
         os.makedirs(COMPILE_LOCAL_CACHE, exist_ok=True)
-        for item in _TOOLCHAIN_ITEMS:
-            src = os.path.join(source_dir, item)
+        sources = [(item, os.path.join(source_dir, item)) for item in _TOOLCHAIN_ITEMS]
+        sources.append((_MIRRORED_INCLUDES, COMPILE_INCLUDE_DIR))
+        for item, src in sources:
             dst = os.path.join(COMPILE_LOCAL_CACHE, item)
             if not os.path.exists(src):
                 continue
@@ -601,7 +610,7 @@ def _local_toolchain():
 
         # Includes come from the mirrored tree so a compile never reaches back
         # across the slow mount for a .mqh either.
-        include_dir = os.path.join(COMPILE_LOCAL_CACHE, "MQL5")
+        include_dir = os.path.join(COMPILE_LOCAL_CACHE, _MIRRORED_INCLUDES)
         if not os.path.isdir(include_dir):
             include_dir = COMPILE_INCLUDE_DIR
 

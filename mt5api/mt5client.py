@@ -1,3 +1,4 @@
+import math
 import os
 import subprocess
 import threading
@@ -18,6 +19,8 @@ from mt5api.config import (
     INI_FILE,
     MODE,
     ORDER_TYPE_MAP,
+    SPECIFIED_TIME_TYPES,
+    STOP_LIMIT_ORDER_TYPES,
     TERMINAL_DIR,
     TERMINAL_PATH,
     TIME_MAP,
@@ -69,6 +72,13 @@ def utc_seconds_to_broker_dt(utc_unix):
     clock face deterministic across systems with different LOCAL timezones.
     """
     return datetime.fromtimestamp(int(utc_unix) + UTC_OFFSET_SECONDS, tz=timezone.utc)
+
+
+def utc_seconds_to_broker_seconds(utc_unix):
+    """Convert a real-UTC unix-seconds input into the broker-time unix seconds
+    that order_send expects for `expiration`: the same shift
+    utc_seconds_to_broker_dt applies to a datetime's clock face."""
+    return int(utc_unix) + UTC_OFFSET_SECONDS
 
 
 INIT_TIMEOUT = 60
@@ -671,8 +681,62 @@ def to_dict(named_tuple):
     return d
 
 
+STOPLIMIT_INVALID_ERROR = "'stoplimit' must be a price: a number, zero or more"
+STOPLIMIT_REQUIRED_ERROR = "'stoplimit' is required for BUY_STOP_LIMIT and SELL_STOP_LIMIT orders"
+EXPIRATION_INVALID_ERROR = (
+    "'expiration' must be a positive integer: unix seconds in real UTC"
+)
+EXPIRATION_REQUIRED_ERROR = (
+    "'expiration' is required when type_time is SPECIFIED or SPECIFIED_DAY"
+)
+
+
+def parse_order_stoplimit(value):
+    """Validate a request's `stoplimit`. Returns (price, error).
+
+    Numeric strings are accepted like the other price fields. A bool is
+    refused even though float(True) works: a JSON true here is a mistake, and
+    1.0 would be sent as a real limit price.
+    """
+    if isinstance(value, bool):
+        return None, STOPLIMIT_INVALID_ERROR
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None, STOPLIMIT_INVALID_ERROR
+    if not math.isfinite(price) or price < 0:
+        return None, STOPLIMIT_INVALID_ERROR
+    return price, None
+
+
+def parse_order_expiration(value):
+    """Validate a request's `expiration`, given in real-UTC unix seconds.
+    Returns (broker_seconds, error): the value shifted to the broker's clock,
+    which is what order_send reads (see utc_seconds_to_broker_seconds).
+
+    A float with a fraction is refused rather than truncated, so an expiry is
+    never silently moved by up to a second.
+    """
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        return None, EXPIRATION_INVALID_ERROR
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None, EXPIRATION_INVALID_ERROR
+    if seconds <= 0:
+        return None, EXPIRATION_INVALID_ERROR
+    return utc_seconds_to_broker_seconds(seconds), None
+
+
 def build_order_request(body):
-    """Build an MT5 order request dict from a JSON body. Returns (request, error)."""
+    """Build an MT5 order request dict from a JSON body. Returns (request, error).
+
+    `stoplimit` is the limit price of a BUY_STOP_LIMIT / SELL_STOP_LIMIT order
+    and is required for those two types. `expiration` is real-UTC unix seconds
+    and is converted to broker time; it is required when type_time is SPECIFIED
+    or SPECIFIED_DAY, and a body that gives `expiration` without any type_time
+    gets SPECIFIED, because the broker ignores an expiry on a GTC order.
+    """
     request = {}
 
     if "action" in body:
@@ -727,5 +791,23 @@ def build_order_request(body):
         tt = body["type_time"].upper()
         if tt in TIME_MAP:
             request["type_time"] = TIME_MAP[tt]
+
+    if "stoplimit" in body:
+        stoplimit, err = parse_order_stoplimit(body["stoplimit"])
+        if err:
+            return None, err
+        request["stoplimit"] = stoplimit
+    if request.get("type") in STOP_LIMIT_ORDER_TYPES and not request.get("stoplimit"):
+        return None, STOPLIMIT_REQUIRED_ERROR
+
+    if "expiration" in body:
+        expiration, err = parse_order_expiration(body["expiration"])
+        if err:
+            return None, err
+        request["expiration"] = expiration
+        if "type_time" not in body:
+            request["type_time"] = mt5.ORDER_TIME_SPECIFIED
+    if request.get("type_time") in SPECIFIED_TIME_TYPES and "expiration" not in request:
+        return None, EXPIRATION_REQUIRED_ERROR
 
     return request, None

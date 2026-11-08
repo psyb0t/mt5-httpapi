@@ -46,9 +46,17 @@ RATES_FORWARD_INITIAL_MULT = 1.5  # covers weekend/holiday gaps on intraday
 RATES_FORWARD_MAX_ATTEMPTS = 4    # final window: 1.5 * 2^3 = 12x
 TICKS_BACKWARD_INITIAL_SEC_PER_TICK = 0.1  # ~10 ticks/sec assumption
 TICKS_BACKWARD_FLOOR_WINDOW_SEC = 60       # min window for sparse symbols
-TICKS_BACKWARD_MAX_ATTEMPTS = 6   # final window: floor * 2^5
+# 13 attempts: the final window is floor * 2^12 = 245760s, about 2.8 days,
+# so a backward read crosses a weekend close instead of coming back empty.
+# The loop stops at the first window that holds enough ticks, so a liquid
+# symbol never reaches the wide windows.
+TICKS_BACKWARD_MAX_ATTEMPTS = 13
+
+# Bars or ticks returned when the query carries no `count`.
+DEFAULT_COUNT = 100
 
 _BAD_RANGE_ANCHOR = "'from'/'to' must be unix seconds or YYYY_MM_DD[_HH_MM_SS]"
+_BAD_COUNT = "'count' must be an integer"
 
 
 def _parse_anchor(s):
@@ -87,6 +95,25 @@ def _parse_anchor(s):
         return int(dt.timestamp())
     except (TypeError, ValueError):
         return None
+
+
+def _parse_count(count_arg):
+    """Parse the signed `count` query value. Returns (count, error).
+
+    An absent or empty value is DEFAULT_COUNT. Anything that is not an integer
+    comes back as an error string for the caller to answer with 400; int()
+    used to raise out of the handler and surface as a 500.
+    """
+    if not count_arg:
+        return DEFAULT_COUNT, None
+    try:
+        return int(count_arg), None
+    except ValueError:
+        return None, _BAD_COUNT
+
+
+def _now_utc_seconds():
+    return int(datetime.now(timezone.utc).timestamp())
 
 
 def list_symbols():
@@ -319,7 +346,9 @@ def _fetch_rates(symbol):
         rates = m(mt5.copy_rates_range, symbol, timeframe, df, dt)
         return (list(rates) if rates is not None else []), tf_str, None
 
-    count = int(count_arg) if count_arg else 100
+    count, count_err = _parse_count(count_arg)
+    if count_err is not None:
+        return None, "", (jsonify({"error": count_err}), 400)
     if count == 0:
         return [], tf_str, None
     abs_count = abs(count)
@@ -466,6 +495,35 @@ def get_rates_ta(symbol):
     })
 
 
+def _ticks_backward(symbol, anchor_utc, abs_count, flags):
+    """The abs_count ticks ending at anchor_utc (inclusive), oldest first.
+
+    copy_ticks_from natively goes FORWARD and the SDK has no backward-by-count
+    call, so this fakes it with a range query, starting tight (~0.1s per tick
+    floor) and doubling the window on shortfall. A quiet symbol or a closed
+    market can leave fewer than abs_count ticks inside the last window; those
+    are returned as they are, or [] when there are none.
+    """
+    df = utc_seconds_to_broker_dt(anchor_utc)
+    window = max(
+        TICKS_BACKWARD_FLOOR_WINDOW_SEC,
+        int(abs_count * TICKS_BACKWARD_INITIAL_SEC_PER_TICK),
+    )
+    ticks = []
+    for _ in range(TICKS_BACKWARD_MAX_ATTEMPTS):
+        start_utc = max(0, anchor_utc - window)
+        df_start = utc_seconds_to_broker_dt(start_utc)
+        got = m(mt5.copy_ticks_range, symbol, df_start, df, flags)
+        if got is None:
+            return []
+        ticks = [t for t in got
+                 if broker_to_utc_seconds(t[0]) <= anchor_utc]
+        if len(ticks) >= abs_count:
+            return ticks[-abs_count:]
+        window *= 2
+    return ticks
+
+
 @with_mt5
 def get_ticks(symbol):
     if not ensure_initialized():
@@ -509,11 +567,13 @@ def get_ticks(symbol):
             "flags": int(t[6]), "volume_real": float(t[7]),
         } for t in ticks])
 
-    count = int(count_arg) if count_arg else 100
+    count, count_err = _parse_count(count_arg)
+    if count_err is not None:
+        return jsonify({"error": count_err}), 400
 
-    # count > 0: N ticks forward from `from` (inclusive)
-    # count < 0: |N| ticks backward ending at `from` (inclusive)
-    # from omitted: anchor is now
+    # with `from`: count > 0 is N ticks forward from it (inclusive), count < 0
+    # is |N| ticks backward ending at it (inclusive).
+    # without `from`: the latest |N| ticks up to now, whatever the sign.
     if count == 0:
         return jsonify([])
 
@@ -530,34 +590,12 @@ def get_ticks(symbol):
             # whose time is at-or-after the anchor.
             ticks = m(mt5.copy_ticks_from, symbol, df, abs_count, flags)
         else:
-            # Backward ending at anchor: copy_ticks_from natively goes
-            # FORWARD, no native backward-by-count. Fake it with a range
-            # query, starting tight (~0.1s per tick floor) and doubling
-            # the window on shortfall.
-            window = max(
-                TICKS_BACKWARD_FLOOR_WINDOW_SEC,
-                int(abs_count * TICKS_BACKWARD_INITIAL_SEC_PER_TICK),
-            )
-            ticks = []
-            for _ in range(TICKS_BACKWARD_MAX_ATTEMPTS):
-                start_utc = max(0, anchor_utc - window)
-                df_start = utc_seconds_to_broker_dt(start_utc)
-                got = m(mt5.copy_ticks_range, symbol, df_start, df, flags)
-                if got is None:
-                    ticks = []
-                    break
-                ticks = [t for t in got
-                         if broker_to_utc_seconds(t[0]) <= anchor_utc]
-                if len(ticks) >= abs_count:
-                    ticks = ticks[-abs_count:]
-                    break
-                window *= 2
+            ticks = _ticks_backward(symbol, anchor_utc, abs_count, flags)
     else:
-        ticks = m(
-            mt5.copy_ticks_from,
-            symbol, datetime(2000, 1, 1, tzinfo=timezone.utc),
-            abs_count, flags,
-        )
+        # No `from`: the latest ticks up to now. copy_ticks_from reads forward
+        # from its start date, so a fixed early date would give the oldest
+        # ticks the terminal holds instead.
+        ticks = _ticks_backward(symbol, _now_utc_seconds(), abs_count, flags)
 
     if ticks is None or len(ticks) == 0:
         return jsonify([])

@@ -1,3 +1,9 @@
+---
+title: "Clients and examples"
+description: "Copy-paste curl calls, the typed Go client in clients/go, and technical analysis request examples for the REST API."
+nav_order: 9
+---
+
 # Clients, examples, and copy-pasteable shit
 
 Working REST calls, the typed Go client, and TA examples. Copy the bit you need and get on with your life.
@@ -7,6 +13,7 @@ Working REST calls, the typed Go client, and TA examples. Copy the bit you need 
 - [Examples](#examples)
 - [Go client](#go-client)
 - [Technical analysis](#technical-analysis)
+- [Chart Deployments script](#chart-deployments-script)
 - [REST API overview](rest-api.md)
 - [Market data API](market-data.md)
 - [Trading and history API](trading-and-history.md)
@@ -44,7 +51,7 @@ curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/
   -H "Content-Type: application/json" \
   -d '{"volume": 500}'
 
-# Close everything
+# Close the whole position
 curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/12345
 
 # Hit different terminals when running multi-terminal
@@ -57,9 +64,10 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=
 
 ## Go Client
 
-The typed Go client in [`clients/go/`](../clients/go/) covers the live terminal,
-market data, orders, positions, and history. Backtest endpoints are not wrapped
-yet. Errors map to sentinels you can actually check, and the structs were tested
+The typed Go client in [`clients/go/`](https://github.com/psyb0t/mt5-httpapi/tree/master/clients/go) covers the live terminal,
+market data, orders, positions, and history. Backtest, Chart Deployments, file
+API, compile and WebRequest endpoints are not wrapped yet. The module needs Go
+1.26.1 or later. Errors map to sentinels you can actually check, and the structs were tested
 against real responses instead of invented from documentation fairy dust.
 
 ```bash
@@ -149,6 +157,7 @@ HTTP status maps to typed errors you can `errors.Is()` against:
 | 401 | `aichteeteapee.ErrUnauthorized` |
 | 403 | `aichteeteapee.ErrForbidden` |
 | 404 | `aichteeteapee.ErrNotFound` |
+| 405 | `aichteeteapee.ErrMethodNotAllowed` |
 | 409 | `aichteeteapee.ErrConflict` |
 | 422 | `aichteeteapee.ErrUnprocessableEntity` |
 | 429 | `aichteeteapee.ErrTooManyRequests` |
@@ -156,6 +165,10 @@ HTTP status maps to typed errors you can `errors.Is()` against:
 | 502 | `aichteeteapee.ErrBadGateway` |
 | 503 | `mt5.ErrNotInitialized` (MT5 still booting) |
 | 504 | `aichteeteapee.ErrGatewayTimeout` |
+| any other non-2xx | `aichteeteapee.ErrUnexpectedResponseStatus` |
+
+`mt5.New` returns `mt5.ErrEmptyBaseURL` without a `BaseURL`, and the methods that
+take a request struct return `mt5.ErrNilRequest` when it is nil.
 
 With the import alias used above, `mt5.IsNotInitialized(err)` shortcuts the
 common 503 retry case.
@@ -166,7 +179,9 @@ Pick your poison:
 
 **Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, swing structure, S/R levels, dozens more). Primitives only — wickworks emits raw indicator series and SMC structural facts; interpretive signals (divergences, crossover events, etc.) belong in your consumer. The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](market-data.md#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
 
-**Client-side** — grab raw candles with `GET /rates` and crunch the shit yourself. `examples/python/` has a working [pandas-ta](https://github.com/twopirllc/pandas-ta) example with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
+**Client-side**: grab raw candles with `GET /symbols/<symbol>/rates` and crunch the shit yourself. [`examples/python/`](https://github.com/psyb0t/mt5-httpapi/tree/master/examples/python) has a working [pandas-ta](https://github.com/twopirllc/pandas-ta) example with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
+
+The Python examples read `MT5_API_URL` and `MT5_API_TOKEN` from the environment and send the token as an `Authorization: Bearer` header when it is set, so they work against a terminal with auth on or off.
 
 ```bash
 cd examples/python
@@ -189,3 +204,11 @@ python chart.py EURUSD D1 200 -o eurusd.png
 ```
 
 Check out `indicators.py` for the individual indicator functions and `signals.py` for signal detection. Use them as building blocks for your own shit.
+
+## Chart Deployments script
+
+[`examples/chartctl/deploy.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/examples/chartctl/deploy.sh) stages an expert and a set file, deploys them to a chart, waits up to 60 seconds for it to run, checks `/charts`, saves a screenshot of its chart with [`POST /charts/<chart_id>/screenshot`](chart-deployments.md#post-chartschart_idscreenshot), and prints the `DELETE` command that removes the deployment. It leaves the deployment running, so run that command when you are done. It reads `MT5_API_URL` and `MT5_API_TOKEN`. See [Chart Deployments](chart-deployments.md).
+
+```bash
+./examples/chartctl/deploy.sh <expert.ex5> <file.set> <symbol> <timeframe>
+```

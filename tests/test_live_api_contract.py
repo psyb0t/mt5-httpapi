@@ -117,7 +117,8 @@ SymbolInfo = namedtuple("SymbolInfo", "name volume_min volume_step digits ask bi
 Tick = namedtuple("Tick", "time bid ask")
 Order = namedtuple(
     "Order",
-    "ticket symbol volume_current price_open sl tp type type_time time_expiration magic",
+    "ticket symbol volume_current price_open price_stoplimit sl tp type type_time "
+    "time_expiration magic",
 )
 Position = namedtuple("Position", "ticket symbol volume type sl tp price_open magic")
 OrderResult = namedtuple("OrderResult", "retcode deal order volume price comment")
@@ -134,6 +135,7 @@ def _order(**overrides):
         "symbol": SYMBOL,
         "volume_current": VOLUME,
         "price_open": 0.5000,
+        "price_stoplimit": 0.0,
         "sl": 0.0,
         "tp": 0.0,
         "type": mt5.ORDER_TYPE_BUY_LIMIT,
@@ -298,9 +300,10 @@ def test_get_rates_returns_the_requested_bar_count(api_client, patch_handler, ti
         assert bar["high"] >= bar["low"]
 
 
-def test_get_ticks_returns_recent_ticks(api_client, patch_handler):
+def test_get_ticks_returns_recent_ticks(api_client, patch_handler, monkeypatch):
     recorder = patch_handler(symbols_handler)
-    recorder.set("copy_ticks_from", _fake_ticks(50))
+    monkeypatch.setattr(symbols_handler, "_now_utc_seconds", lambda: 1_700_000_100)
+    recorder.set("copy_ticks_range", _fake_ticks(50))
 
     resp = api_client.get(f"/symbols/{SYMBOL}/ticks?count=50")
 

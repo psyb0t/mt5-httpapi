@@ -14,17 +14,26 @@
     "rest-api",
     "forex"
   ],
+  "mcpServers": {
+    "mt5-httpapi": {
+      "type": "http",
+      "url": "${user_config.api_url}/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_token}"
+      }
+    }
+  },
   "userConfig": {
     "api_url": {
       "type": "string",
       "title": "MT5 API URL",
-      "description": "Base URL of your running mt5-httpapi. Use the server root (e.g. http://localhost:8888) to reach every terminal, where tools take broker/account parameters and list_terminals shows what is configured. Use a terminal path (e.g. http://localhost:8888/roboforex/procent) to pin this install to that single terminal.",
+      "description": "Server root of your running mt5-httpapi, e.g. http://localhost:8888, with no broker or account path and no trailing slash. The plugin's MCP server connects to <this URL>/mcp/, the unified endpoint where every tool takes broker and account parameters and list_terminals shows what is configured. A terminal path such as http://localhost:8888/roboforex/main pins the MCP server to that one terminal instead.",
       "required": true
     },
     "api_token": {
       "type": "string",
       "title": "MT5 API token",
-      "description": "Bearer token. Only needed if the API was started with authentication enabled.",
+      "description": "Bearer token, sent as the Authorization header of the MCP server. Only needed if the API was started with authentication enabled.",
       "sensitive": true
     }
   }

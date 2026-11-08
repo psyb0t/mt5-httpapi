@@ -45,11 +45,13 @@ def _run_env_block(
     fail_on=None,
     profiles="",
     telegram=None,
+    env_extra=None,
 ):
     """Execute the block with DIR=tmp_path and a config_helper stub on PATH.
 
     `fail_on` names a config_helper subcommand the stub should fail on, to show
-    what .env looks like when the script dies partway through.
+    what .env looks like when the script dies partway through. `env_extra` is
+    what the caller exported before running run.sh (`NOVNC_PORT=9006 make up`).
     """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
@@ -83,6 +85,7 @@ def _run_env_block(
     env = {
         "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
         "MT5_PROJECT_DIR": str(tmp_path),
+        **(env_extra or {}),
     }
     return subprocess.run(
         ["bash", "-c", script], capture_output=True, text=True, env=env, timeout=60, check=False,
@@ -135,6 +138,54 @@ def test_optional_tailscale_values_are_still_written_when_present(tmp_path):
     assert lines[0] == _project_dir_line(tmp_path)
     assert "TS_AUTHKEY=tskey-abc" in lines
     assert any(line.startswith("TS_EXTRA_ARGS=") and "hs.example" in line for line in lines)
+
+
+def test_port_overrides_given_on_the_run_are_persisted(tmp_path):
+    """`NOVNC_PORT=9006 make up` used to publish 9006 for that one `up` only:
+    .env was rebuilt without it, so the next compose command in a fresh shell,
+    the vm-watchdog's recreate included, published the default port again."""
+    res = _run_env_block(
+        tmp_path, env_extra={"NOVNC_PORT": "9006", "API_HOST_PORT": "9999"}
+    )
+    assert res.returncode == 0, res.stderr
+    lines = _env_lines(tmp_path)
+    assert lines[0] == _project_dir_line(tmp_path)
+    assert "NOVNC_PORT='9006'" in lines
+    assert "API_HOST_PORT='9999'" in lines
+
+
+def test_each_port_override_is_persisted_on_its_own(tmp_path):
+    res = _run_env_block(tmp_path, env_extra={"API_HOST_PORT": "9999"})
+    assert res.returncode == 0, res.stderr
+    lines = _env_lines(tmp_path)
+    assert "API_HOST_PORT='9999'" in lines
+    assert not any(line.startswith("NOVNC_PORT") for line in lines)
+
+
+def test_no_port_override_is_written_when_none_was_given(tmp_path):
+    """An unset or empty override must not become `NOVNC_PORT=''`, which compose
+    would read as an empty port instead of falling back to its default."""
+    res = _run_env_block(tmp_path, env_extra={"NOVNC_PORT": ""})
+    assert res.returncode == 0, res.stderr
+    assert not any(line.startswith(("NOVNC_PORT", "API_HOST_PORT")) for line in _env_lines(tmp_path))
+
+
+def test_a_port_override_does_not_outlive_the_run_that_gave_it(tmp_path):
+    """.env is rebuilt every run, so the next `make up` without the override
+    goes back to the default port."""
+    assert _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "9006"}).returncode == 0
+    assert "NOVNC_PORT='9006'" in _env_lines(tmp_path)
+
+    assert _run_env_block(tmp_path).returncode == 0
+    assert not any(line.startswith("NOVNC_PORT") for line in _env_lines(tmp_path))
+
+
+@pytest.mark.parametrize("value", ["90'06", "9006\nINJECTED=1"])
+def test_a_port_override_that_env_cannot_carry_is_refused(tmp_path, value):
+    res = _run_env_block(tmp_path, env_extra={"NOVNC_PORT": value})
+    assert res.returncode != 0
+    assert "NOVNC_PORT contains a quote or a newline" in res.stdout
+    assert not any(line.startswith(("NOVNC_PORT", "INJECTED")) for line in _env_lines(tmp_path))
 
 
 def test_no_compose_profiles_are_written_while_signals_are_off(tmp_path):
@@ -257,3 +308,43 @@ def test_the_written_env_serves_compose_outside_run_sh(tmp_path):
     broken = compose_config()
     assert broken.returncode != 0
     assert "MT5_PROJECT_DIR" in broken.stderr
+
+
+@pytest.mark.skipif(
+    subprocess.run(["docker", "compose", "version"], capture_output=True).returncode != 0
+    if __import__("shutil").which("docker") else True,
+    reason="needs the docker compose CLI (the offline test image has none; runs on the host)",
+)
+def test_the_written_env_publishes_the_overridden_ports_outside_run_sh(tmp_path):
+    """The end of the chain: a compose command in a FRESH shell, with no port
+    override exported, publishes the ports run.sh was given, because it reads
+    them from .env. Compared against a run without the overrides, so the test
+    cannot pass on the defaults."""
+    import json
+    import shutil
+
+    shutil.copy(_REPO / "docker-compose.yml.example", tmp_path / "docker-compose.yml")
+
+    def published_ports():
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+        res = subprocess.run(
+            ["docker", "compose", "-f", str(tmp_path / "docker-compose.yml"), "config", "--format", "json"],
+            capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=120, check=False,
+        )
+        assert res.returncode == 0, res.stderr
+        services = json.loads(res.stdout)["services"]
+        return {
+            str(port["published"])
+            for service in services.values()
+            for port in service.get("ports") or []
+        }
+
+    assert _run_env_block(tmp_path).returncode == 0
+    defaults = published_ports()
+    assert {"8006", "8888"} <= defaults
+
+    res = _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "9006", "API_HOST_PORT": "9999"})
+    assert res.returncode == 0, res.stderr
+    overridden = published_ports()
+    assert {"9006", "9999"} <= overridden
+    assert not {"8006", "8888"} & overridden

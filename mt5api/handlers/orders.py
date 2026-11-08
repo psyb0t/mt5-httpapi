@@ -5,13 +5,16 @@ import time
 
 import MetaTrader5 as mt5
 
-from mt5api.config import ORDER_TYPE_MAP, TIME_MAP
+from mt5api.config import ORDER_TYPE_MAP, SPECIFIED_TIME_TYPES, TIME_MAP
 from mt5api.logger import log
 from mt5api.mt5client import (
+    EXPIRATION_REQUIRED_ERROR,
     build_order_request,
     ensure_initialized,
     ensure_symbol,
     m,
+    parse_order_expiration,
+    parse_order_stoplimit,
     to_dict,
     utc_seconds_to_broker_dt,
     with_mt5,
@@ -196,26 +199,48 @@ def update_order(ticket):
     if not body:
         return jsonify({"error": "Request body required"}), 400
 
+    # Checked before the order is looked up, so a bad value never costs an SDK call.
+    stoplimit = None
+    if "stoplimit" in body:
+        stoplimit, err = parse_order_stoplimit(body["stoplimit"])
+        if err:
+            return jsonify({"error": err}), 400
+    expiration = None
+    if "expiration" in body:
+        expiration, err = parse_order_expiration(body["expiration"])
+        if err:
+            return jsonify({"error": err}), 400
+
     orders = m(mt5.orders_get, ticket=ticket)
     if not orders:
         return jsonify({"error": f"Order {ticket} not found"}), 404
     order = orders[0]
 
+    # Fields the caller left out go back with the order's current values. The
+    # order's own price_stoplimit and time_expiration are already broker time;
+    # only a caller's `expiration` needs converting (parse_order_expiration).
     req = {
         "action": mt5.TRADE_ACTION_MODIFY,
         "order": ticket,
         "symbol": order.symbol,
         "price": float(body.get("price", order.price_open)),
+        "stoplimit": order.price_stoplimit if stoplimit is None else stoplimit,
         "sl": float(body.get("sl", order.sl)),
         "tp": float(body.get("tp", order.tp)),
         "type_time": order.type_time,
-        "expiration": order.time_expiration,
+        "expiration": order.time_expiration if expiration is None else expiration,
     }
 
     if "type_time" in body:
         tt = body["type_time"].upper()
         if tt in TIME_MAP:
             req["type_time"] = TIME_MAP[tt]
+    elif expiration is not None and order.type_time not in SPECIFIED_TIME_TYPES:
+        # A new expiry on an order that has none would be ignored by the broker.
+        req["type_time"] = mt5.ORDER_TIME_SPECIFIED
+
+    if req["type_time"] in SPECIFIED_TIME_TYPES and not req["expiration"]:
+        return jsonify({"error": EXPIRATION_REQUIRED_ERROR}), 400
 
     result = m(mt5.order_send, **req)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:

@@ -26,8 +26,9 @@ history/terminal/backtest (`get_history_orders`, `get_history_deals`,
 `request` + `endpoints` catalog cover JSON-compatible routes without a
 dedicated tool; multipart `POST /backtest` submission still uses REST directly.
 When `MT5_API_URL` is the server root, `list_terminals` discovers the valid
-broker/account/instance combinations, their `live`/`backtest` process mode, and
-whether Chart Deployments and the file API are enabled for each; when it is a terminal path, the
+broker/account/instance combinations, their process mode (`live` or `backtest`;
+a `mode` in `config.yaml` that is unset or anything but `backtest` shows as
+`live`, as the API runs it), and whether Chart Deployments and the file API are enabled for each; when it is a terminal path, the
 session is pinned to that terminal.
 
 On terminals with Chart Deployments enabled the agent can also stage and run

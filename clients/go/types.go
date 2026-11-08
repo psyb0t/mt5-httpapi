@@ -306,17 +306,29 @@ type CreateOrderRequest struct {
 	Comment     string  `json:"comment,omitempty"`
 	TypeFilling string  `json:"type_filling,omitempty"`
 	TypeTime    string  `json:"type_time,omitempty"`
-	Expiration  int64   `json:"expiration,omitempty"`
-	StopLimit   float64 `json:"stoplimit,omitempty"`
+	// Expiration is the unix time in seconds, real UTC, at which a pending
+	// order expires. It is required when TypeTime is SPECIFIED or
+	// SPECIFIED_DAY, and with TypeTime empty the server uses SPECIFIED.
+	Expiration int64 `json:"expiration,omitempty"`
+	// StopLimit is the limit price of a BUY_STOP_LIMIT or SELL_STOP_LIMIT
+	// order, whose Price is the stop trigger. It is required for those types.
+	StopLimit float64 `json:"stoplimit,omitempty"`
 	// ClientOrderID makes the call safe to retry; see TradeResult.Duplicate.
 	ClientOrderID string `json:"client_order_id,omitempty"`
 }
 
+// UpdateOrderRequest changes a pending order. A zero field is left out of the
+// request and keeps the order's current value.
 type UpdateOrderRequest struct {
 	Price    float64 `json:"price,omitempty"`
 	SL       float64 `json:"sl,omitempty"`
 	TP       float64 `json:"tp,omitempty"`
 	TypeTime string  `json:"type_time,omitempty"`
+	// Expiration and StopLimit mean what they mean in CreateOrderRequest.
+	// Expiration with TypeTime empty sets SPECIFIED unless the order already
+	// has a SPECIFIED or SPECIFIED_DAY expiry.
+	Expiration int64   `json:"expiration,omitempty"`
+	StopLimit  float64 `json:"stoplimit,omitempty"`
 }
 
 type UpdatePositionRequest struct {
@@ -369,6 +381,8 @@ type RatesTAResponse struct {
 }
 
 // TicksQuery: same two modes as RatesQuery — anchor+count, or from+to range.
+// With From unset, Count of either sign asks for the latest |Count| ticks up
+// to now, and a zero Count asks for 100.
 type TicksQuery struct {
 	Count int      // positive = forward, negative = backward from From; ignored when To > 0
 	From  int64    // unix seconds, 0 = unset (defaults to now in count mode)

@@ -1,3 +1,10 @@
+---
+title: "Chart Control Protocol"
+description: "The file protocol between mt5-httpapi and the MT5ChartLoader EA: command files, loader duties, self-healing and custom loaders."
+nav_order: 1
+parent: "Chart Deployments"
+---
+
 # Chart Control Protocol v1
 
 How mt5-httpapi's **Chart Deployments** feature attaches Expert Advisors to
@@ -55,8 +62,10 @@ desired**, never as "the API copied some files."
 }
 ```
 
-`revision` is a monotonic counter; the loader can skip a full parse when it
-hasn't changed. `template` is passed verbatim to `ChartApplyTemplate()`;
+`revision` is a monotonic counter that the loader echoes back as
+`applied_revision`. `reconcile_interval` is the API's
+`chartctl.reconcile_hint_interval` in seconds, a hint for custom loaders; the
+bundled loader ignores it and reconciles every second. `template` is passed verbatim to `ChartApplyTemplate()`;
 the leading backslash makes MT5 resolve it against `<data>\MQL5`, the
 only search root that doesn't depend on which EX5 hosts the loader
 (paths without a leading backslash resolve relative to the calling EX5's
@@ -64,12 +73,12 @@ own folder, and the `templates\` GUI directory is never searched). The
 API generates one `.tpl` per deployment, written into the
 `MQL5\Files\chartctl\` protocol directory.
 
-### `observed.json` (loader → API, rewritten every reconcile pass, ~5s)
+### `observed.json` (loader → API, rewritten every pass, ~1s)
 
 ```json
 {
   "protocol": 1,
-  "loader": { "name": "MT5ChartLoader", "version": "1.0.0",
+  "loader": { "name": "MT5ChartLoader", "version": "1.0.5",
               "last_loop": "2026-07-09 12:00:03", "applied_revision": 42 },
   "terminal": { "auto_trading": true },
   "charts": [
@@ -84,10 +93,24 @@ API generates one `.tpl` per deployment, written into the
 }
 ```
 
+`version` is `CHARTCTL_VERSION` in `ChartControl.mqh`. The loader reports
+each desired deployment as `running` (with its `chart_id`), `pending` or
+`paused`. Each failing deployment gets one `errors[]` entry, cleared when it
+next attaches:
+
+```json
+{ "id": "dep_a1b2c3", "status": "failed", "code": "EXPERT_NOT_ATTACHED",
+  "detail": "template applied but CHART_EXPERT_NAME empty after 10s ..." }
+```
+
+The codes are `SYMBOL_NOT_FOUND`, `CHART_OPEN_FAILED`,
+`TEMPLATE_APPLY_FAILED` and `EXPERT_NOT_ATTACHED`.
+
 `applied_revision == desired.revision` **and** deployment `status: running`
 is the only definition of a converged deployment. The API's
 `GET /deployments` merges the two files and derives per-deployment status
-(`pending → running → degraded → failed → paused`).
+(`pending`, `running`, `degraded`, `failed`, `paused`; see
+[Chart Deployments](chart-deployments.md#post-deployments)).
 
 ### `owned.json` (loader's own state)
 
@@ -100,9 +123,21 @@ Which open chart belongs to which deployment. The loader keeps this map in memor
 ### `command.json` / `command_result.json` (one-shot commands)
 
 For operations that produce an artifact rather than converge state
-(currently `screenshot`, `close_chart`, and a `reconcile` nudge). One
-command in flight; the loader writes the result keyed by `command_id` and
-deletes the command.
+(currently `screenshot` and `close_chart`; the loader also understands a
+`reconcile` nudge, which the API does not send, because
+`POST /deployments/reconcile` bumps the revision instead). One command in
+flight, so a second API call meanwhile answers 409 `LOADER_BUSY`; the loader
+writes the result keyed by `command_id` and deletes the command.
+
+```json
+{ "command_id": "cmd_1a2b3c4d", "action": "screenshot",
+  "chart_id": 133039117, "width": 1280, "height": 720 }
+{ "command_id": "cmd_1a2b3c4d", "status": "ok", "file": "cmd_1a2b3c4d.png" }
+```
+
+A screenshot lands in `MQL5\Files\chartctl\shots\<command_id>.png`. A failed
+command answers `"status": "error"` with `error_code` (`SCREENSHOT_FAILED`,
+`CLOSE_REFUSED`, `CLOSE_FAILED`, `UNKNOWN_ACTION`) and `error_detail`.
 
 `close_chart` closes an arbitrary chart by `chart_id` (from the observed
 charts list), the cleanup escape hatch for charts the loader cannot
@@ -114,8 +149,10 @@ attribute. The loader refuses (`CLOSE_REFUSED`) to close its own chart.
 
 Every pass (timer-driven, ~1s), the owning loader:
 
-1. Reads `desired.json`; if `revision` changed, reconciles.
-2. **Reconcile** = diff desired deployments against actual charts:
+1. Answers any pending `command.json`.
+2. Reads `desired.json` and reconciles, on every pass whether or not
+   `revision` changed. **Reconcile** = diff desired deployments against
+   actual charts:
    - Enabled deployment with no chart in the ownership map → first try to **adopt** an unowned chart already running the exact expert + symbol + timeframe and record it in `owned.json`; only if none exists, `SymbolSelect` → `ChartOpen` → `ChartApplyTemplate` → verify `CHART_EXPERT_NAME` within 10s → record the chart in `owned.json`. A failed attach closes the chart it opened and backs off 60s.
    - Enabled deployment whose chart has no expert (removed, or its `OnInit` failed) → **re-arm**: `ChartApplyTemplate` on that same chart and verify, instead of opening another. A failed re-arm keeps the chart and backs off 60s.
    - A chart it owns whose deployment is gone or disabled → `ChartClose`, and the chart leaves the map.
@@ -123,14 +160,14 @@ Every pass (timer-driven, ~1s), the owning loader:
    - Charts it doesn't own are **reported but never touched** by
      reconcile (an explicit `close_chart` command can close them).
 3. Writes `observed.json`.
-4. Answers any pending `command.json`.
 
 ### Rules
 
 - The loader **never calls trade functions**. Chart lifecycle only.
 - Exactly **one** loader per terminal, guarded by a terminal
-  `GlobalVariable` mutex (`chartctl_loader_owner`). A second loader detects
-  the live mutex and stays passive, reclaiming only if the owner vanishes.
+  `GlobalVariable` mutex (`chartctl_loader_owner`). The owner touches it every
+  pass. A second loader that finds it touched within 120 seconds stays
+  passive, reclaiming only if the owner vanishes.
 - All file writes are atomic (temp + `FileMove`).
 - Attribution is by the `owned.json` map, never by anything on the chart itself. Loader 1.0.2 and earlier wrote `chartctl:<id>` into the chart comment, which any expert calling `Comment()` overwrites. MT5 gives the charts it restores from the saved profile new ids, so after a terminal restart the map's old entries are dropped and reconcile adopts the exact-match restored charts instead. Experts on restored charts load a few seconds after the terminal starts, so for its first 30 seconds the loader only adopts and opens no new charts; opening one earlier would duplicate a chart that is still loading.
 - MT5 writes a chart's expert into the saved profile only when it exits cleanly. After a hard stop (a killed terminal, `POST /terminal/restart`, the health monitor's recovery, a VM restart) it restores a deployment's chart as the profile had it when the loader opened it, without the expert. So when the 30 seconds end, a deployment that was in `owned.json` at startup and still has no chart re-arms an unowned expert-less chart on its symbol and timeframe, once. After that pass the loader never touches an unowned expert-less chart.
@@ -141,7 +178,7 @@ Every pass (timer-driven, ~1s), the owning loader:
 
 ## Self-healing
 
-Three layers converge a terminal back to desired state after any restart
+Two layers converge a terminal back to desired state after any restart
 (including the optional `reboot_interval` VM reboots):
 
 1. **MT5 native chart restoration** brings back charts + attached experts
@@ -150,9 +187,10 @@ Three layers converge a terminal back to desired state after any restart
 2. **Loader reconciliation** repairs whatever native restoration missed
    (a hard stop that restored a chart without its expert, chart closed by
    hand, failed `OnInit`).
-3. **Watchdog** (`monitor.py`) logs loudly if the terminal is alive but the
-   loader's `last_loop` goes stale, the one state layers 1 and 2 can't fix
-   alone.
+
+Neither layer helps when the loader itself is not running. Nothing alerts on
+that; `GET /loader` answers `alive: false` once `observed.json` is older than
+`chartctl.observed_stale_after`.
 
 ---
 
@@ -173,8 +211,8 @@ void OnDeinit(const int r){ ctl.Deinit(); }
 That's it. Your account tracker (or any always-on EA) becomes the loader,
 so one resident EA does telemetry *and* chart deployment instead of two. The
 mutex makes running both your EA and the standalone `MT5ChartLoader`
-degrade safely. See `assets/experts/MT5ChartLoader.mq5` for the reference
-glue and `assets/experts/include/ChartControl.mqh` for the implementation.
+degrade safely. See [`assets/experts/MT5ChartLoader.mq5`](https://github.com/psyb0t/mt5-httpapi/blob/master/assets/experts/MT5ChartLoader.mq5) for the reference
+glue and [`assets/experts/include/ChartControl.mqh`](https://github.com/psyb0t/mt5-httpapi/blob/master/assets/experts/include/ChartControl.mqh) for the implementation.
 
 ---
 
@@ -189,9 +227,9 @@ attach, fully API/config-driven:
    `.ex5` into every existing terminal instance (new instances inherit it
    from the base copy).
 2. `config_helper.py` writes a `[StartUp] Expert=Advisors\MT5ChartLoader`
-   section into each terminal's generated `mt5start.ini`, so the terminal
-   attaches the loader itself at every launch. The startup chart symbol
-   honors the terminal's `symbol_suffix` (e.g. `EURUSD.r`).
+   section into each terminal's generated `mt5start.ini`, with
+   `Symbol=EURUSD` plus the terminal's `symbol_suffix` (e.g. `EURUSD.r`) and
+   `Period=H1`, so the terminal attaches the loader itself at every launch.
 3. The `[StartUp]` line re-fires on every launch (including the periodic
    `reboot_interval` reboots); the GlobalVariable mutex makes this
    idempotent. A duplicate loader closes its own chart and vanishes, so
@@ -215,6 +253,7 @@ already deploy.
 | `DELETE` | `/experts/<name>` | Remove staged expert (refused if in use) |
 | `POST` | `/sets` | Upload `.set` (returns parsed inputs) |
 | `GET` | `/sets`, `/sets/<name>` | List / inspect set files |
+| `DELETE` | `/sets/<name>` | Remove staged set (refused if in use) |
 | `POST` | `/deployments` | Declare a deployment (EA+set+symbol+TF) |
 | `GET` | `/deployments`, `/deployments/<id>` | Desired ⋈ observed status |
 | `PATCH` | `/deployments/<id>` | Change set file or pause/resume |

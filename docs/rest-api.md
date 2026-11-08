@@ -1,3 +1,10 @@
+---
+title: "REST API"
+description: "URL routing per broker and account, bearer auth, health checks, terminal control, account info, broker time and the full endpoint index."
+nav_order: 4
+has_children: true
+---
+
 # REST API — MT5 without the clicky bullshit
 
 One HTTP surface for routing, auth, health, terminal control, account state, and MT5's cursed broker-time timestamps.
@@ -5,6 +12,8 @@ One HTTP surface for routing, auth, health, terminal control, account state, and
 ## Contents
 
 - [Routing and authentication](#api)
+- [All endpoints](#all-endpoints)
+- [Errors](#errors)
 - [Health](#health)
 - [Terminal](#terminal)
 - [Account](#account)
@@ -14,6 +23,7 @@ One HTTP surface for routing, auth, health, terminal control, account state, and
 - [Backtesting](backtesting.md)
 - [Compiling MQL5](compiling.md)
 - [Chart Deployments](chart-deployments.md)
+- [File API](files.md)
 
 ## API
 
@@ -29,7 +39,7 @@ When you configure explicit terminal instances, route to them like this:
 http://localhost:8888/<broker>/<account>/<instance>/...
 ```
 
-Example: with a `roboforex/main` terminal in `config.yaml`'s `terminals:` list, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM.
+Example: with a `roboforex/main` terminal in `config.yaml`'s `terminals:` list, hit `http://localhost:8888/roboforex/main/ping`. The `/<broker>/<account>/` prefix is stripped by nginx and the rest is proxied to that terminal's API process inside the VM. The `default` instance answers on both `/<broker>/<account>/...` and `/<broker>/<account>/default/...`. A path that matches no configured terminal gets nginx's plain-text `404 no route`.
 
 If `api_token` is set in `config.yaml`, include the token on every request:
 
@@ -37,6 +47,37 @@ If `api_token` is set in `config.yaml`, include the token on every request:
 export MT5_API_TOKEN=$(grep ^api_token config/config.yaml | awk -F'"' '{print $2}')
 curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/main/ping
 ```
+
+A missing or wrong token gets `401 {"error": "unauthorized", "code": "UNAUTHORIZED"}`. `POST /compile` also takes the compile-only `compile_api_token` and answers its 401 as `{"ok": false, "log": "unauthorized"}`; see [Compiling MQL5](compiling.md).
+
+### All endpoints
+
+Every path below goes after `/<broker>/<account>[/<instance>]`.
+
+| Endpoints | Page |
+| --- | --- |
+| `/ping`, `/error`, `/busy`, `/terminal`, `/terminal/init`, `/terminal/shutdown`, `/terminal/restart`, `/account` | This page |
+| `/symbols`, `/symbols/import`, `/symbols/:symbol`, `/symbols/:symbol/tick`, `/symbols/:symbol/rates`, `/symbols/:symbol/rates/ta`, `/symbols/:symbol/ticks` | [Market data](market-data.md) |
+| `/positions`, `/positions/:ticket`, `/orders`, `/orders/:ticket`, `/history/orders`, `/history/deals` | [Trading and history](trading-and-history.md) |
+| `/backtest`, `/backtest/build-ini`, `/backtest/build-set`, `/backtest/:job_id`, `/backtest/:job_id/report`, `/backtest/:job_id/log`, `/backtest/:job_id/tail`, `/backtest/:job_id/cancel` | [Backtesting](backtesting.md) |
+| `/compile` | [Compiling MQL5](compiling.md) |
+| `/files`, `/files/:path`, `/compile/files`, `/compile/files/:path` (only with `files.enabled`) | [File API](files.md) |
+| `/experts`, `/sets`, `/deployments`, `/charts`, `/loader`, `/webrequest` and their subpaths (only with `chartctl.enabled`, live mode) | [Chart Deployments](chart-deployments.md) |
+| `/mcp` (per-terminal MCP server, same bearer check) | [MCP and agents](mcp-and-agents.md) |
+
+Routes of a feature that is off don't exist, so they answer 404.
+
+### Errors
+
+Errors are JSON with an `error` string. The common ones any route can throw at you (the 503/504 MT5 ones only on routes that call the SDK):
+
+| Status | When |
+| --- | --- |
+| 401 | Missing or wrong bearer token |
+| 413 | Body over `max_request_body_bytes` (4 MiB) or, for uploads, `max_upload_body_bytes` (25 MiB); see [Installation and configuration](installation-and-configuration.md) |
+| 503 | `MT5 not initialized`, queue full, or `mt5 call is wedged` (with `Retry-After`); see [Concurrency and backpressure](operations.md#concurrency-and-backpressure) |
+| 503 | `REBOOT_PENDING` on a write right before a scheduled reboot (with `Retry-After: 120`) |
+| 504 | `mt5 call timed out` |
 
 ### Health
 
@@ -109,7 +150,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/m
   "retransmission": 0.003,
   "trade_allowed": true,
   "tradeapi_disabled": false,
-  "broker_utc_offset_hours": 3,
+  "broker_utc_offset_hours": 3.0,
   "broker_utc_offset_seconds": 10800
 }
 ```
@@ -120,6 +161,8 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/m
 ```json
 { "success": true }
 ```
+
+On failure `init` answers 500 `{"success": false, "error": "<MT5 last_error>"}` and `restart` answers 500 `{"success": false, "error": "Terminal restart failed"}`.
 
 The API initializes itself on the first real request. You almost never need to poke these endpoints by hand unless the terminal is being a dick.
 `shutdown` leaves `terminal64.exe` running; a later MT5-backed request can
@@ -167,6 +210,8 @@ terminal selected by this API process and may take several minutes.
 }
 ```
 
+No account logged in: 404 `{"error": "No account logged in"}`.
+
 ### Broker time vs real UTC
 
 MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2 — so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
@@ -181,10 +226,12 @@ terminals:
     utc_offset: "3h"
 ```
 
+It takes `"3h"`, `"3h30m"`, `"90m"`, `"-2h"` (west of UTC) or a bare number, which counts as hours.
+
 When set, the API:
 - Subtracts the offset from every outgoing timestamp (tick time, rate time, position/order/deal times, `_msc` fields), so responses are real UTC unix.
-- Adds the offset to incoming `from`/`to` query params, so callers always pass real UTC unix and get back real UTC unix.
+- Adds the offset to incoming `from`/`to` query params and to an order's `expiration` (`POST /orders`, `PUT /orders/:ticket`), so callers always pass real UTC unix and get back real UTC unix.
 
-Inspect via `GET /terminal` — fields `broker_utc_offset_hours` and `broker_utc_offset_seconds` show what's in effect.
+Inspect via `GET /terminal`: fields `broker_utc_offset_hours` (a float, `3.5` for 3h30m) and `broker_utc_offset_seconds` show what's in effect.
 
 If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps through unchanged (pre-1.8 behavior).

@@ -86,6 +86,10 @@ class FakeTerminal:
         self.account: dict[str, Any] = {"equity": 10000.0, "margin_mode": 2}
         self.orders: list[tuple[str, dict[str, Any]]] = []
         self.unreachable: set[str] = set()
+        # client_order_id -> how POST /orders fails for that order only: None
+        # drops the connection, an int answers with that HTTP status. A failed
+        # order is not recorded in `orders`.
+        self.failing_orders: dict[str, int | None] = {}
         self.order_status = 201
         self.next_ticket = 5000
 
@@ -108,6 +112,11 @@ class FakeTerminal:
             return httpx.Response(200, json=self.account)
         if request.method == "POST" and route == "/orders":
             body = json.loads(request.content)
+            if body["client_order_id"] in self.failing_orders:
+                failure = self.failing_orders[body["client_order_id"]]
+                if failure is None:
+                    raise httpx.ConnectError("connection refused", request=request)
+                return httpx.Response(failure, json={"error": "order failed"})
             self.orders.append((terminal, body))
             self.next_ticket += 1
             if self.order_status != 201:

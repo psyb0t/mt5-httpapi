@@ -1,3 +1,10 @@
+---
+title: "Market data"
+description: "Find symbols, read contract specs, pull ticks and OHLCV bars, and run wickworks technical analysis on the bars in the same request."
+nav_order: 1
+parent: "REST API"
+---
+
 # Market data API — get the fucking bars
 
 Find symbols, inspect the contract details that brokers love making weird, pull ticks or OHLCV bars, and bolt on server-side TA in the same request.
@@ -88,6 +95,11 @@ only fire on input that was never going to be a usable symbol list. Nothing is
 written to the cache when a request is refused. Zero, a negative or a
 non-integer setting falls back to the default with a warning; there is no value
 that turns a cap off.
+
+Other refusals: `400` when the body is not a JSON object with a `symbols` array
+of strings, when `complete` is not `true`/`false`, or when every name is empty
+after trimming whitespace; `500` `failed to write symbol cache` if the cache
+file can't be written.
 
 **GET `/symbols/:symbol`** — full symbol info:
 
@@ -224,7 +236,14 @@ Use `count` when you want exactly N bars and do not care about the precise end t
 
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
-Symbols are auto-selected into MarketWatch on first access — backfilling rarely-traded instruments works without a manual select step.
+Symbols are auto-selected into MarketWatch on first access, so backfilling rarely-traded instruments works without a manual select step.
+
+`count` must be an integer: anything else (`1.5`, `abc`, `1e3`) is a 400 with `{"error": "'count' must be an integer"}`. An empty `count=` counts as not sent. Errors on `/rates`, `/rates/ta`, `/ticks`, `/tick` and `/symbols/:symbol`:
+
+| Status | When |
+| --- | --- |
+| 400 | Invalid `timeframe` or `flags`; `count` that is not an integer; `count` and `to` together; `to` without `from`; `from`/`to` not unix seconds or `YYYY_MM_DD[_HH_MM_SS]` |
+| 404 | `Symbol X not found`, or `No tick for X` on `/tick` |
 
 ### Rates with technical analysis
 
@@ -246,7 +265,15 @@ JSON body:
 | `indicators` | yes | Non-empty object — wickworks indicator spec. Each entry maps an output key to either `true` (run with defaults) or a flat params object (e.g. `{"length": 20, "std": 2}`); add `"type": "<name>"` only when the output key differs from the indicator name (e.g. `{"rsi21": {"type": "rsi", "length": 21}}` to run a second RSI under a custom key). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
 | `recentBars` | no | Accepted for mt5-httpapi compatibility but not sent to Wickworks. To get fewer bars back, lower `count` on the query string or slice client-side. |
 
-The sidecar runs inside the mt5 container's net namespace with no published ports — only the mt5 process (and by extension this API) can reach it. Configure via `wickworks:` in `config.yaml` (defaults to `http://20.20.20.1:8000/`, the dockurr gateway IP seen from inside the Windows VM).
+When the query yields no bars you get 200 with `"bars": []` and `"ta": null`, and wickworks is never called. Errors:
+
+| Status | When |
+| --- | --- |
+| 400 | Missing or empty `indicators` object |
+| 502 | wickworks unreachable or answered non-JSON: `{"error": "wickworks unreachable: ..."}` or `{"error": "wickworks returned non-JSON: ..."}` |
+| 502 | wickworks refused the request: `{"error": "wickworks rejected request", "wickworks_status": N, "wickworks_body": {...}}`, plus the deprecated `wickworksStatus` / `wickworksBody` twins |
+
+The sidecar runs inside the mt5 container's net namespace with no published ports, so only the mt5 process (and by extension this API) can reach it. Configure via `wickworks:` in `config.yaml`: `url` (default `http://20.20.20.1:8000/`, the dockurr gateway IP seen from inside the Windows VM) and `timeout` (default `30s`). The env vars `WICKWORKS_URL` and `WICKWORKS_TIMEOUT` win over both.
 
 Example:
 
@@ -274,17 +301,18 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 }
 ```
 
-Query params (ticks): same `count` / `from` / `to` model as rates — positive `count` = forward from `from`, negative = backward, `from+to` = range, `count` and `to` mutually exclusive, `to` requires `from`. Plus:
+Query params (ticks): same `count` / `from` / `to` model as rates: positive `count` = forward from `from`, negative = backward ending at `from`, `from+to` = range, `count` and `to` mutually exclusive, `to` requires `from`. **Without `from` you get the latest ticks**: the last `|count|` ticks up to now, whatever the sign of `count`, and the last 100 when you send no `count`. Ticks always come back oldest first, in every mode. MT5 has no call that reads ticks backward by count, so a backward read (a negative `count`, or no `from`) asks for a window ending at the anchor, starts at 60 seconds (longer for a big `count`) and doubles it until `|count|` ticks fit, up to a window of about 2.8 days, which crosses a weekend close. A symbol with no ticks in that time gives fewer than `|count|` ticks, or an empty array. Plus:
 
 | Param | Values | Default | Meaning |
 | --- | --- | --- | --- |
 | `flags` | `ALL`, `INFO`, `TRADE` | `ALL` | `INFO` = bid/ask changes only (~10× smaller payload), `TRADE` = trades only, `ALL` = everything |
 
 Examples:
-- `?count=100` — last 100 ticks up to now
-- `?from=2024_01_15_14_30_00&count=500` — 500 ticks forward from that timestamp
-- `?from=1700000000&count=-500` — 500 ticks ending at anchor
-- `?from=2024_01_15_09_00_00&to=2024_01_15_10_00_00` — every tick in that 1-hour window
+- `?count=100`: the latest 100 ticks up to now (`?count=-100` and no `count` at all do the same)
+- `?from=<unix>&count=-100`: the 100 ticks ending at that moment
+- `?from=2024_01_15_14_30_00&count=500`: 500 ticks forward from that timestamp
+- `?from=1700000000&count=-500`: 500 ticks ending at anchor
+- `?from=2024_01_15_09_00_00&to=2024_01_15_10_00_00`: every tick in that 1-hour window
 
 Tick-density warning: a liquid pair can shit out 10–100 ticks/sec. A one-hour `from+to` window can become millions of rows, so prefer `count` unless you genuinely need every twitch in the window.
 

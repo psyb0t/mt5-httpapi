@@ -17,6 +17,9 @@ Prefix: DOC.
   - Go client: [docs/clients-and-examples.md](../../docs/clients-and-examples.md); multi-VM: [docs/multi-vm-setup.md](../../docs/multi-vm-setup.md).
 - **DOC2:** `README.md` stays a short entry point that links to `docs/`. Add detail to the owning doc, not to the README; update the README's doc table when a doc file is added.
 - **DOC3:** A changed project convention updates [AGENTS.md](../../AGENTS.md) or the matching file in `.agents/rules/` in the same change.
+- **DOC18:** `docs/` is the GitHub Pages site (Just the Docs, pinned in `docs/_config.yml`). Every page starts with front matter: `title` (the navigation label, unique), a hand-written `description` of 50 to 170 characters naming the page's real subject, `nav_order`, and `parent` for a page that sits under another (whose front matter has `has_children: true`). Keep one `#` heading per page and the directory flat, because a file name is its URL.
+- **DOC19:** Link between pages with the relative `.md` path. Link a file outside `docs/` with its full `https://github.com/psyb0t/mt5-httpapi/blob/master/<path>` URL (`tree/` for a directory), because a `../` link is broken on the site. The README links to pages by their full site URL, so its links still work where the README is mirrored.
+- **DOC20:** After changing `docs/`, run `make docs` and open the output; a code block holding `{{` or `{%` needs the `{% raw %}` wrapper or Jekyll eats it.
 
 ## Prose style
 

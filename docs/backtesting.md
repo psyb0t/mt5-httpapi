@@ -1,3 +1,10 @@
+---
+title: "Backtesting"
+description: "Run Strategy Tester jobs over HTTP: build the tester files, start and cancel jobs, poll their status and download the reports."
+nav_order: 5
+has_children: true
+---
+
 # Backtesting without babysitting MT5
 
 Build Strategy Tester files, launch the job, watch it run, and pull the reports back over HTTP instead of spending your life clicking around inside MT5.
@@ -14,6 +21,7 @@ Build Strategy Tester files, launch the job, watch it run, and pull the reports 
 - [Download report and log](#get-backtestjob_idreport--log)
 - [Read live diagnostic tails](#get-backtestjob_idtail)
 - [Cancel a job](#post-backtestjob_idcancel)
+- [Scheduled reboots](#scheduled-reboots)
 - [Worked example](#worked-example)
 - [Optimization example](#optimization-example)
 - [Optimization guide](backtest-optimization.md)
@@ -100,7 +108,7 @@ Ind1Param1=31
 Ind1Param2=5
 ```
 
-That example matches the structure of the bundled preset under `assets/sets/`:
+That example matches the structure of the bundled preset under [`assets/sets/`](https://github.com/psyb0t/mt5-httpapi/tree/master/assets/sets):
 simple `name=value` lines plus separator keys.
 
 For optimization, MT5 UI exports each optimizable input in this form:
@@ -178,7 +186,11 @@ Example JSON for `POST /backtest/build-set`:
 }
 ```
 
-The response is `text/plain` `.set` content ready to save or upload.
+The response is `text/plain` `.set` content ready to save or upload: UTF-8
+with LF line endings, each `comments` line prefixed with `; ` unless it
+already starts with `;`. An entry without `start`, `step`, `stop` and
+`optimize` becomes a plain `name=value` line; an entry with only some of
+them is refused with `400`.
 
 Only one tester runs at a time per API process (serialized by an internal lock);
 additional submissions queue.
@@ -187,9 +199,13 @@ If the API restarts while a job is queued or running, startup recovery marks
 that orphaned job as `failed` with `API restarted before completion`. Recovery
 runs in a background thread so a large job history can never delay the API from
 serving, and only inspects jobs touched within the last `BACKTEST_SWEEP_LOOKBACK`
-(default `24h`). Completed/failed job state and staging dirs are pruned once
-older than `BACKTEST_JOB_RETENTION` (default `30d`), so job status/report/log
-URLs for pruned jobs return 404 once past that window.
+(default `24h`). On a `mode: backtest` terminal the same startup pass also
+kills that terminal's leftover `terminal64.exe` and `metatester64.exe`
+processes. Pruning runs in that startup pass too, but only once the shared job
+directory holds 1000+ entries, and at most once a day per VM: finished jobs
+(`completed`, `failed`, `cancelled`) older than `BACKTEST_JOB_RETENTION`
+(default `30d`) lose their state file and staging dir, so their
+status/report/log URLs return 404 from then on.
 
 ### Asset sources
 
@@ -247,23 +263,25 @@ Body (JSON):
 | ------------------ | -------- | -------------------------------------------------- |
 | `symbol`           | yes      | e.g. `NZDJPY`                                      |
 | `timeframe`        | yes      | `M1` `M5` `M15` `H1` `D1` … (21 standard values)   |
-| `expert`           | yes      | filename ending in `.ex5`                          |
+| `expert`           | yes      | filename ending in `.ex5` (no path)                |
 | `from_date`+`to_date`| one of   | `YYYY-MM-DD`                                       |
 | `last_years`        | one of   | integer; window ends today UTC                     |
 | `last_days`         | one of   | integer                                            |
-| `modelling`        | no       | `every-tick` `1m-ohlc` `open-prices` `real-ticks`  |
-| `latency_ms`        | no       | integer milliseconds → `ExecutionMode`             |
-| `deposit`          | no       | default `10000`                                    |
-| `currency`         | no       | default `USD`                                      |
-| `leverage`         | no       | default `100`, written as `1:N`                    |
-| `expert_parameters` | no       | `.set` filename                                    |
+| `modelling`        | no       | `every-tick` `1m-ohlc` `open-prices` `real-ticks` (or MT5's `0` `1` `2` `4`); default `open-prices` |
+| `latency_ms`        | no       | integer milliseconds, written as `ExecutionMode`; default `0` |
+| `deposit`          | no       | default `10000`, must be > 0                       |
+| `currency`         | no       | default `USD`, upper-cased                         |
+| `leverage`         | no       | default `100`, must be > 0, written as `1:N`       |
+| `expert_parameters` | no       | `.set` filename (no path)                          |
 | `optimization`     | no       | `0` off, `1` slow complete, `2` genetic, `3` Market Watch symbols |
 | `optimization_criterion` | no  | `0..7`; default `0` (max balance)                 |
 | `forward_mode`      | no       | `0..4`; default `0`                               |
 | `visual`           | no       | truthy enables visual tester mode; default off    |
-| `report_name`       | no       | default `backtest-report.htm` for backtests, `optimization-report.xml` for optimizations |
+| `report_name`       | no       | default `backtest-report.htm` for backtests, `optimization-report.xml` for optimizations; `.htm` or `.xml` is appended when missing |
 
-Returns `text/plain` with the generated INI.
+Returns `text/plain` with the generated INI. Both builders need
+`Content-Type: application/json` and answer `400` with an `error` string for a
+bad body.
 
 Example JSON for an optimization INI:
 
@@ -289,11 +307,16 @@ Multipart form fields:
 | -------------- | -------- | -------------------------------------------------------------- |
 | `ini`          | yes      | INI file (file upload)                                         |
 | `expert`       | one of   | `.ex5` upload                                                  |
-| `expert_name`  | one of   | filename in `assets/experts/`                                  |
+| `expert_name`  | one of   | filename in [`assets/experts/`](https://github.com/psyb0t/mt5-httpapi/tree/master/assets/experts)                                  |
 | `set`          | no       | `.set` upload                                                  |
 | `set_name`     | no       | filename in `assets/sets/`                                     |
-| `top_passes`    | no       | For optimization jobs, keep the top `1..500` parsed XML passes in the status payload. Default `50`. |
-| `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`). Defaults to `backtest_timeout` from `config.yaml`, then hardcoded `6h`. Must be positive and at most `BACKTEST_MAX_TIMEOUT` (env, default `48h`) — out-of-range values are rejected with `400` rather than silently clamped, since the terminal's run lock is held for the whole timeout. |
+| `top_passes`    | no       | For optimization jobs, keep the top `1..500` parsed passes (cache or XML) in the status payload. Default `50`. |
+| `timeout`      | no       | Duration string override (`"30m"`, `"6h"`, `"3h30m"`; a bare number means hours). Defaults to the `BACKTEST_TIMEOUT` env var, then `backtest_timeout` from `config.yaml`, then hardcoded `6h`. Must be positive and at most `BACKTEST_MAX_TIMEOUT` (env, default `48h`): out-of-range values are rejected with `400` rather than silently clamped, since the terminal's run lock is held for the whole timeout. |
+
+The INI upload must be UTF-8 text (a BOM is fine). An INI saved as UTF-16 is
+refused with `400` (the API itself converts it to UTF-16 for MT5). When both an upload and an asset name are
+sent, the upload wins. The whole multipart body is capped at 25 MiB
+(`MAX_UPLOAD_BODY_BYTES`).
 
 Responds `202 Accepted` with `Retry-After` header and the queued job payload:
 
@@ -302,8 +325,12 @@ Responds `202 Accepted` with `Retry-After` header and the queued job payload:
   "job_id": "b3f7…",
   "status": "queued",
   "broker": "darwinex",
-  "account": "live",
+  "account": "tester",
   "submitted_at": "2026-05-12T10:00:00Z",
+  "started_at": null,
+  "finished_at": null,
+  "duration_seconds": null,
+  "report_name": "backtest-report.htm",
   "status_url": "/backtest/b3f7…",
   "report_url": "/backtest/b3f7…/report",
   "log_url": "/backtest/b3f7…/log",
@@ -311,14 +338,34 @@ Responds `202 Accepted` with `Retry-After` header and the queued job payload:
   "optimization_type": 0,
   "optimization_results": null,
   "optimization_cache": null,
-  "queue_position": 1
+  "queue_position": 0
 }
 ```
+
+`queue_position` is 0-based and counts this process's queued and running jobs
+in submission order, so `0` means the job runs next (or is running now). It
+is left out once the job is finished.
 
 `[Common]` `Login` / `Password` / `Server` in the uploaded INI are always
 overwritten with the credentials from `config.yaml` for the request's
 broker/account. The expert path is rewritten to `Uploaded\<basename>` and the
-set file is namespaced per job to avoid collisions.
+set file is namespaced per job to avoid collisions. The API also rewrites:
+
+- `[Tester].Report` to `Reports\<basename>`. An empty one becomes
+  `backtest-<hex>.htm` or `optimization-<hex>.xml`, and `.htm` or `.xml` is
+  appended when missing. `ReplaceReport=1` and `ShutdownTerminal=1` are forced.
+- `[Tester].Symbol`: the terminal's `symbol_suffix` is appended, unless the
+  terminal's cached broker symbol list has the bare name and lacks the
+  suffixed one.
+
+Errors from `POST /backtest` are JSON with an `error` string:
+
+| Status | When |
+| --- | --- |
+| `400` | missing `ini` file; INI not UTF-8; INI without `[Tester]`; `Optimization` not `0..3`; expert not `.ex5` or set not `.set`; asset name not found or a path; bad `timeout` or `top_passes`; `top_passes` and `topPasses` with different values; broker/account missing from `config.yaml` |
+| `413` | multipart body over 25 MiB |
+| `500` | `terminal64.exe` not found for this terminal |
+| `503` | `code: WORKER_START_FAILED`: the worker thread could not start; the job is stored as `failed` with `Backtest worker could not be started` |
 
 When the broker's server ships a new MT5 build, a launch of a terminal with
 the update pending starts an updater (`<AppData>\MetaQuotes\Terminal\<hash>\liveupdate\terminal64.exe /update`)
@@ -345,13 +392,29 @@ For optimization jobs, the payload instead includes:
 
 Result source depends on the submitted mode:
 
-- Modes `1` and `2` parse the MT5 XML spreadsheet report first-class, and only use cache parsing if an `.opt` cache is available for the same job.
-- Mode `3` parses the MT5 tester cache first-class because the `.symbols.xml` report does not contain the optimization rows.
+- Every mode first looks for a matching `.opt` file in `Tester/cache/` and parses it when it can.
+- Modes `1` and `2` fall back to the MT5 XML spreadsheet report when the cache gives no rows, which is the usual case for them.
+- Mode `3` never parses the XML, because the `.symbols.xml` report does not contain the optimization rows.
 
-The API keeps the MT5 column names as-is. If the XML export includes columns
-such as `Profit`, `Profit Factor`, `Expected Payoff`, `Drawdown`,
-`Recovery Factor`, `Sharpe Ratio`, or optimized input names, those same fields
-appear in each `optimization_results` row.
+For rows parsed from the XML report, the API keeps the MT5 column names as-is.
+If the XML export includes columns such as `Profit`, `Profit Factor`,
+`Expected Payoff`, `Drawdown`, `Recovery Factor`, `Sharpe Ratio`, or optimized
+input names, those same fields appear in each `optimization_results` row.
+Rows parsed from the cache have a fixed set of columns (see the mode-3
+example below).
+
+A job that ends `failed` or `cancelled` carries an `error` string:
+
+| `error` starts with | Meaning |
+| --- | --- |
+| `Backtest timed out after Ns` | the run hit its `timeout`; leftover tester processes were killed (count appended) |
+| `terminal64.exe exited with code N` | non-zero exit, followed by the terminal log tail when there is one |
+| `Report not generated` | MT5 exited cleanly without a report, which is what a run on a terminal without `mode: backtest` ends in (the API does not check the mode) |
+| `Backtest produced empty report (Bars=0, Ticks=0, Symbols=0)` | MT5 had no market data; the payload keeps `summary` |
+| `Backtest crashed: ...` / `Backtest worker crashed before the run finished: ...` | an exception in the run or the worker |
+| `Cannot prepare terminal directories: ...` | `Reports`, `MQL5\Experts\Uploaded` or `MQL5\Profiles\Tester` could not be created |
+| `API restarted before completion` | startup recovery (see above) |
+| `Cancelled by request` | status `cancelled` |
 
 Example optimization status payload:
 
@@ -383,7 +446,12 @@ Example optimization status payload:
 }
 ```
 
-Example mode-3 optimization payload:
+Example mode-3 optimization payload. Cache rows always have the columns
+`Pass`, `Symbol`, `Result`, `Profit`, `Profit Factor`, `Expected Payoff`,
+`Recovery Factor`, `Sharpe Ratio`, `Equity DD %`, `Trades` and `Custom`.
+`Pass` comes from the agent logs and falls back to the row's index in the
+cache when no log line names that symbol. `optimization_cache` also carries
+`path`, `size_bytes`, `modified_at`, `expert`, `from_date` and `to_date`:
 
 ```json
 {
@@ -424,16 +492,24 @@ Example mode-3 optimization payload:
 
 ### `GET /backtest/{job_id}/report` & `/log`
 
-Stream the raw report and terminal log file. Backtests return the MT5 HTML
-report. Optimizations return the MT5 XML spreadsheet export. `404` until the
-job finishes.
+`/report` streams the raw MT5 report: the HTML report for backtests, the XML
+spreadsheet export for optimizations (the `.symbols.xml` header export for
+mode `3`). It answers `404` until MT5 has written the report.
+
+`/log` streams `run.log`, the stdout/stderr of `terminal64.exe` (usually
+sparse). It is created when the terminal launches, so it is readable while the
+job runs and answers `404` before that (and for a job that failed or was
+cancelled before launch). The MT5 terminal and tester journals are in
+[`/tail`](#get-backtestjob_idtail).
 
 ### `GET /backtest/{job_id}/tail`
 
 Return the live diagnostic guts for queued, running, or finished jobs as JSON.
 `?lines=N` controls the terminal/tester journal depth and is clamped to
-`10..1000` (default `200`). The response includes `run_log`, `terminal_log`,
-`tester_log`, status/timestamps, and the selected journal filenames.
+`10..1000` (default `200`). The response includes `job_id`, `status`,
+`started_at`, `finished_at`, `error`, `terminal_log`, `tester_log`, the
+selected journal filenames (`terminal_log_file`, `tester_log_file`), and
+`run_log`, which is always the last 50 lines of `run.log` whatever `lines` says.
 
 ### `POST /backtest/{job_id}/cancel`
 
@@ -447,21 +523,34 @@ Stop a job and mark it `cancelled`. Safe to repeat.
 | `queued` | dropped before it launches; a run already on this terminal is not touched | `200` |
 | `running` | this terminal's `terminal64.exe`, its `metatester64.exe` agents and any stuck LiveUpdate updater are killed; the next job starts only once they are gone | `200`, or `202` if the worker is still stopping after 40 s |
 
-The answer is the job's status payload plus `killed` (processes signalled) and
-`stopped` (the worker has let go of the terminal). `cancelled` is final: a write
+The answer is the job's status payload. A job this call cancelled carries
+`error: "Cancelled by request"` and also gets `killed` (processes
+signalled) and `stopped` (the worker has let go of the terminal); a job that
+was already finished comes back without them. `cancelled` is final: a write
 from the worker that is still winding down cannot turn it back into `failed` or
-`completed`. A cancelled job has no report. While its worker is still stopping
-the tester processes, `GET /busy` lists it, so a scheduled reboot waits.
+`completed`. A cancelled job usually has no report: `/report` serves one only
+if MT5 had already written it when the cancel landed.
 
 A job's worker can no longer die and leave the job `running`: any exception
 outside the run's own error handling fails the job with `Backtest worker crashed
 before the run finished: ...`, and a state file that cannot be written on the VM
 share (WinError 5) is retried and then kept in memory instead of ending the run.
 
+### Scheduled reboots
+
+`GET /busy` lists every queued or running backtest of this terminal, and a
+cancelled one whose worker is still stopping the tester processes, so a
+scheduled VM reboot waits for them (up to `reboot_max_postpone`, default 360
+minutes, see
+[`scripts/reboot_guard.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/reboot_guard.py)).
+While the reboot is about to happen, every `POST` here (`/backtest`,
+`build-ini`, `build-set`, `cancel`) answers `503` with
+`code: REBOOT_PENDING` and `Retry-After: 120`.
+
 ### Worked example
 
 ```bash
-export URL=http://127.0.0.1:8888/darwinex/live
+export URL=http://127.0.0.1:8888/darwinex/tester
 export TOK=changeme-mt5-httpapi-token
 
 # 1. Build INI for a 5-year NZDJPY M15 open-prices run with 5 ms latency.
@@ -481,7 +570,7 @@ JOB=$(curl -sS -X POST "$URL/backtest" \
 # 3. Poll until done.
 while :; do
   STATUS=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB" | jq -r .status)
-  echo "$STATUS"; [[ "$STATUS" == completed || "$STATUS" == failed ]] && break
+  echo "$STATUS"; [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break
   sleep 30
 done
 
@@ -521,7 +610,7 @@ while :; do \
   STATUS_JSON=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB") && \
   STATUS=$(printf '%s' "$STATUS_JSON" | jq -r '.status') && \
   echo "Status: $STATUS" && \
-  [[ "$STATUS" == completed || "$STATUS" == failed ]] && break; \
+  [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break; \
   sleep 10; \
 done && \
 echo && echo "Final API summary:" && \
@@ -537,4 +626,4 @@ Notes:
 - Use a terminal configured with `mode: backtest`, not a live terminal namespace.
 - Optimization results depend on the ranges encoded in the `.set` file. If no ranges are enabled in MT5, optimization is not meaningful.
 - `optimization_results` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimization_cache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
-- If a metric you expect is missing from `optimization_results`, first check the raw XML report. The API preserves MT5's exported columns rather than remapping them to a fixed schema.
+- If a metric you expect is missing from `optimization_results` in mode `1` or `2`, first check the raw XML report. For XML rows the API preserves MT5's exported columns rather than remapping them to a fixed schema; mode `3` cache rows have the fixed column set listed above.

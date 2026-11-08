@@ -29,7 +29,6 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SHARED_DIR = os.path.dirname(_SCRIPTS_DIR)
 CONFIG_PATH = os.path.join(_SHARED_DIR, "config", "config.yaml")
 VMS_PATH = os.path.join(_SHARED_DIR, "vms.yaml")
-_VMS_EXAMPLE_PATH = os.path.join(_SHARED_DIR, "vms.yaml.example")
 COMPOSE_TEMPLATE_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml.j2")
 COMPOSE_OUTPUT_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml")
 SIGNALS_PATH = os.path.join(_SHARED_DIR, "config", "signals.yml")
@@ -72,17 +71,29 @@ def _load():
         return yaml.safe_load(f) or {}
 
 
+def _default_vms():
+    """The single-VM topology: the one `mt5` service docker-compose.yml.example
+    seeds."""
+    return {DEFAULT_VM: {"service": "mt5", "container_name": "mt5"}}
+
+
 def _load_vms():
-    path = VMS_PATH if os.path.exists(VMS_PATH) else _VMS_EXAMPLE_PATH
+    """The VMs by name: vms.yaml, or the single default VM when it is absent.
+
+    vms.yaml.example is a template to copy and is never read here. Its two
+    example VMs are not in the compose file run.sh seeds without a vms.yaml, so
+    treating them as the topology made run.sh write vm-group files and DNAT
+    rules for VMs that do not exist.
+    """
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(VMS_PATH, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         vms = data.get("vms", [])
         if not vms:
-            return {DEFAULT_VM: {"service": "mt5", "container_name": "mt5"}}
+            return _default_vms()
         return {vm["name"]: vm for vm in vms}
     except FileNotFoundError:
-        return {DEFAULT_VM: {"service": "mt5", "container_name": "mt5"}}
+        return _default_vms()
 
 
 def _vm_container_name(terminal):
@@ -540,6 +551,17 @@ def main():
     elif cmd == "generate_compose":
         if not os.path.exists(COMPOSE_TEMPLATE_PATH):
             print(f"ERROR: template not found at {COMPOSE_TEMPLATE_PATH}", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.exists(VMS_PATH):
+            # The default VM has no ram, cpu_cores or disk_size, which the
+            # template renders as empty values, and this command overwrites the
+            # user's docker-compose.yml. Without vms.yaml the compose file is
+            # the one seeded from docker-compose.yml.example.
+            print(
+                f"ERROR: vms.yaml not found at {VMS_PATH}; copy vms.yaml.example "
+                "to vms.yaml and edit it first",
+                file=sys.stderr,
+            )
             sys.exit(1)
         with open(COMPOSE_TEMPLATE_PATH, encoding="utf-8") as f:
             template_source = f.read()

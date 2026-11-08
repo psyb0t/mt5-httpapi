@@ -1,9 +1,13 @@
-.PHONY: up down logs status lint format test test-unit test-integration test-go test-live verify-binaries telegram-login clean distclean help
+.PHONY: up down logs status lint format test test-unit test-integration test-go test-live verify-binaries telegram-login docs clean distclean help
 
 GO_TEST_IMAGE := golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647
 # Same image as the telethon-plus service in docker-compose.yml.j2 and
 # docker-compose.yml.example (tests/test_signals_compose.py keeps them equal).
 TELETHON_IMAGE := psyb0t/telethon-plus:v0.7.3@sha256:b16269669dce4708b73ebef66ab81ac34473b62654432abc4cb485b32df00559
+
+# GitHub Pages' own build image for docs/ (the tag action.yml in
+# actions/jekyll-build-pages uses).
+JEKYLL_IMAGE := ghcr.io/actions/jekyll-build-pages:v1.0.13
 
 all: up
 
@@ -140,6 +144,15 @@ clean: down
 distclean: clean
 	rm -f data/win.iso
 
+# Build the docs site the way GitHub Pages does, with GitHub's own Jekyll
+# image, into the gitignored .testing/docs-site. A clean build does not prove
+# the links work; open the output under /mt5-httpapi/ to check pages.
+docs:
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e GITHUB_WORKSPACE=/work \
+		-e GITHUB_REPOSITORY=psyb0t/mt5-httpapi -e INPUT_SOURCE=docs \
+		-e INPUT_DESTINATION=.testing/docs-site -e INPUT_VERBOSE=false \
+		-v "$$PWD":/work $(JEKYLL_IMAGE)
+
 help:
 	@echo "Available targets:"
 	@echo "  up        - Start the Windows VM with MT5 (downloads ISO if needed)"
@@ -149,10 +162,12 @@ help:
 	@echo "  lint      - Lint all .ps1/.sh scripts in a throwaway Docker image"
 	@echo "  format    - Apply shfmt formatting to all .sh files in place"
 	@echo "  test      - Run the complete automated test suite"
+	@echo "  verify-binaries - Check every tracked executable against assets/binaries.lock.json"
 	@echo "  test-unit - Run unit and contract tests in a throwaway Docker image"
 	@echo "  test-integration - Container-backed suites: nginx routing + MCP unifier (needs docker)"
 	@echo "  test-go  - Compile and race-test the public Go client in a pinned container"
 	@echo "  test-live - Test a RUNNING stack set by MT5_LIVE_* / tests/live/.env, real orders included (LIVE_TESTS=... picks modules)"
 	@echo "  telegram-login - Log in to Telegram once for the signal copier and print the session string"
+	@echo "  docs      - Build the docs/ site into .testing/docs-site with GitHub Pages' Jekyll image"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
 	@echo "  distclean - Remove everything including ISO"

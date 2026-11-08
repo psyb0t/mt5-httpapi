@@ -741,6 +741,20 @@ TIME_MAP = {
     "SPECIFIED_DAY": mt5.ORDER_TIME_SPECIFIED_DAY,
 }
 
+# Order types that need a second price: `price` is the stop trigger and
+# `stoplimit` the limit order it places. order_send cannot place them without it.
+STOP_LIMIT_ORDER_TYPES = (
+    mt5.ORDER_TYPE_BUY_STOP_LIMIT,
+    mt5.ORDER_TYPE_SELL_STOP_LIMIT,
+)
+
+# The type_time values for which the broker reads `expiration`. With GTC or DAY
+# it is ignored, so an order that should expire would stay open until cancelled.
+SPECIFIED_TIME_TYPES = (
+    mt5.ORDER_TIME_SPECIFIED,
+    mt5.ORDER_TIME_SPECIFIED_DAY,
+)
+
 
 # Global per-request body caps, enforced once in server.py's before_request
 # hook rather than per handler.

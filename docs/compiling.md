@@ -1,3 +1,10 @@
+---
+title: "Compiling MQL5"
+description: "POST /compile turns MQL5 source into an .ex5 through MetaEditor: request fields, responses, settings, caching, concurrency and limits."
+nav_order: 4
+parent: "REST API"
+---
+
 # Compiling MQL5
 
 `POST /compile` takes MQL5 source text and hands back a compiled `.ex5`. No
@@ -83,7 +90,7 @@ never null. That is a distinct third case, and it is worth handling as one:
 | digest unchanged | that header did not move | nothing, even if `include_hash` moved |
 | digest changed | that header was edited | rebuild what depends on it |
 | **key gone** | the header is not in the tree the compiler read | **do not rebuild — investigate** |
-| whole field absent | nothing is configured, or the tree was unreadable | unknown; treat as rebuild |
+| whole field absent | nothing is configured, none of the configured headers is in the tree, or the tree was unreadable | unknown; treat as rebuild |
 
 The third row is the one that bites. A missing header is a provisioning fault on
 *this* host, not drift on the caller's side, and rebuilding against it cannot
@@ -97,7 +104,7 @@ root. Record it with the build and "which artifacts used a library that has
 since changed" becomes a comparison instead of an assumption. It is computed
 from the tree the compiler actually read, so if the mirror were stale the hash
 reports the stale tree rather than claiming the current one. It follows the
-tree as it is at each compile: an edit made in the terminal's `MQL5` folder, or
+tree as it is at each compile: an edit made in the include directory, or
 a mirror refresh done by another API process, shows up in the next response.
 Omitted if the tree cannot be read; never guessed.
 
@@ -121,23 +128,31 @@ compiler lock.
 {"ok": false, "log": "compile timeout after 30s"}
 ```
 
-**413 — the request is too large.** Sent when the declared body exceeds the
-request bound, or the decoded `source` exceeds `COMPILE_MAX_SOURCE_BYTES` —
-in both cases before anything reaches disk. The log names the limit:
+**413: the request is too large.** Sent when the declared body exceeds the
+request bound (4 times `COMPILE_MAX_SOURCE_BYTES` plus 4096 bytes, for JSON
+escaping), or the decoded `source` exceeds `COMPILE_MAX_SOURCE_BYTES`, in
+both cases before anything reaches disk. The log names the limit:
 
 ```json
 {"ok": false, "log": "source is 3145728 bytes; this server accepts at most 2097152 (COMPILE_MAX_SOURCE_BYTES)"}
 ```
 
-**429 — too many compiles waiting.** One compile runs and at most two wait
-behind it; a request beyond that is answered at once, with a `Retry-After`
+**411: no `Content-Length`.** A chunked request is refused before anything
+is read:
+
+```json
+{"ok": false, "log": "Content-Length header is required"}
+```
+
+**429: too many compiles waiting.** One compile runs and at most two wait
+behind it; a request beyond that is answered at once, with a `Retry-After: 5`
 header, instead of holding a server thread. See [Concurrency](#concurrency).
 
 ```json
 {"ok": false, "log": "compile busy: 2 requests are already waiting; retry shortly"}
 ```
 
-**400 — malformed or refused request**: no `source`, a malformed `ea_version`,
+**400: malformed or refused request**: a body that is not a JSON object, no `source`, a malformed `ea_version`,
 or source whose `#include`, `#resource` or `#property icon` names a file
 outside the allowed trees (see [What the source can reach](#what-the-source-can-reach)).
 The log names the directive and the path.
@@ -165,15 +180,17 @@ and the produced binary is the tiebreaker.
 compile_api_token: ""
 ```
 
-Environment overrides, all optional:
+All optional. Each is a top-level `config.yaml` key in lower case
+(`compile_timeout`, `compile_local_cache`, ...) or an environment variable in
+upper case; the environment variable wins:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `COMPILE_API_TOKEN` | unset | Compile-only bearer token. |
 | `COMPILE_TERMINAL_DIR` | `terminals/metaquotes/base` | Terminal directory whose `MetaEditor64.exe` is used. |
-| `COMPILE_INCLUDE_DIR` | `<terminal>/MQL5` | Passed to MetaEditor as `/inc:`. `#include <Foo.mqh>` resolves under `<this>/Include/`. |
+| `COMPILE_INCLUDE_DIR` | `<terminal>/MQL5` | Passed to MetaEditor as `/inc:`. `#include <Foo.mqh>` resolves under `<this>/Include/`. With `COMPILE_LOCAL_CACHE` set, MetaEditor gets a local mirror of this tree instead; see [Performance](#performance). |
 | `COMPILE_WORK_DIR` | `logs/compile-work` | Parent of the per-request temp directories. |
-| `COMPILE_LOCAL_CACHE` | unset | Mirror the toolchain onto local disk — see [Performance](#performance). |
+| `COMPILE_LOCAL_CACHE` | unset | Mirror the toolchain onto local disk; see [Performance](#performance). |
 | `COMPILE_INCLUDE_DIGESTS` | unset | Comma-separated globs (relative to the include root) whose per-file digests are reported as `include_files`. |
 | `COMPILE_TIMEOUT` | `30s` | Per-compile deadline. A bare number is seconds (`45`), or give units (`45s`, `1m`). Hard ceiling 60s. |
 | `COMPILE_MAX_SOURCE_BYTES` | `2097152` (2 MB) | Reject a larger `source` with 413, before it is written to disk. |
@@ -204,14 +221,15 @@ available.
 With the [file API](files.md) enabled you can do that over HTTP: `PUT /compile/files/Include/MyLib?extract` with a zip of the library unpacks it into that directory, and `DELETE /compile/files/Include/MyLib?recursive` removes it. [An expert that uses a library](files.md#example-an-expert-that-uses-a-library) walks through the whole flow, `#import`ed `.ex5` libraries and DLLs included.
 
 Edits are picked up by a running server without a restart. With
-`COMPILE_LOCAL_CACHE` set the include tree is re-validated against the source at
-most once every `INCLUDE_REFRESH_SECONDS` (60s), so an updated header reaches
-builds within that window rather than at the next restart. If you have just
-changed a shared library on the host and are about to rebuild everything that
-depends on it, let that window pass first, otherwise the first builds of the
-batch can still use the previous copy, and they will report success while doing
-it. A change made through `/compile/files` does not wait: it marks the mirror
-stale, and the next compile in any API process re-validates it first.
+`COMPILE_LOCAL_CACHE` set the mirrored include tree is re-validated against
+`COMPILE_INCLUDE_DIR` at most once every `INCLUDE_REFRESH_SECONDS` (60s), so an
+updated header reaches builds within that window rather than at the next
+restart. If you have just changed a shared library on the host and are about to
+rebuild everything that depends on it, let that window pass first, otherwise
+the first builds of the batch can still use the previous copy, and they will
+report success while doing it. A change made through `/compile/files` does not
+wait: it marks the mirror stale, and the next compile in any API process
+re-validates it first.
 
 ## Performance
 
@@ -229,10 +247,16 @@ Set `COMPILE_LOCAL_CACHE` to a path on the VM's own disk:
 compile_local_cache: "C:\\mt5-compile"
 ```
 
-On the first compile the server copies MetaEditor, its `Config`, and the include
-tree there — about 105 MB, once per process — and compiles from local disk
-afterwards. `terminal64.exe`, `metatester64.exe` and `Bases` are not copied; a
-compile never reads them.
+On the first compile the server copies MetaEditor and its `Config` from
+`COMPILE_TERMINAL_DIR` there, and the include tree from `COMPILE_INCLUDE_DIR`
+(by default that terminal's own `MQL5` directory), about 105 MB once per process.
+It compiles from local disk afterwards, with `/inc:` pointing at the mirrored
+include tree. The mirror follows `COMPILE_INCLUDE_DIR`, the directory
+`/compile/files` writes into, so a library put there reaches the next compile.
+A `COMPILE_INCLUDE_DIR` set to another directory replaces the terminal's own
+`MQL5` tree in the mirror, as it does as `/inc:` without one.
+`terminal64.exe`, `metatester64.exe` and `Bases` are not copied; a compile
+never reads them.
 
 Only files that are missing or changed are copied, compared on size and
 whole-second mtime, so a mirror that survived a restart costs nothing to
@@ -377,7 +401,7 @@ MetaEditor would ignore can be refused but one it honours cannot slip past.
 
 The check reads lines the way the preprocessor does. Every `\r\n` and lone `\r` in the source becomes `\n` before the check, and the file MetaEditor compiles is written from that same text. For the check only, `\u0085`, ` ` and ` ` also break lines, backslash-newline continuations are joined, and form feed and vertical tab count as spaces. A `#` left alone on its line once comments are removed is refused, because a comment spanning a line break between `#` and the directive name still joins them for the preprocessor.
 
-`tests/live/test_compile_reach.py` runs these cases against a deployed endpoint (`make test-live`). Against
+[`tests/live/test_compile_reach.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/live/test_compile_reach.py) runs these cases against a deployed endpoint (`make test-live`). Against
 build 5836 without this check, MetaEditor ran on all sixteen and read the
 target in nine.
 
@@ -396,7 +420,8 @@ the ability to compile, giving it `api_token` gives it your account too. Set
 `compile_api_token` and hand out that instead: it is accepted on `/compile` and
 rejected everywhere else.
 
-Both tokens work on `/compile`. Only `api_token` works anywhere else.
+Both tokens work on `/compile`. Only `api_token` works anywhere else,
+including `/compile/files`.
 
 > Compiling arbitrary source is not a sandbox. MetaEditor parses attacker-
 > controlled text, and MQL5 has `#import` for DLLs. Treat `/compile` as trusted

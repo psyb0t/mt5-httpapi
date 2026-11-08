@@ -762,6 +762,140 @@ def test_the_include_recheck_is_rate_limited(client, compile_env, monkeypatch, t
     )
 
 
+# ── A compile_include_dir of its own, with the local mirror ──────────────────
+#
+# /compile/files writes into compile_include_dir, and without a mirror that is
+# the directory MetaEditor reads as /inc:. The mirror used to be built from
+# <compile_terminal_dir>/MQL5 whatever compile_include_dir said, so with both
+# set a library put through /compile/files never reached a compile.
+
+def _custom_include_env(monkeypatch, tmp_path, name="custom-mirror"):
+    """A terminal directory with its own stock MQL5 tree, a compile_include_dir
+    elsewhere that holds the caller's library, and a local mirror to build.
+
+    Needs the compile_env fixture, whose fake MetaEditor sits in tmp_path: that
+    directory's MQL5 directory is the terminal's stock tree here.
+    """
+    stock = tmp_path / "MQL5" / "Include"
+    stock.mkdir(parents=True, exist_ok=True)
+    (stock / "Stock.mqh").write_text("// stock library")
+    (tmp_path / "Config").mkdir(exist_ok=True)
+    custom = tmp_path / "custom-mql5"
+    (custom / "Include").mkdir(parents=True)
+    (custom / "Include" / "Mine.mqh").write_text("// my library v1")
+    cache = tmp_path / name
+    monkeypatch.setattr(compile_handler, "COMPILE_INCLUDE_DIR", str(custom))
+    monkeypatch.setattr(config, "COMPILE_INCLUDE_DIR", str(custom))
+    monkeypatch.setattr(compile_handler, "COMPILE_LOCAL_CACHE", str(cache))
+    monkeypatch.setattr(compile_handler, "INCLUDE_REFRESH_SECONDS", 3600)
+    monkeypatch.setattr(compile_handler, "_INCLUDE_HASH", None)
+    monkeypatch.setattr(compile_handler, "_INCLUDE_HASH_KEY", None)
+    monkeypatch.setattr(compile_handler, "_INCLUDE_FILES", None)
+    monkeypatch.setattr(compile_handler, "_INCLUDE_FILES_KEY", None)
+    recorded = []
+    monkeypatch.setattr(
+        compile_handler.subprocess, "run",
+        _fake_metaeditor(_utf16_log(SUCCESS_LOG), b"ex5", record=recorded),
+    )
+    return custom, cache, recorded
+
+
+def test_the_mirror_is_built_from_the_custom_include_dir(
+    client, compile_env, monkeypatch, tmp_path
+):
+    custom, cache, recorded = _custom_include_env(monkeypatch, tmp_path)
+
+    assert _post(client, {"source": "void OnTick(){}"}).status_code == 200
+
+    assert (cache / "MQL5" / "Include" / "Mine.mqh").read_text() == "// my library v1"
+    # The mirror stands in for compile_include_dir, which replaces the
+    # terminal's own MQL5 tree as /inc: when there is no mirror, so the stock
+    # tree must not leak into it.
+    assert not (cache / "MQL5" / "Include" / "Stock.mqh").exists()
+    inc = next(a for a in recorded[0] if a.startswith("/inc:"))
+    assert inc == f"/inc:{cache / 'MQL5'}"
+
+
+def test_a_mirror_made_from_the_terminal_tree_is_corrected_on_the_next_start(
+    client, compile_env, monkeypatch, tmp_path
+):
+    """The mirror survives restarts on local disk. One built before
+    compile_include_dir was set holds the terminal's stock tree, and the next
+    process has to swap it for the configured one instead of trusting it."""
+    custom, cache, _ = _custom_include_env(monkeypatch, tmp_path)
+    old = cache / "MQL5" / "Include"
+    old.mkdir(parents=True)
+    (old / "Stock.mqh").write_text("// stock library")
+
+    assert _post(client, {"source": "void OnTick(){}"}).status_code == 200
+
+    assert not (old / "Stock.mqh").exists()
+    assert (old / "Mine.mqh").read_text() == "// my library v1"
+
+
+def test_an_edit_in_the_custom_include_dir_reaches_later_compiles(
+    client, compile_env, monkeypatch, tmp_path
+):
+    """The periodic re-check has to watch compile_include_dir, not the
+    terminal's tree, or a library edited there stays stale in the mirror while
+    the compile still answers ok:true."""
+    custom, cache, _ = _custom_include_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(compile_handler, "INCLUDE_REFRESH_SECONDS", 0)
+    mirrored = cache / "MQL5" / "Include"
+    _post(client, {"source": "void OnTick(){}"})
+
+    (custom / "Include" / "Mine.mqh").write_text("// my library v2, longer")
+    os.utime(custom / "Include" / "Mine.mqh", (time.time() + 5, time.time() + 5))
+    (custom / "Include" / "Added.mqh").write_text("// added later")
+    (tmp_path / "MQL5" / "Include" / "StockLater.mqh").write_text("// not ours")
+    _post(client, {"source": "void OnTick(){}"})
+
+    assert (mirrored / "Mine.mqh").read_text() == "// my library v2, longer"
+    assert (mirrored / "Added.mqh").read_text() == "// added later"
+    assert not (mirrored / "StockLater.mqh").exists()
+
+    os.remove(custom / "Include" / "Added.mqh")
+    _post(client, {"source": "void OnTick(){}"})
+    assert not (mirrored / "Added.mqh").exists(), "a deleted library survived in the mirror"
+
+
+def test_a_library_put_through_the_file_api_reaches_the_next_compile(
+    client, compile_env, monkeypatch, tmp_path
+):
+    """The path the bug cut: upload through /compile/files, then compile."""
+    from flask import Flask
+
+    from mt5api.handlers.files import register_files_routes
+
+    custom, cache, _ = _custom_include_env(monkeypatch, tmp_path)
+    files_app = Flask("files_test")
+    register_files_routes(files_app)
+    first = _post(client, {"source": "void OnTick(){}"}).get_json()
+
+    put = files_app.test_client().put("/compile/files/Include/Uploaded.mqh", data=b"// uploaded")
+    assert put.status_code == 201
+    assert (custom / "Include" / "Uploaded.mqh").read_bytes() == b"// uploaded"
+    # The mark is written by this process but has to beat the check time of the
+    # process that compiles; backdate that one, as another process's would be.
+    monkeypatch.setattr(compile_handler, "_INCLUDES_CHECKED_WALL", time.time() - 10)
+    second = _post(client, {"source": "void OnTick(){}"}).get_json()
+
+    assert (cache / "MQL5" / "Include" / "Uploaded.mqh").read_bytes() == b"// uploaded"
+    assert second["include_hash"] != first["include_hash"]
+
+
+def test_include_digests_describe_the_custom_include_dir(
+    client, compile_env, monkeypatch, tmp_path
+):
+    _custom_include_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(compile_handler, "_INCLUDE_DIGEST_PATTERNS", ("Mine*.mqh",))
+
+    body = _post(client, {"source": "void OnTick(){}"}).get_json()
+
+    assert set(body["include_files"]) == {"Mine.mqh"}
+    assert body["include_hash"].startswith("sha256:")
+
+
 # ── include_hash: which library was this binary built against? ───────────────
 
 def _hash_env(monkeypatch, tmp_path, name="hash-cache"):

@@ -1,3 +1,10 @@
+---
+title: "File API"
+description: "List, read, upload, unzip and delete files in a terminal's install directory and the compile tree, with the paths the API refuses."
+nav_order: 3
+parent: "REST API"
+---
+
 # File API: read and write a terminal's files over HTTP
 
 List, download, upload, unzip and delete files in a terminal's install directory, the folder holding `terminal64.exe`. That covers shared libraries in `MQL5/Include`, DLLs and `.ex5` imports in `MQL5/Libraries`, an expert's own data in `MQL5/Files`, and the logs, all without RDP or touching the host. A second tree reaches the MQL5 directory `POST /compile` builds against, so a whole library can be uploaded once and compiled against from then on.
@@ -105,9 +112,9 @@ A directory listing is the JSON version of `ls -al`. The response carries `count
 - `readable` and `writable` say what this API allows, not what the file system does.
 - A symlink or junction also carries `link_target` and `link_outside_tree`. One that leads out of the tree is listed but can be neither read nor written.
 
-An upload answers `201` when it created the file and `200` when it replaced one, with the stored `size` and `sha256`.
+An upload answers `201` when it created the file and `200` when it replaced one, with `tree`, `path`, the stored `size` and `sha256`, and `created`.
 
-Uploads are capped at `max_upload_body_bytes` (25 MiB, the same as nginx's limit). Every write is atomic: the bytes land in a staging file beside the target and are renamed over it, so the terminal never reads half a file.
+Uploads are capped at `max_upload_body_bytes` (25 MiB, the same as nginx's limit). A request whose `Content-Length` is over the cap is refused before the handler runs, with a 413 that carries an `error` but no `code`. Every write is atomic: the bytes land in a staging file beside the target and are renamed over it, so the terminal never reads half a file.
 
 ## Uploading a zip
 
@@ -120,9 +127,9 @@ curl "${AUTH[@]}" -X PUT --data-binary @MyLib.zip \
 ```
 
 - The archive's tree is merged into the directory. Files it names are replaced, and everything else already there is left alone. To get an exact copy, delete the directory first with `?recursive`.
-- The zip itself is never stored. The API unpacks it into a staging directory, checks every entry, and only then moves the files into place. A bad entry anywhere fails the whole upload with nothing written.
-- The response lists every file written, with `path`, `size` and `sha256`.
-- Refused: entries that would leave the target (`../`, absolute paths, drive letters), symlinks, encrypted entries, the same file named twice, and anything the single-file rules refuse. An archive that unpacks to more than `max_extract_files` files or `max_extract_bytes` bytes is refused with 413. The API counts the bytes it actually inflates, not the size the archive declares.
+- The zip itself is never stored. The API unpacks it into a staging directory, checks every entry, and only then moves the files into place. A bad entry or a cap exceeded anywhere fails the whole upload with nothing written. The files are then moved one at a time, so a file the terminal holds open (`FILE_LOCKED`) or a directory in the way (`CONFLICT`) at that stage leaves the files moved before it in place.
+- The response is `201` with `tree`, `path`, `count` and `files`, which lists every file written with `path`, `size` and `sha256`.
+- Refused: entries that would leave the target (`../`, absolute paths, drive letters), symlinks, encrypted entries, the same file named twice, and anything the single-file rules refuse. An archive that unpacks to more than `max_extract_files` files or `max_extract_bytes` bytes is refused with 413. The API counts the bytes it actually inflates, not the size the archive declares. `max_extract_bytes` is raised to at least 1 MiB and `max_extract_files` to at least 1.
 - `?extract=0` (or `false`) stores the bytes as an ordinary file.
 
 ## What the API refuses
@@ -134,9 +141,10 @@ The API refuses some paths in every request, with no setting to change that:
 | `mt5start.ini`, `Config/accounts.dat` | no | no | The broker login and password, and the terminal's saved accounts |
 | `terminal64.exe`, `MetaEditor64.exe`, `metatester64.exe` | yes | no | The running terminal's binaries |
 | `MQL5/Experts/Uploaded/`, `MQL5/Files/chartctl/`, `chartctl/` | yes | no | Chart Deployments' staged experts, protocol files and registry. Use the [Chart Deployments](chart-deployments.md) endpoints for those |
+| `Experts/Uploaded/`, `Files/chartctl/` in the [compile tree](#the-compile-tree) | yes | no | The same Chart Deployments directories, in case the compile tree is a live terminal's `MQL5` |
 | The tree root, or a directory holding any of the above | | no | |
 
-Every path is also checked for anything that could leave the tree on Linux or Windows: `..` segments, absolute and drive paths, `:` (alternate data streams), Windows device names (`CON`, `NUL`, `COM1`, ...), characters Windows forbids, segments ending in a dot or space, and symlinks or junctions that resolve outside the root. Comparisons ignore case, as Windows does. A protected path answers 403 whether it exists or not.
+Every path is also checked for anything that could leave the tree on Linux or Windows: `..` segments, absolute and drive paths, `:` (alternate data streams), Windows device names (`CON`, `NUL`, `COM1`, ...), characters Windows forbids, segments ending in a dot or space, segments over 255 characters, names starting with `.mt5api-` (the API's own staging files, which listings also skip), and symlinks or junctions that resolve outside the root. Comparisons ignore case, as Windows does. A protected path answers 403 whether it exists or not.
 
 Everything else is open, `MQL5/Libraries` included. A DLL put there runs inside the terminal the next time an expert imports it (`AllowDllImport` is on in every terminal this stack provisions). Hand out the token that can call these routes accordingly.
 
@@ -152,7 +160,7 @@ curl "${AUTH[@]}" -X PUT --data-binary @MyLib.zip \
 #   #include <MyLib/Signals.mqh>
 ```
 
-With `compile_local_cache` set, compiles read a mirror of this tree on the VM's own disk. A write or delete through `/compile/files` marks the mirror stale, and the next compile in any terminal's API process re-validates it before building, so it never builds against the old copy. A change made any other way, such as directly on the host, still waits up to 60 seconds, as described in [Compiling MQL5](compiling.md#custom-includes).
+With `compile_local_cache` set, compiles read a mirror of this same tree on the VM's own disk, so what you put through `/compile/files` reaches a compile with or without it. A write or delete through `/compile/files` marks the mirror stale, and the next compile in any terminal's API process re-validates it before building, so it never builds against the old copy. A change made any other way, such as directly on the host, still waits up to 60 seconds, as described in [Compiling MQL5](compiling.md#custom-includes).
 
 The compiled `.ex5` carries the library inside it, so the terminal that runs the expert never needs the `.mqh` files. The exception is `#import` of an `.ex5` or DLL: those load at run time from the running terminal's own `MQL5/Libraries`, so upload them there through `/files`.
 

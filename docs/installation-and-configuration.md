@@ -1,3 +1,9 @@
+---
+title: "Installation and configuration"
+description: "Host requirements, memory sizing, and every config.yaml setting for the Windows VM, MT5 terminals, accounts, instances and sidecars."
+nav_order: 2
+---
+
 # Installation and configuration without mystery bullshit
 
 Everything that makes the Windows VM, MT5 terminals, accounts, and sidecars boot without turning the setup into an archaeological dig.
@@ -14,9 +20,9 @@ Everything that makes the Windows VM, MT5 terminals, accounts, and sidecars boot
 - Linux host with KVM enabled (`/dev/kvm`)
 - Docker + Docker Compose
 - ~20 GB disk (4 GB ISO + 11 GB VM + MT5 installs)
-- 5 GB RAM (for the Windows VM)
+- 4 GB RAM for the Windows guest (`RAM_SIZE` in `docker-compose.yml`), backed by 512M RAM plus 5G mem+swap on the container
 
-The container ships with a `512M` memory limit and `5G` memswap limit — so the VM runs mostly on host swap. tiny11 + the debloat script idles at ~1.4 GB, MT5 + the Python API add a bit on top. For low-volume use (placing trades, polling positions, pulling small recent candle windows) this is fine — it's not latency-sensitive enough for swap to matter. noVNC is there so you can watch the installation progress; after that, forget the UI exists and just hit the REST API.
+The container ships with a `512M` memory limit and `5G` memswap limit, so the VM runs mostly on host swap. tiny11 + the debloat script idles at ~1.4 GB, MT5 + the Python API add a bit on top. For low-volume use (placing trades, polling positions, pulling small recent candle windows) this is fine: it's not latency-sensitive enough for swap to matter. noVNC is there so you can watch the installation progress; after that, forget the UI exists and just hit the REST API.
 
 ### When 512M is NOT enough
 
@@ -33,7 +39,7 @@ Or just run MT5 on a dedicated box if you're hammering it.
 
 ### Real-world usage: 4 terminals on 2 vCPUs + 512M RAM (light load only)
 
-![4 terminals running](../assets/usage.png)
+![4 terminals running](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/master/assets/usage.png)
 
 4 MT5 terminals (RoboForex, 2x TeleTrade, FTMO) running simultaneously on 2 vCPUs with only 512M real RAM. CPU spikes to 100% during startup, drops to ~15% idle. Total memory usage: 2.1 GB, comfortably on swap. This works **as long as you're not stress-loading it with deep history scrapes** — at idle / light polling, you can pack 10+ terminals in here.
 
@@ -41,7 +47,7 @@ Or just run MT5 on a dedicated box if you're hammering it.
 
 ### `config/config.yaml`
 
-This gitignored file controls the whole contraption. Copy `config/config.yaml.example`, edit it, and do not commit your fucking broker password.
+This gitignored file controls the whole contraption. Copy [`config/config.yaml.example`](https://github.com/psyb0t/mt5-httpapi/blob/master/config/config.yaml.example), edit it, and do not commit your fucking broker password.
 
 ```yaml
 # Bearer token for API auth. Empty = no auth.
@@ -75,7 +81,7 @@ telegram:
   session: ""
   auth_key: ""
 
-# Extra pip packages for the VM. MetaTrader5/flask/waitress/flask-compress are always installed.
+# Extra pip packages for the VM. The base packages pinned in requirements-api.txt are always installed.
 requirements: []
 
 # Broker credentials, organized by broker → account_name.
@@ -118,23 +124,29 @@ Per-field notes:
 - **`disable_terminal_mcp`**: `true` turns off MetaTrader's own MCP servers (terminal build 6090+, the transport behind its built-in AI assistant; not this API's `/mcp`). Every such terminal tries to listen on `127.0.0.1:22346`, so with several terminals in a VM all but the first log `MCP bind error on 127.0.0.1:22346 (10048)` on every launch, and backtest terminals have aborted with exit code 10053 after the same subsystem failed to sign in to MQL5.community. With `true`, `Enable=0` goes into `[MCP.MetaTrader]` and `[MCP.MetaEditor]` of each terminal's `Config/assistant.ini` before every launch: at boot, on a restart the API makes, and before each backtest. MT5 rewrites the file on exit, which is why it happens every time. A terminal entry's own `disable_terminal_mcp: false` keeps that terminal's servers on. Default `false` leaves the terminals as MetaQuotes ships them.
 - **`desktop_heap_kb`**: opt-in size of each VM's interactive desktop heap, in KB. Unset (or `0`) leaves Windows' own value, 20480. A number from 20481 to 131072 raises it at boot (`65536` is what the runs below used); `restore` puts back the value Windows had. Needed when a VM runs more than ~20 terminals: see [operations.md](operations.md#many-terminals-per-vm-the-desktop-heap).
 - **`backtest_timeout`** — default Strategy Tester timeout for `POST /backtest`. Accepts the same duration grammar as `utc_offset`: `"6h"`, `"30m"`, `"3h30m"`, `"90m"`, or a bare number interpreted as hours. Per-request form field `timeout` overrides it.
-- **`wickworks.url`** — technical-analysis sidecar URL as seen from inside the Windows VM. The default reaches the sidecar sharing the MT5 container's network namespace; override it only when changing that network topology. `WICKWORKS_URL` overrides the file at runtime.
-- **`wickworks.timeout`** — sidecar request timeout as a duration. Defaults to `"30s"`; `WICKWORKS_TIMEOUT` overrides the file at runtime.
+- **`wickworks.url`**: technical-analysis sidecar URL as seen from inside the Windows VM. The default reaches the sidecar sharing the MT5 container's network namespace; override it only when changing that network topology. A `WICKWORKS_URL` environment variable in the API process wins over the file; nothing passes one into the VM, so setting it means editing [`scripts/api_runner.bat`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/api_runner.bat).
+- **`wickworks.timeout`**: sidecar request timeout as a duration. Defaults to `"30s"`; a `WICKWORKS_TIMEOUT` environment variable in the API process wins, the same way as `WICKWORKS_URL`.
 - **`tailscale.auth_key`** / **`tailscale.login_server`** — see [Tailscale](operations.md#tailscale-optional). Empty `auth_key` skips the sidecar.
 - **`requirements`** — additional pip packages installed in the VM on every boot.
+- **`max_request_body_bytes`** and **`max_upload_body_bytes`**: request body caps applied to every route, refused with 413 from the declared `Content-Length` before the body is parsed. `max_request_body_bytes` (default `4194304`, 4 MiB) covers everything that is not an upload; `max_upload_body_bytes` (default `26214400`, 25 MiB, the same as nginx's `client_max_body_size`) covers multipart and file API uploads. The upper-case environment variable of the same name wins, but only in the API process inside the VM, which gets none unless you add it to `scripts/api_runner.bat`. Zero, a negative or a non-integer falls back to the default with a warning. A route with a tighter cap of its own, such as `/symbols/import`, still reports that one.
+- **`compile_api_token`**, **`compile_local_cache`**, **`compile_timeout`** and the other `compile_*` keys: the compile-only token and the `POST /compile` settings. See [Compiling MQL5](compiling.md#configuration).
+- **`chartctl`**: Chart Deployments, off unless `chartctl.enabled: true`. See [Chart Deployments](chart-deployments.md).
+- **`files`**: the file API, off unless `files.enabled: true`. See [File API](files.md#enabling-it).
+- **`symbol_cache_max_age`** and **`symbol_import_max_body_bytes`** / **`symbol_import_max_symbols`** / **`symbol_import_max_symbol_length`**: the persisted symbol list and the caps on `POST /symbols/import`. See [Market data](market-data.md#symbols).
 - **`accounts.<broker>.<account>`** — `broker` must match the installer name (`mt5setup-<broker>.exe`) and the `broker` field in `terminals[]`. `account` must match the `account` field in `terminals[]`.
 - **`terminals[].port`** — container-internal port for this terminal's HTTP API. Only nginx and the mt5 container talk to it; not exposed to the host.
 - **`terminals[].instance`** — optional terminal clone name. Use this when the same `broker` / `account` appears more than once. There is no `queue` field in `config.yaml`; callers select a specific clone by routing requests to `/<broker>/<account>/<instance>/...`. Missing/empty = `default`, and that default instance also keeps the legacy `/<broker>/<account>/...` alias.
-- **`terminals[].utc_offset`** — broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](rest-api.md#broker-time-vs-real-utc) below). Optional — defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
+- **`terminals[].utc_offset`**: broker server's UTC offset, used to normalize all timestamps to real UTC on the wire (see [Broker time vs real UTC](rest-api.md#broker-time-vs-real-utc)). Optional, defaults to `0`. Accepts `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours). Common values: RoboForex/FTMO `"3h"`, TeleTrade `"2h"`.
 
   The offset is static and not DST-aware, so a value measured in summer is an hour off after the rollover. `scripts/measure-broker-offsets.py [broker/account ...]` reads each terminal's latest tick through the API and prints the offset to set; it needs the market open. It only works against `mode: live` terminals; a `mode: backtest` terminal answers SDK routes with 503.
 - **`terminals[].mode`**: `live` (default) or `backtest`. `live` keeps `terminal64.exe` running so the MT5 SDK stays initialized for live trading endpoints. `backtest` prepares the same portable directory but does **not** launch `terminal64.exe`, leaving the data dir free for the Strategy Tester subprocess to grab. See [Backtest](backtesting.md#backtest-api). On a `backtest` terminal every route that needs the MT5 SDK (account, orders, positions, history, market data, terminal info) answers 503 instead of starting `terminal64.exe`. MT5 is single-instance per portable data dir, so a backtest cannot run against a `live` terminal.
 - **`terminals[].symbol_suffix`** — optional explicit symbol suffix for Strategy Tester remaps. If set, mt5-httpapi appends it when `[Tester].Symbol` does not already end with that suffix. Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
-- **`terminals[].vm`** — optional VM name that this terminal runs on. Maps to a VM defined in `vms.yaml`. Absent → `default` (routes to the `mt5` container). See [Multi-VM Setup](multi-vm-setup.md) below.
+- **`terminals[].vm`**: optional VM name that this terminal runs on. Maps to a VM defined in `vms.yaml`. Absent means `default` (routes to the `mt5` container). See [Multi-VM Setup](multi-vm-setup.md).
+- **`terminals[].chartctl`**, **`terminals[].files`** and **`terminals[].disable_terminal_mcp`**: per-terminal overrides. `chartctl: false` or `files: false` keeps that terminal out of a feature that is on globally (see [Chart Deployments](chart-deployments.md) and [File API](files.md#enabling-it)); `disable_terminal_mcp: false` is described above.
 
-- **`signals`** and **`telegram`**: the signal copier, which turns trade signals from Telegram channels and websocket feeds into orders on these terminals. Off unless `signals.enabled: true`; the rules are in `config/signals.yml` (template `config/signals.yml.example`), and `telegram.session` holds full access to a Telegram account. See [Signal copier](signals.md).
+- **`signals`** and **`telegram`**: the signal copier, which turns trade signals from Telegram channels and websocket feeds into orders on these terminals. Off unless `signals.enabled: true`; the rules are in `config/signals.yml` (template [`config/signals.yml.example`](https://github.com/psyb0t/mt5-httpapi/blob/master/config/signals.yml.example)), and `telegram.session` holds full access to a Telegram account. See [Signal copier](signals.md).
 
-Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
+Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/<instance>/` (`default` when `instance` is unset) at startup so multiple accounts and clones of the same broker don't step on each other.
 
 ### `vms.yaml` (optional — multi-VM deployments)
 
@@ -151,8 +163,21 @@ compose-generation workflow.
 
 ### `config/setup.bat`
 
-Custom commands that run on every VM boot before MT5 starts. Shove whatever Windows setup shit you need in here.
+Optional. `make up` copies this file into the VM's shared config directory if it exists, and `start.bat` runs it on every VM boot, after the prerequisites and pip packages are done and before any terminal launches. It is called, not started in the background, so it has finished when the terminals start. Its output goes to `start.log` in the shared logs directory, between a `Running config\setup.bat...` line and a `config\setup.bat finished.` line. It runs on every boot, so keep its commands safe to repeat. Without the file nothing runs.
+
+A failing script does not stop the boot: when it ends with a non-zero errorlevel, `start.bat` logs `WARN: config\setup.bat exited with errorlevel N, continuing boot.` and goes on to launch the terminals. End the script with `exit /b`, not `exit`, which would close the console `start.bat` runs in and end the boot there. Edit the copy in `config/` on the host and run `make up` again to copy it into the VM. `start.bat` runs with delayed expansion on, and the script inherits it, so a literal `!` in its commands is eaten; write `^^!` or turn it off with `setlocal DisableDelayedExpansion` at the top of the script.
+
+### `config/hosts`
+
+Optional extra entries for the VM's Windows hosts file. `make up` copies it into the shared config directory and `install.bat` appends it to `C:\Windows\System32\drivers\etc\hosts` once, under a `# MT5-CUSTOM-HOSTS` marker. Once that marker is in the hosts file, later edits to `config/hosts` are not appended again.
 
 ### `mt5installers/`
 
 Dump your broker MT5 installers here. Name them `mt5setup-<broker>.exe` and each one gets its own portable install automatically.
+
+### `run.sh` options
+
+`make up` runs `./run.sh` with no arguments. Run the script directly for these:
+
+- `./run.sh --debloat` drops `debloat.flag` in the shared directory, so the next VM boot runs the Windows debloat script again.
+- `SKIP_KVM_CHECK=1 ./run.sh` skips the check that `/dev/kvm` exists.

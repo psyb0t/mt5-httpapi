@@ -39,6 +39,12 @@ if [ -z "$FIRST_PREFIX" ] || [ "$FIRST_PREFIX" = "/" ]; then
     exit 1
 fi
 
+# make up writes an API_HOST_PORT override into .env (run.sh); read it from
+# there when the shell does not set one, so status checks the port nginx
+# is actually published on.
+if [ -z "${API_HOST_PORT:-}" ] && [ -f "${ROOT_DIR}/.env" ]; then
+    API_HOST_PORT="$(sed -n "s/^API_HOST_PORT='\{0,1\}\([0-9]*\)'\{0,1\}$/\1/p" "${ROOT_DIR}/.env" | tail -n 1)"
+fi
 API_HOST_PORT="${API_HOST_PORT:-8888}"
 BASE="http://localhost:${API_HOST_PORT}/${FIRST_PREFIX}"
 

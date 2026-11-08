@@ -401,6 +401,8 @@ func TestClient_UpdateOrder(t *testing.T) {
 		ordersAssertJSONField(t, body, "sl", 103.25)
 		ordersAssertJSONField(t, body, "tp", 106.25)
 		ordersAssertJSONField(t, body, "type_time", "test-type_time-3")
+		ordersAssertJSONField(t, body, "expiration", 118.0)
+		ordersAssertJSONField(t, body, "stoplimit", 121.25)
 
 		if err := json.NewEncoder(w).Encode(ordersFullTradeResultJSON()); err != nil {
 			t.Errorf("encode trade result response: %v", err)
@@ -416,10 +418,12 @@ func TestClient_UpdateOrder(t *testing.T) {
 	}
 
 	req := &UpdateOrderRequest{
-		Price:    100.25,
-		SL:       103.25,
-		TP:       106.25,
-		TypeTime: "test-type_time-3",
+		Price:      100.25,
+		SL:         103.25,
+		TP:         106.25,
+		TypeTime:   "test-type_time-3",
+		Expiration: 118,
+		StopLimit:  121.25,
 	}
 
 	got, err := client.UpdateOrder(context.Background(), ticket, req)
@@ -430,6 +434,45 @@ func TestClient_UpdateOrder(t *testing.T) {
 	want := ordersFullTradeResultWant()
 	if !reflect.DeepEqual(got, &want) {
 		t.Fatalf("unexpected trade result:\ngot  %#v\nwant %#v", got, &want)
+	}
+}
+
+func TestClient_UpdateOrder_OmitEmptyFields(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orders/", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+			return
+		}
+
+		ordersAssertJSONField(t, body, "sl", 103.25)
+
+		for _, tag := range []string{
+			"price", "tp", "type_time", "expiration", "stoplimit",
+		} {
+			ordersAssertJSONFieldAbsent(t, body, tag)
+		}
+
+		if err := json.NewEncoder(w).Encode(ordersFullTradeResultJSON()); err != nil {
+			t.Errorf("encode trade result response: %v", err)
+		}
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	client, err := New(Config{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	req := &UpdateOrderRequest{SL: 103.25}
+
+	if _, err := client.UpdateOrder(context.Background(), 555222, req); err != nil {
+		t.Fatalf("update order: %v", err)
 	}
 }
 

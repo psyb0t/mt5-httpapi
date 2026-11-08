@@ -222,6 +222,27 @@ def test_a_down_terminal_fails_only_its_own_target(tmp_path, caplog):
     assert state.is_seen("testchan", "101")
 
 
+@pytest.mark.parametrize(
+    ("failure", "error_name"),
+    [(None, "TerminalUnreachable"), (503, "TerminalRejected")],
+)
+def test_a_failed_leg_does_not_stop_the_later_legs(tmp_path, caplog, failure, error_name):
+    terminal = FakeTerminal()
+    terminal.failing_orders["testchan:101:2"] = failure
+    engine, _, state = _engine(tmp_path, terminal=terminal)
+    with caplog.at_level(logging.WARNING, logger="signals.engine"):
+        _run(engine, message())
+    assert [o["client_order_id"] for _, o in terminal.orders] == [
+        "testchan:101:1",
+        "testchan:101:3",
+    ]
+    failed = [r for r in caplog.records if r.msg == "terminal call failed, leg not sent"]
+    assert [(r.leg, r.client_order_id, r.reason, r.terminal) for r in failed] == [
+        (2, "testchan:101:2", error_name, "testbroker/demo/default")
+    ]
+    assert state.is_seen("testchan", "101")
+
+
 def test_a_broker_refusal_is_logged(tmp_path, caplog):
     terminal = FakeTerminal()
     terminal.order_status = 200

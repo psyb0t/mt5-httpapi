@@ -31,6 +31,7 @@ from mcpunifier.constants import (
     ENV_MT5_HOST,
     ENV_REQUEST_TIMEOUT,
     MODE_BACKTEST,
+    MODE_LIVE,
 )
 from mcpunifier.errors import ConfigError
 
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 _BASE_DIR = os.path.dirname(_PACKAGE_DIR)
 CONFIG_PATH = os.path.join(_BASE_DIR, "config", "config.yaml")
+
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,18 @@ def _normalize_instance(value: Any) -> str:
     return str(value).strip() or DEFAULT_INSTANCE
 
 
+def _normalize_mode(entry: dict[str, Any]) -> str:
+    """The process mode mt5api runs this terminal in.
+
+    Mirrors mt5api.config.normalize_mode: ``backtest`` (any case, surrounding
+    whitespace ignored) is backtest, and anything else, including a missing or
+    unrecognised mode, is live. tests/test_mcpunifier_config.py checks the two
+    agree.
+    """
+    mode = str(entry.get("mode", "") or "").strip().lower()
+    return MODE_BACKTEST if mode == MODE_BACKTEST else MODE_LIVE
+
+
 def _load_yaml(path: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -106,10 +120,9 @@ def _chartctl_enabled(entry: dict[str, Any], globally_enabled: bool) -> bool:
     per-terminal ``chartctl: false``. tests/test_mcpunifier_config.py checks
     the two agree.
     """
-    mode = str(entry.get("mode", "") or "").strip().lower()
     return (
         globally_enabled
-        and mode != MODE_BACKTEST
+        and _normalize_mode(entry) != MODE_BACKTEST
         and entry.get("chartctl") is not False
     )
 
@@ -166,7 +179,7 @@ def _build_terminals(
             account=account,
             instance=_normalize_instance(entry.get("instance")),
             port=int(port),
-            mode=str(entry.get("mode", "") or "unknown"),
+            mode=_normalize_mode(entry),
             chartctl=_chartctl_enabled(entry, chartctl_globally_enabled),
             files=_files_enabled(entry, files_globally_enabled),
         )

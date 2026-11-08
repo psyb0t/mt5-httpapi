@@ -169,6 +169,28 @@ done
 # with `$` or ` #` in it is mangled by compose's dotenv parser.
 echo "MT5_PROJECT_DIR='${MT5_PROJECT_DIR}'" >>"${DIR}/.env"
 
+# Host port overrides given on this run (`NOVNC_PORT=9006 make up`). Compose
+# interpolates ${NOVNC_PORT:-8006} and ${API_HOST_PORT:-8888} on every command,
+# so a value that lives only in this shell is gone for `make down`, a manual
+# `docker compose` and the vm-watchdog's recreate, and the stack comes back on
+# the default ports. Written only when set: a later run without them goes back
+# to the defaults, as .env is rebuilt from scratch every time. Single-quoted
+# like MT5_PROJECT_DIR.
+for PORT_VAR in NOVNC_PORT API_HOST_PORT; do
+    PORT_VALUE="${!PORT_VAR:-}"
+    if [ -z "${PORT_VALUE}" ]; then
+        continue
+    fi
+    case "${PORT_VALUE}" in
+    *"'"* | *$'\n'*)
+        echo "ERROR: ${PORT_VAR} contains a quote or a newline, which .env cannot carry."
+        exit 1
+        ;;
+    esac
+    echo "${PORT_VAR}='${PORT_VALUE}'" >>"${DIR}/.env"
+    echo "${PORT_VAR}=${PORT_VALUE} written to .env"
+done
+
 API_TOKEN=$(python3 "$CFG" api_token)
 if [ -n "${API_TOKEN}" ]; then
     echo "API_TOKEN=${API_TOKEN}" >>"${DIR}/.env"

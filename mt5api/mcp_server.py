@@ -262,10 +262,11 @@ def build_mcp_server(
         """Get raw ticks for one symbol (``GET /symbols/{symbol}/ticks``).
 
         ``count``: positive = forward from ``from_``, negative = backward
-        ending at ``from_``, omitted with no ``from_``/``to`` = last 100
-        ticks. ``from_``/``to``: unix seconds or
-        ``YYYY_MM_DD[_HH_MM_SS]``; ``to`` requires ``from_`` and is mutually
-        exclusive with ``count``. ``flags``: ALL / INFO / TRADE (default ALL).
+        ending at ``from_``. With no ``from_``/``to`` it is the latest
+        ``|count|`` ticks up to now whatever its sign, and 100 when omitted.
+        ``from_``/``to``: unix seconds or ``YYYY_MM_DD[_HH_MM_SS]``; ``to``
+        requires ``from_`` and is mutually exclusive with ``count``.
+        ``flags``: ALL / INFO / TRADE (default ALL).
         """
         query: dict[str, Any] = {}
         if count:
@@ -364,6 +365,8 @@ def build_mcp_server(
         comment: str = "",
         magic: int = 0,
         client_order_id: str = "",
+        stoplimit: float = 0,
+        expiration: int = 0,
     ) -> dict[str, Any]:
         """Place a market or pending order (``POST /orders``).
 
@@ -372,6 +375,10 @@ def build_mcp_server(
         required for pending orders; market orders fetch the current tick if
         omitted. ``sl``/``tp`` are optional stop-loss/take-profit prices.
         ``deviation`` is max allowed slippage in points (market orders).
+        ``stoplimit`` is the limit price of a BUY_STOP_LIMIT / SELL_STOP_LIMIT
+        order (``price`` is then the stop trigger) and is required for those
+        two types. ``expiration`` is the unix time in seconds, real UTC, at
+        which a pending order expires; leave it out for good-till-cancelled.
         ``client_order_id`` (1 to 31 letters, digits or ``._:-``) makes the
         call safe to retry: it is stored as the order comment, so leave
         ``comment`` empty, and if an order with that id was already placed
@@ -398,6 +405,10 @@ def build_mcp_server(
             body["magic"] = magic
         if client_order_id:
             body["client_order_id"] = client_order_id
+        if stoplimit:
+            body["stoplimit"] = stoplimit
+        if expiration:
+            body["expiration"] = expiration
         return await _call("POST", "/orders", body=body)
 
     @mcp.tool()
@@ -406,9 +417,13 @@ def build_mcp_server(
         price: float = 0,
         sl: float = 0,
         tp: float = 0,
+        stoplimit: float = 0,
+        expiration: int = 0,
     ) -> dict[str, Any]:
-        """Modify a pending order's price/stop-loss/take-profit (``PUT
-        /orders/{ticket}``). Omitted fields keep the order's current value.
+        """Modify a pending order's price/stop-loss/take-profit/stop-limit
+        price/expiration (``PUT /orders/{ticket}``). Omitted fields keep the
+        order's current value. ``stoplimit`` and ``expiration`` mean what they
+        mean in ``create_order``.
 
         DESTRUCTIVE: changes a live pending order. Only call on explicit
         user request.
@@ -420,6 +435,10 @@ def build_mcp_server(
             body["sl"] = sl
         if tp:
             body["tp"] = tp
+        if stoplimit:
+            body["stoplimit"] = stoplimit
+        if expiration:
+            body["expiration"] = expiration
         return await _call("PUT", f"/orders/{ticket}", body=body or None)
 
     @mcp.tool()

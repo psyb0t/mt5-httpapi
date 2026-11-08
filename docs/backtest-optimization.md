@@ -1,3 +1,10 @@
+---
+title: "Backtest optimization"
+description: "Strategy Tester optimization over HTTP: slow complete, fast genetic and Market Watch modes, .set ranges, results and raw artifacts."
+nav_order: 1
+parent: "Backtesting"
+---
+
 # Backtest optimization without clicking the fucking GUI
 
 MT5 has three optimization modes, several incompatible output formats, and a habit of hiding the useful shit in cache files. This guide shows how mt5-httpapi drives that mess over HTTP and where the actual results end up.
@@ -166,7 +173,7 @@ Example completed payload shape:
 
 Mode `3` is the weird bastard. It changes both what MT5 searches and where MT5 hides the results.
 
-MT5 runs the optimization across the symbols currently selected in Market Watch instead of only the `[Tester].Symbol` value. That symbol still matters because it participates in cache naming and INI generation, but the pass rows themselves are keyed to the Market Watch symbol set.
+MT5 runs the optimization across the symbols currently selected in Market Watch instead of only the `[Tester].Symbol` value. That symbol is still required by `build-ini` and written to the INI, but the mode `3` cache file name uses `all_symbols` in its place, and the pass rows themselves are keyed to the Market Watch symbol set.
 
 Most importantly, MT5 does **not** put the real pass rows in the normal report XML for mode `3`, because apparently that would be too convenient.
 
@@ -174,14 +181,14 @@ What MT5 writes instead:
 
 - `<report>.symbols.xml` in the terminal `Reports` directory
 - one or more `Tester/cache/*.opt` files containing the actual optimization rows
-- agent logs under `Tester/Agent-*/logs/` that identify which symbol belongs to each pass
+- local agent logs under `Tester/Agent-127.0.0.1-*/logs/<YYYYMMDD>.log` that identify which symbol belongs to each pass
 
 mt5-httpapi handles this by:
 
 - falling back from `<report>.xml` to `<report>.symbols.xml`
 - discovering the matching `.opt` cache file from the normalized INI
 - parsing the cache rows and sorting them by `Result`
-- recovering pass-to-symbol mappings from agent logs
+- recovering pass-to-symbol mappings from the agent log lines written between 300 seconds before and 10 seconds after the cache file's last write; a row whose symbol is not found there gets its index in the cache as `Pass`
 - exposing the matched cache artifact through `optimization_cache`
 
 Example `build-ini` request:
@@ -321,11 +328,11 @@ Important fields:
 
 - `status`: `queued`, `running`, `completed`, `failed`, or `cancelled`
 - `optimization_type`: submitted MT5 mode
-- `optimization_results`: parsed top `N` rows exposed by the API
+- `optimization_results`: parsed top `N` rows (`top_passes`, default `50`), sorted by `Result` descending; taken from the matching `.opt` cache when it parses, otherwise (modes `1` and `2` only) from the XML report
 - `optimization_cache`: metadata for the matched `.opt` file when cache parsing is used
 - `report_name`: final report artifact name; mode `3` usually ends in `.symbols.xml`
 - `report_url`: fetch raw MT5 report artifact
-- `log_url`: fetch terminal log for the job
+- `log_url`: fetch `run.log`, the stdout/stderr of `terminal64.exe` for the job (the terminal and tester journals are in `GET /backtest/<job_id>/tail`)
 
 ## Raw Artifacts and Debugging
 
@@ -333,8 +340,8 @@ When MT5 produces confusing garbage, start here:
 
 - For modes `1` and `2`, start with `/report` because the XML spreadsheet is the main source of optimization rows.
 - For mode `3`, start with `optimization_cache` and `optimization_results`; `/report` exists, but it is the `.symbols.xml` header export rather than the real pass table.
-- If mode `3` symbols look wrong or missing, inspect the agent logs under `Tester/Agent-*/logs/` because pass numbers are recovered from those logs.
-- If `optimization_results` is empty for mode `1` or `2`, inspect the raw XML report and terminal log first.
+- If mode `3` symbols look wrong or missing, inspect the agent logs under `Tester/Agent-127.0.0.1-*/logs/` because pass numbers are recovered from those logs.
+- If `optimization_results` is empty for mode `1` or `2`, inspect the raw XML report and the terminal journal (`/tail`) first.
 
 ## End-to-End Example Script
 
