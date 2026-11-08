@@ -1,0 +1,100 @@
+# Signal copier rules. Copy to config/signals.yml and edit. Turn the copier on
+# with signals.enabled: true in config/config.yaml. See docs/signals.md.
+#
+# Start every new target with dry_run: true and read the logs
+# (docker compose logs -f signals) until the planned orders look right.
+
+# true sends no order on any target; every planned order is only logged.
+dry_run: false
+
+# A signal first seen later than this after it was posted (a catch-up after
+# downtime) is not traded.
+max_signal_age_seconds: 300
+
+# Where the messages come from. The name (1 to 16 letters, digits or ._-) goes
+# into every order's client_order_id. Each source needs its own magic number:
+# it marks the source's orders on the terminal and is what the limits count.
+# Remove the sources you do not use.
+sources:
+  goldsignals:
+    type: telegram
+    chat: "@some_signal_channel"     # username, t.me link or numeric id
+    parser: classic
+    magic: 710001
+    # Catch-up read of the channel's latest messages, in seconds (minimum
+    # 10). New messages arrive live anyway; the poll covers what the live
+    # feed missed. A channel that posts every half hour does fine with 600.
+    poll_seconds: 60
+
+  mybot:
+    type: websocket
+    url: wss://signals.example.invalid/feed
+    headers:
+      Authorization: "Bearer ${MYBOT_TOKEN}"   # ${NAME} reads the environment
+    text_field: message    # JSON frames: the field holding the text; omit for plain text frames
+    id_field: id           # optional: the field holding the message id
+    parser: classic
+    magic: 710002
+
+# How to read a signal. Python regexes with named groups.
+# open: must match for the message to count as a signal. Groups: side and
+#   symbol (required), entry and entry2 (an entry price or range), lots.
+# sl / tp: matched as often as they appear. Group price is the level; group n
+#   is its number (SL2, TP3). Matches without n are numbered in order.
+# lots: where the lots are, when open does not capture them.
+# side_map: words that mean buy or sell, lower case. buy and sell are built in.
+#
+# TODO: follow-up messages (close now, move SL to breakeven, cancel) and
+# edits are not read yet. Trades opened from a signal are managed by hand.
+parsers:
+  classic:
+    open: '(?i)(?P<symbol>XAUUSD|GOLD|EURUSD|GBPUSD)\s+(?P<side>buy|sell|long|short)(?:\s+(?:now|limit|stop))?\s*@?\s*(?P<entry>\d+(?:[.,]\d+)?)?(?:\s*[-/]\s*(?P<entry2>\d+(?:[.,]\d+)?))?'
+    sl: '(?i)\bsl(?P<n>\d)?\b\s*[:=@-]?\s*(?P<price>\d+(?:[.,]\d+)?)'
+    tp: '(?i)\btp(?P<n>\d)?\b\s*[:=@-]?\s*(?P<price>\d+(?:[.,]\d+)?)'
+    lots: '(?i)(?P<lots>\d+(?:[.,]\d+)?)\s*lots?\b'
+    side_map:
+      long: buy
+      short: sell
+
+# The channel's symbol names to one common name. Targets map it further.
+symbols:
+  GOLD: XAUUSD
+
+# Which account copies which source, and how.
+targets:
+  - source: goldsignals
+    broker: ftmo              # broker, account and instance of a terminal in config.yaml
+    account: tenkchallenge
+    # instance: default
+    sizing:
+      mode: multiplier        # channel lots x factor: 1 lot -> 0.1
+      factor: 0.1
+      default_lots: 0.01      # when the signal gives no lots (before the factor)
+    max_lots: 1.0             # cap on the whole signal, before the split
+    tp_split: [50, 30, 20]    # % of the volume per TP leg; omit to split equally
+    require_sl: true          # skip signals without an SL
+    max_entry_slippage_points: 50   # skip when the price is this far past the entry, in points
+    limits:
+      max_open_per_symbol: 2         # open signals on this symbol, from every source
+      max_open_per_source: 3         # open signals from this source
+      max_open_per_source_symbol: 1  # open signals from this source on this symbol
+      # count_manual: true           # max_open_per_symbol also counts trades opened by hand
+    dry_run: true
+
+  - source: goldsignals
+    broker: roboforex
+    account: main
+    instance: a
+    sizing:
+      mode: risk_percent      # lose at most this % of equity if every leg hits its SL
+      percent: 0.5
+    # fixed sizing: {mode: fixed, lots: 0.05}
+    symbol_suffix: ".r"       # appended to the symbol name on this broker
+    symbols:
+      XAUUSD: GOLD            # or name a symbol outright
+    netting_tp: first         # netting accounts hold one position: use TP1 (first) or the last TP
+    deviation: 20             # max price deviation for the market order, in points
+    # type_filling: FOK       # when the broker refuses the default IOC
+    limits:
+      max_open_per_source: 2
+    dry_run: true

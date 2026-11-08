@@ -32,6 +32,7 @@ VMS_PATH = os.path.join(_SHARED_DIR, "vms.yaml")
 _VMS_EXAMPLE_PATH = os.path.join(_SHARED_DIR, "vms.yaml.example")
 COMPOSE_TEMPLATE_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml.j2")
 COMPOSE_OUTPUT_PATH = os.path.join(_SHARED_DIR, "docker-compose.yml")
+SIGNALS_PATH = os.path.join(_SHARED_DIR, "config", "signals.yml")
 DEFAULT_INSTANCE = "default"
 DEFAULT_VM = "default"
 
@@ -128,6 +129,41 @@ def _feature_block(raw):
     if isinstance(raw, dict):
         return raw
     return {}
+
+
+#: Compose profiles of the optional signal copier services (docker-compose.yml.j2).
+SIGNALS_PROFILE = "signals"
+TELEGRAM_PROFILE = "telegram"
+TELEGRAM_SOURCE_TYPE = "telegram"
+#: config.yaml telegram: keys that run.sh hands to the telethon-plus service.
+TELEGRAM_SETTINGS = ("api_id", "api_hash", "session", "auth_key")
+
+
+def _signals_enabled(cfg):
+    return bool(_feature_block(cfg.get("signals")).get("enabled", False))
+
+
+def _compose_profiles(cfg, signals_path=None):
+    """The compose profiles config.yaml turns on: "signals" when the signal
+    copier is enabled, plus "telegram" when signals.yml has a telegram
+    source. An unreadable signals.yml turns on the copier alone, which then
+    refuses to start and says why."""
+    if not _signals_enabled(cfg):
+        return []
+    profiles = [SIGNALS_PROFILE]
+    try:
+        with open(signals_path or SIGNALS_PATH, encoding="utf-8") as f:
+            rules = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return profiles
+    sources = rules.get("sources") if isinstance(rules, dict) else None
+    if isinstance(sources, dict) and any(
+        isinstance(source, dict)
+        and str(source.get("type", "")).strip().lower() == TELEGRAM_SOURCE_TYPE
+        for source in sources.values()
+    ):
+        profiles.append(TELEGRAM_PROFILE)
+    return profiles
 
 
 def _terminal_location(match, prefix, container, port, read_timeout=None):
@@ -262,6 +298,23 @@ def main():
 
     elif cmd == "ts_login_server":
         print((cfg.get("tailscale") or {}).get("login_server") or "")
+
+    elif cmd == "compose_profiles":
+        print(",".join(_compose_profiles(cfg)))
+
+    elif cmd == "signals_enabled":
+        print("true" if _signals_enabled(cfg) else "false")
+
+    elif cmd == "telegram_setting":
+        if len(sys.argv) < 3 or sys.argv[2] not in TELEGRAM_SETTINGS:
+            print(
+                "Usage: config_helper.py telegram_setting " + "|".join(TELEGRAM_SETTINGS),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        telegram = cfg.get("telegram") if isinstance(cfg.get("telegram"), dict) else {}
+        value = telegram.get(sys.argv[2])
+        print("" if value is None else str(value).strip())
 
     elif cmd == "reboot_interval":
         val = cfg.get("reboot_interval")

@@ -14,22 +14,29 @@ WORKDIR /app
 # requirements-mcpunifier.txt is installed beside it because
 # tests/test_mcp_chartctl_tools.py drives the unified MCP server in-process.
 # Both pin the same mcp SDK (tests/test_requirements_sync.py checks that).
+# requirements-signals.txt is there for the signal copier's tests
+# (tests/test_signals_*.py), which run the real package against fakes.
 #
 # pytest runs the suite. requests is what tests/live/ (`make test-live`, which
 # runs in this same image) talks to the target stack with.
-COPY requirements-api.txt requirements-mcpunifier.txt /tmp/
+COPY requirements-api.txt requirements-mcpunifier.txt requirements-signals.txt /tmp/
 RUN grep -v -i '^MetaTrader5' /tmp/requirements-api.txt > /tmp/req-test.txt && \
     pip install --no-cache-dir -r /tmp/req-test.txt -r /tmp/requirements-mcpunifier.txt \
+        -r /tmp/requirements-signals.txt \
         pytest==9.1.1 requests==2.34.2 pytest-cov==7.1.0
 
 COPY mt5api ./mt5api
 COPY mcpunifier ./mcpunifier
+COPY signals ./signals
 COPY tests ./tests
 # Tests inspect the tracked dependency manifests and the Windows installer.
 # Copy only the required scripts rather than pulling every installer asset in.
 # docker-compose.yml.j2 is here because the compose-generation test renders the
 # REAL template — a stub would assert nothing about what actually ships.
-COPY requirements-api.txt requirements-mcpunifier.txt requirements-test.txt docker-compose.yml.example docker-compose.yml.j2 run.sh ./
+# The signal copier tests load the shipped config templates and compare the
+# telethon-plus image pinned in the Makefile with the compose files.
+COPY requirements-api.txt requirements-mcpunifier.txt requirements-signals.txt requirements-test.txt docker-compose.yml.example docker-compose.yml.j2 run.sh Makefile ./
+COPY config/config.yaml.example config/signals.yml.example ./config/
 COPY scripts/config_helper.py \
     scripts/start.bat \
     scripts/install.bat \

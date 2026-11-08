@@ -240,6 +240,94 @@ services:
       - {{ vm.service }}
 {%- endfor %}
 {%- endif %}
+  # Signal copier (docs/signals.md). Copies trade signals from Telegram
+  # channels and other feeds in config/signals.yml onto the terminals, through
+  # nginx. Off unless config.yaml sets signals.enabled: true; run.sh then puts
+  # "signals" in COMPOSE_PROFILES in .env, and "telegram" as well when a
+  # source has type: telegram. Reads config.yaml (api_token, terminals,
+  # telegram.auth_key) and signals.yml itself.
+  signals:
+    profiles: ["signals"]
+    build:
+      context: .
+      dockerfile: Dockerfile.signals
+    restart: unless-stopped
+    environment:
+      MT5_URL: http://nginx
+      TELETHON_URL: http://telethon-plus:8080
+      LOG_LEVEL: info
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      - ./config/signals.yml:/app/config/signals.yml:ro
+      - signals-state:/data
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # The service touches this file every 30 seconds while its loop runs.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/signals-heartbeat') < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - nginx
+
+  # Telegram client for the signal copier: logs in as the Telegram account in
+  # config.yaml (telegram.session, from `make telegram-login`) and serves its
+  # messages to the copier only. Read-only, so the copier can never send from
+  # the account. No published port.
+  telethon-plus:
+    profiles: ["telegram"]
+    image: psyb0t/telethon-plus:v0.7.3@sha256:b16269669dce4708b73ebef66ab81ac34473b62654432abc4cb485b32df00559
+    restart: unless-stopped
+    environment:
+      TELETHON_API_ID: ${TELEGRAM_API_ID:-}
+      TELETHON_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELETHON_SESSION: ${TELEGRAM_SESSION:-}
+      TELETHON_AUTH_KEY: ${TELEGRAM_AUTH_KEY:-}
+      TELETHON_READ_ONLY: "true"
+      TELETHON_UPDATES_ENABLED: "true"
+    volumes:
+      - telethon-cache:/cache
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   # nginx is the single entry point for all terminal APIs. Routes
   # /<broker>/<account>/... to <vm_service>:<terminal_port> (per-terminal Python
   # API process inside each Windows VM, reachable via the VM container's
@@ -308,3 +396,7 @@ volumes:
   # Persistent per-container watchdog state (last restart, attempts,
   # healthy-since) so backoff survives the watchdog's own restarts.
   vm-watchdog-state:
+  # Seen-message database of the signal copier (docs/signals.md).
+  signals-state:
+  # Resolved Telegram entities, so restarts do not resolve usernames again.
+  telethon-cache:

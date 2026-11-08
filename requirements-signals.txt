@@ -1,0 +1,10 @@
+# Python dependencies for the signal copier, which runs as its own Linux
+# container beside the Windows VM. Nothing here imports mt5api.
+#
+# Every package is pinned to an exact version (.agents/rules/security.md, SEC14).
+# Bump one only to a release that has been on PyPI for at least seven days.
+# httpx, pyyaml and python-json-logger match requirements-mcpunifier.txt.
+httpx==0.28.1
+pyyaml==6.0.3
+python-json-logger==4.2.0
+websockets==17.4

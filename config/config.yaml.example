@@ -95,6 +95,25 @@ files:
   max_extract_bytes: 209715200  # 200 MB unpacked per ?extract
   max_extract_files: 10000      # files per ?extract
 
+# Signal copier: copies trade signals from Telegram channels and other feeds
+# onto the terminals. OPT-IN: it places real orders. The sources, the regexes
+# that read the signals, the sizing and the limits live in config/signals.yml
+# (template: config/signals.yml.example). See docs/signals.md.
+signals:
+  enabled: false
+
+# Telegram account the signal copier reads channels with, through the
+# telethon-plus sidecar. Needed only for type: telegram sources in
+# signals.yml. api_id and api_hash come from https://my.telegram.org/apps;
+# session comes from `make telegram-login` and is full access to the account,
+# so treat it like a password. auth_key guards the sidecar's own API (any
+# random string, such as `openssl rand -hex 32`).
+telegram:
+  api_id: ""
+  api_hash: ""
+  session: ""
+  auth_key: ""
+
 # Extra pip packages installed in the VM on every boot.
 # MetaTrader5, flask, waitress, and flask-compress are always installed.
 requirements: []

@@ -31,6 +31,7 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 - **The useful MT5 shit over HTTP** — terminal state, market data, orders, positions, history, and Strategy Tester jobs.
 - **Built-in technical analysis** — [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
 - **MCP for the robot overlords** — one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
+- **Optional Telegram signal copier**: follow signal channels or a websocket feed and place their trades on as many accounts as you want, each with its own sizing and open-trade limits. Off until you turn it on. See [docs/signals.md](docs/signals.md).
 - **Optional multi-VM fuckery** — spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
 
 ## Requirements
@@ -132,6 +133,7 @@ The old README became a massive wall of API shit, so the details now live in sep
 | Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](docs/multi-vm-setup.md) |
 | Deploy EAs onto charts over HTTP instead of clicking through the Navigator | [Chart Deployments](docs/chart-deployments.md) |
 | Push libraries, DLLs and data into a terminal, zipped or not, and read its files and logs back | [File API](docs/files.md) |
+| Copy trade signals from Telegram channels or a websocket feed onto your accounts, sized per account | [Signal copier](docs/signals.md) |
 
 ## API at a glance
 
@@ -196,6 +198,7 @@ the point.
 config/          config and templates for the whole contraption
 mt5api/          Python REST + MCP server running beside each terminal
 mcpunifier/      one MCP endpoint that fronts every configured terminal
+signals/         optional signal copier: Telegram and websocket signals in, orders out
 clients/go/      typed Go client so you do not have to hand-roll requests
 scripts/         Windows bootstrap and host-side glue
 tests/           unit, contract, integration, and race-test shit

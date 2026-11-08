@@ -36,7 +36,16 @@ def _env_block():
     return block
 
 
-def _run_env_block(tmp_path, *, token="tok-123", ts_key="", ts_server="", fail_on=None):
+def _run_env_block(
+    tmp_path,
+    *,
+    token="tok-123",
+    ts_key="",
+    ts_server="",
+    fail_on=None,
+    profiles="",
+    telegram=None,
+):
     """Execute the block with DIR=tmp_path and a config_helper stub on PATH.
 
     `fail_on` names a config_helper subcommand the stub should fail on, to show
@@ -52,6 +61,13 @@ def _run_env_block(tmp_path, *, token="tok-123", ts_key="", ts_server="", fail_o
         f"  api_token) printf '%s' '{token}' ;;\n"
         f"  ts_auth_key) printf '%s' '{ts_key}' ;;\n"
         f"  ts_login_server) printf '%s' '{ts_server}' ;;\n"
+        f"  compose_profiles) printf '%s' '{profiles}' ;;\n"
+        '  telegram_setting) case "$3" in\n'
+        + "".join(
+            f"    {key}) printf '%s' '{value}' ;;\n"
+            for key, value in (telegram or {}).items()
+        )
+        + "    *) ;;\n  esac ;;\n"
         '  *) echo "stub config_helper: unexpected $*" >&2; exit 1 ;;\n'
         "esac\n",
         encoding="utf-8",
@@ -119,6 +135,45 @@ def test_optional_tailscale_values_are_still_written_when_present(tmp_path):
     assert lines[0] == _project_dir_line(tmp_path)
     assert "TS_AUTHKEY=tskey-abc" in lines
     assert any(line.startswith("TS_EXTRA_ARGS=") and "hs.example" in line for line in lines)
+
+
+def test_no_compose_profiles_are_written_while_signals_are_off(tmp_path):
+    res = _run_env_block(tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert not any(line.startswith(("COMPOSE_PROFILES=", "TELEGRAM_")) for line in _env_lines(tmp_path))
+
+
+def test_signals_profile_needs_a_signals_file(tmp_path):
+    res = _run_env_block(tmp_path, profiles="signals")
+    assert res.returncode != 0
+    assert "config/signals.yml does not exist" in res.stdout
+    assert not any(line.startswith("COMPOSE_PROFILES=") for line in _env_lines(tmp_path))
+
+
+def test_telegram_profile_writes_the_telethon_settings_quoted(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "signals.yml").write_text("sources: {}\n", encoding="utf-8")
+    res = _run_env_block(
+        tmp_path,
+        profiles="signals,telegram",
+        telegram={"api_id": "123456", "api_hash": "fakehash", "session": "1Afake=", "auth_key": "k"},
+    )
+    assert res.returncode == 0, res.stderr
+    lines = _env_lines(tmp_path)
+    assert "COMPOSE_PROFILES=signals,telegram" in lines
+    assert "TELEGRAM_API_ID='123456'" in lines
+    assert "TELEGRAM_API_HASH='fakehash'" in lines
+    assert "TELEGRAM_SESSION='1Afake='" in lines
+    assert "TELEGRAM_AUTH_KEY='k'" in lines
+
+
+def test_an_empty_telegram_session_warns(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "signals.yml").write_text("sources: {}\n", encoding="utf-8")
+    res = _run_env_block(tmp_path, profiles="signals,telegram", telegram={"api_id": "1"})
+    assert res.returncode == 0, res.stderr
+    assert "make telegram-login" in res.stdout
+    assert "TELEGRAM_SESSION=''" in _env_lines(tmp_path)
 
 
 # ── run.sh refuses a MT5_PROJECT_DIR that is not this checkout ───────────────

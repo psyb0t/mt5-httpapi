@@ -1,0 +1,25 @@
+# Signal copier: reads trade signals from Telegram (through the telethon-plus
+# sidecar) and other feeds, and places the orders on the configured terminals
+# through nginx. Like the MCP unifier it never imports mt5api, so the image
+# stays a plain Python service.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements-signals.txt /app/
+RUN pip install --no-cache-dir -r requirements-signals.txt
+
+COPY signals /app/signals
+
+# Non-root: this service holds the API token and places orders on every
+# target account, so it runs with no more privilege than it needs. /data holds
+# the seen-message database on a named volume.
+RUN useradd --create-home --shell /usr/sbin/nologin signals && \
+    mkdir -p /data && \
+    chown -R signals:signals /data /app
+USER signals
+
+CMD ["python", "-m", "signals"]

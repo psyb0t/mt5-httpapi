@@ -29,6 +29,7 @@ assets/experts/*
 assets/sets/*
 !assets/sets/.gitkeep
 config/config.yaml
+config/signals.yml
 config/accounts.json
 config/terminals.json
 config/api_token.txt

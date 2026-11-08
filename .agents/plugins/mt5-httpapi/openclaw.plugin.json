@@ -1,7 +1,7 @@
 {
   "name": "@psyb0t/mt5-httpapi",
   "id": "@psyb0t/mt5-httpapi",
-  "version": "4.31.1",
+  "version": "4.32.0",
   "type": "code-plugin",
   "summary": "Wire an OpenClaw agent to a self-hosted mt5-httpapi MetaTrader 5 bridge over MCP \u2014 typed tools for terminals, market data, orders, positions, history, and backtests.",
   "description": "A thin stdio<->HTTP bridge that connects an MCP client (OpenClaw, Claude, Cursor, Codex, ...) to a running mt5-httpapi MCP endpoint (/mcp). The server exposes dedicated typed tools for terminal health and control, account data, symbols, rates, ticks, technical analysis, orders, positions, history, and backtest status, plus Chart Deployments on terminals that enable it (EA and set file upload, deployments, chart listing and screenshots, the WebRequest allowlist), plus the file API on terminals that enable it (read, write, unzip and delete files in the terminal's install directory and the compile tree), plus endpoints and request fallbacks for JSON-compatible REST routes; multipart backtest submission still uses REST directly. Point the bridge at the server root for broker/account parameters across every configured terminal, or at one terminal path to pin the session. mt5-httpapi is self-hosted; order and position mutations and deployment changes are real actions on a live trading account. See https://github.com/psyb0t/mt5-httpapi.",

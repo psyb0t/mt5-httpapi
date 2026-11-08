@@ -64,6 +64,17 @@ tailscale:
   auth_key: ""       # tskey-auth-... — empty disables the tailscale sidecar
   login_server: ""   # Headscale URL; empty = Tailscale cloud
 
+# Signal copier, off by default (docs/signals.md). Its rules live in config/signals.yml.
+signals:
+  enabled: false
+
+# Telegram account the signal copier reads channels with. session comes from make telegram-login.
+telegram:
+  api_id: ""
+  api_hash: ""
+  session: ""
+  auth_key: ""
+
 # Extra pip packages for the VM. MetaTrader5/flask/waitress/flask-compress are always installed.
 requirements: []
 
@@ -120,6 +131,8 @@ Per-field notes:
 - **`terminals[].mode`**: `live` (default) or `backtest`. `live` keeps `terminal64.exe` running so the MT5 SDK stays initialized for live trading endpoints. `backtest` prepares the same portable directory but does **not** launch `terminal64.exe`, leaving the data dir free for the Strategy Tester subprocess to grab. See [Backtest](backtesting.md#backtest-api). On a `backtest` terminal every route that needs the MT5 SDK (account, orders, positions, history, market data, terminal info) answers 503 instead of starting `terminal64.exe`. MT5 is single-instance per portable data dir, so a backtest cannot run against a `live` terminal.
 - **`terminals[].symbol_suffix`** — optional explicit symbol suffix for Strategy Tester remaps. If set, mt5-httpapi appends it when `[Tester].Symbol` does not already end with that suffix. Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
 - **`terminals[].vm`** — optional VM name that this terminal runs on. Maps to a VM defined in `vms.yaml`. Absent → `default` (routes to the `mt5` container). See [Multi-VM Setup](multi-vm-setup.md) below.
+
+- **`signals`** and **`telegram`**: the signal copier, which turns trade signals from Telegram channels and websocket feeds into orders on these terminals. Off unless `signals.enabled: true`; the rules are in `config/signals.yml` (template `config/signals.yml.example`), and `telegram.session` holds full access to a Telegram account. See [Signal copier](signals.md).
 
 Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't step on each other.
 

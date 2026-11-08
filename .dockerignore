@@ -16,6 +16,7 @@ mt5installers/
 assets/experts/
 assets/sets/
 config/config.yaml
+config/signals.yml
 config/accounts.json
 config/terminals.json
 run.log

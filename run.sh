@@ -190,6 +190,37 @@ if [ -n "${TS_LOGIN_SERVER}" ]; then
     echo "Headscale login server: ${TS_LOGIN_SERVER}"
 fi
 
+# Optional signal copier (docs/signals.md). Compose reads COMPOSE_PROFILES
+# from .env, so the signals and telethon-plus services run only when
+# config.yaml turns them on, for this `up` and every later compose command.
+COMPOSE_PROFILES=$(python3 "$CFG" compose_profiles)
+if [ -n "${COMPOSE_PROFILES}" ]; then
+    if [ ! -f "${DIR}/config/signals.yml" ]; then
+        echo "ERROR: signals.enabled is true in config.yaml but config/signals.yml does not exist."
+        echo "  Copy config/signals.yml.example to config/signals.yml and edit."
+        exit 1
+    fi
+    echo "COMPOSE_PROFILES=${COMPOSE_PROFILES}" >>"${DIR}/.env"
+    echo "Compose profiles: ${COMPOSE_PROFILES}"
+fi
+case ",${COMPOSE_PROFILES}," in
+*,telegram,*)
+    for KEY in api_id api_hash session auth_key; do
+        VALUE=$(python3 "$CFG" telegram_setting "${KEY}")
+        case "${VALUE}" in
+        *"'"*)
+            echo "ERROR: telegram.${KEY} in config.yaml contains a single quote, which .env cannot carry."
+            exit 1
+            ;;
+        esac
+        echo "TELEGRAM_$(printf '%s' "${KEY}" | tr '[:lower:]' '[:upper:]')='${VALUE}'" >>"${DIR}/.env"
+    done
+    if [ -z "$(python3 "$CFG" telegram_setting session)" ]; then
+        echo "WARNING: telegram.session is empty in config.yaml; run 'make telegram-login' first."
+    fi
+    ;;
+esac
+
 # Generate nginx.conf from config.yaml terminals.
 mkdir -p "${DIR}/.data/nginx"
 python3 "$CFG" nginx_conf "${DIR}/.data/nginx/nginx.conf"

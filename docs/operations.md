@@ -27,6 +27,7 @@ make test-unit   Run unit and contract tests in a throwaway Docker image
 make test-integration  Container-backed suites: nginx routing + MCP unifier
 make test-go     Compile and race-test the public Go client
 make test-live   Test a running stack end to end (see below)
+make telegram-login  Log in to Telegram once for the signal copier (docs/signals.md)
 make clean       Nuke VM disk and state (keeps ISO)
 make distclean   Nuke everything including ISO
 ```
@@ -202,6 +203,8 @@ The API token still applies on top — Cloudflare gates the public reachability,
 config/                      Your config shit
   config.yaml                Single source of truth (gitignored)
   config.yaml.example        Committed template — copy to config.yaml
+  signals.yml                Signal copier rules (gitignored, docs/signals.md)
+  signals.yml.example        Committed template, copy to signals.yml
   setup.bat                  Custom boot commands (optional)
   hosts                      Extra entries for the VM's hosts file (optional)
 
@@ -220,6 +223,9 @@ scripts/                     Scripts that run inside the Windows VM
                              install.bat; auto-clears reboot-orphaned locks
   debloat.bat                Windows debloat script
   defender-remover/          Windows Defender removal tool
+
+signals/                     Signal copier service (docs/signals.md)
+  sources/                   One module per source type (telegram, websocket)
 
 mt5api/                      Python HTTP API server
   handlers/                  Route handlers

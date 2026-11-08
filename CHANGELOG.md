@@ -6,9 +6,11 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
-## [Unreleased]
+## [v4.32.0]: 2026-11-08
 
 ### Added
+
+- **Signal copier: trade signals from Telegram channels and websocket feeds become orders on any of your terminals.** Turn it on with `signals.enabled: true` in `config.yaml` and write the rules in the new `config/signals.yml` (template `config/signals.yml.example`): sources (`type: telegram` with a `chat` and its own `poll_seconds`, or `type: websocket` with a `url`), regex parsers with named groups for side, symbol, entry, any number of SLs and TPs and lots, symbol maps, and per-account targets. Each target sizes the signal its own way (`fixed`, `multiplier` of the channel's lots, or `risk_percent` of equity at the SL), splits it into one position per TP by `tp_split` on hedging accounts, and drops new signals while `max_open_per_symbol`, `max_open_per_source` or `max_open_per_source_symbol` are full. Signals the price has already passed, or that moved more than `max_entry_slippage_points` from their entry, are skipped and logged with the reason. `dry_run` logs the orders without sending them. It runs as two new compose services, `signals` and `telethon-plus` (read-only, pinned `psyb0t/telethon-plus:v0.7.3`), behind the compose profiles `signals` and `telegram`, which `run.sh` turns on from `config.yaml` through `COMPOSE_PROFILES` in `.env`; an existing `docker-compose.yml` needs both services and their volumes copied from `docker-compose.yml.example`. `make telegram-login` does the one-time Telegram login. Follow-up messages (close, move SL, cancel) are not handled yet. See [docs/signals.md](docs/signals.md).
 
 - **`POST /backtest/{job_id}/cancel` stops a job.** A queued job is dropped before it launches; a running one has this terminal's tester processes (agents and stuck updaters included) killed, and the next job starts only once they are gone. `cancelled` is a new final status that a late write from the worker cannot overwrite, and `GET /busy` keeps holding a scheduled reboot until a cancelled job's worker has stopped. See [docs/backtesting.md](docs/backtesting.md#post-backtestjob_idcancel).
 

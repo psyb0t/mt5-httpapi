@@ -1,6 +1,9 @@
-.PHONY: up down logs status lint format test test-unit test-integration test-go test-live verify-binaries clean distclean help
+.PHONY: up down logs status lint format test test-unit test-integration test-go test-live verify-binaries telegram-login clean distclean help
 
 GO_TEST_IMAGE := golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647
+# Same image as the telethon-plus service in docker-compose.yml.j2 and
+# docker-compose.yml.example (tests/test_signals_compose.py keeps them equal).
+TELETHON_IMAGE := psyb0t/telethon-plus:v0.7.3@sha256:b16269669dce4708b73ebef66ab81ac34473b62654432abc4cb485b32df00559
 
 all: up
 
@@ -119,6 +122,18 @@ test-live:
 		$$TAG pytest -v -p no:cacheprovider $(LIVE_TESTS) $(LIVE_ARGS); \
 	STATUS=$$?; docker rmi -f $$TAG >/dev/null; exit $$STATUS)
 
+# One-time Telegram login for the signal copier (docs/signals.md). Asks for
+# the phone number, the login code and the 2FA password, then prints the
+# session string to put in config.yaml as telegram.session.
+telegram-login:
+	@API_ID=$$(python3 scripts/config_helper.py telegram_setting api_id) && \
+	API_HASH=$$(python3 scripts/config_helper.py telegram_setting api_hash) && \
+	if [ -z "$$API_ID" ] || [ -z "$$API_HASH" ]; then \
+		echo "Set telegram.api_id and telegram.api_hash in config/config.yaml first (https://my.telegram.org/apps)."; \
+		exit 1; \
+	fi && \
+	docker run --rm -it -e TELETHON_API_ID="$$API_ID" -e TELETHON_API_HASH="$$API_HASH" $(TELETHON_IMAGE) login
+
 clean: down
 	sudo rm -rf data/storage data/shared data/metatrader5 data/oem run.log
 
@@ -138,5 +153,6 @@ help:
 	@echo "  test-integration - Container-backed suites: nginx routing + MCP unifier (needs docker)"
 	@echo "  test-go  - Compile and race-test the public Go client in a pinned container"
 	@echo "  test-live - Test a RUNNING stack set by MT5_LIVE_* / tests/live/.env, real orders included (LIVE_TESTS=... picks modules)"
+	@echo "  telegram-login - Log in to Telegram once for the signal copier and print the session string"
 	@echo "  clean     - Remove VM disk and state (keeps ISO)"
 	@echo "  distclean - Remove everything including ISO"
