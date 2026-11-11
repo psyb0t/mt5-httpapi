@@ -24,12 +24,29 @@ TWO_TARGETS = RULES_YAML + """
 """
 
 
-def _engine(tmp_path, rules=None, terminal=None):
+class FakeClock:
+    """A clock that only moves when the engine sleeps, so retry tests run
+    instantly and the signal ages exactly as far as the retries waited."""
+
+    def __init__(self) -> None:
+        self.time = datetime.now(timezone.utc)
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self.time
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.time += timedelta(seconds=seconds)
+
+
+def _engine(tmp_path, rules=None, terminal=None, clock=None):
     rules = rules or rules_from(tmp_path)
     terminal = terminal or FakeTerminal()
+    clock = clock or FakeClock()
     client = TerminalClient("http://nginx", "fake-token", transport=terminal.transport())
     state = State(str(tmp_path / "state.sqlite"))
-    return Engine(rules, client, state), terminal, state
+    return Engine(rules, client, state, sleep=clock.sleep, now=clock.now), terminal, state
 
 
 def _run(engine, msg):
@@ -241,6 +258,121 @@ def test_a_failed_leg_does_not_stop_the_later_legs(tmp_path, caplog, failure, er
         (2, "testchan:101:2", error_name, "testbroker/demo/default")
     ]
     assert state.is_seen("testchan", "101")
+
+
+def test_a_signal_posted_during_a_reboot_trades_once_the_terminal_is_back(tmp_path, caplog):
+    terminal = FakeTerminal()
+    terminal.outage_requests = 3
+    clock = FakeClock()
+    engine, _, state = _engine(tmp_path, terminal=terminal, clock=clock)
+    with caplog.at_level(logging.INFO, logger="signals.engine"):
+        _run(engine, message())
+    assert [o["client_order_id"] for _, o in terminal.orders] == [
+        "testchan:101:1",
+        "testchan:101:2",
+        "testchan:101:3",
+    ]
+    assert clock.sleeps == [15.0, 15.0, 15.0]
+    retries = [r for r in caplog.records if r.msg == "terminal down, retrying"]
+    assert [r.reason for r in retries] == ["TerminalUnreachable"] * 3
+    assert not any(r.msg == "terminal call failed, signal not traded" for r in caplog.records)
+    assert state.is_seen("testchan", "101")
+
+
+def test_a_leg_refused_before_a_reboot_is_sent_again(tmp_path, caplog):
+    terminal = FakeTerminal()
+    terminal.reboot_pending_orders["testchan:101:2"] = 2
+    clock = FakeClock()
+    engine, _, _ = _engine(tmp_path, terminal=terminal, clock=clock)
+    with caplog.at_level(logging.INFO, logger="signals.engine"):
+        _run(engine, message())
+    assert [o["client_order_id"] for _, o in terminal.orders] == [
+        "testchan:101:1",
+        "testchan:101:2",
+        "testchan:101:3",
+    ]
+    assert clock.sleeps == [15.0, 15.0]
+    retries = [r for r in caplog.records if r.msg == "terminal down, retrying"]
+    assert [(r.leg, r.reason) for r in retries] == [(2, "TerminalRejected")] * 2
+
+
+def test_a_rejection_that_is_not_a_reboot_is_not_retried(tmp_path):
+    terminal = FakeTerminal()
+    terminal.failing_orders["testchan:101:2"] = 400
+    clock = FakeClock()
+    engine, _, _ = _engine(tmp_path, terminal=terminal, clock=clock)
+    _run(engine, message())
+    assert [o["client_order_id"] for _, o in terminal.orders] == [
+        "testchan:101:1",
+        "testchan:101:3",
+    ]
+    assert clock.sleeps == []
+
+
+def test_retries_stop_before_the_signal_is_too_old_to_trade(tmp_path, caplog):
+    terminal = FakeTerminal()
+    terminal.unreachable.add("testbroker/demo/default")
+    clock = FakeClock()
+    engine, _, state = _engine(tmp_path, terminal=terminal, clock=clock)
+    with caplog.at_level(logging.WARNING, logger="signals.engine"):
+        _run(engine, message())
+    assert terminal.orders == []
+    # The default max_signal_age is five minutes: the last retry starts while
+    # the signal is still young enough to trade when it finishes.
+    assert sum(clock.sleeps) <= 300
+    assert len(clock.sleeps) == 20
+    assert any(r.msg == "terminal call failed, signal not traded" for r in caplog.records)
+    assert state.is_seen("testchan", "101")
+
+
+def test_a_source_with_a_longer_max_signal_age_trades_an_older_signal(tmp_path):
+    # An H4 channel: a signal eight minutes old is still worth taking, while
+    # the five minute default would drop it.
+    text = RULES_YAML.replace(
+        "    magic: 900001\n", "    magic: 900001\n    max_signal_age: 10m\n", 1
+    )
+    engine, terminal, _ = _engine(tmp_path, rules_from(tmp_path, text))
+    eight_minutes_old = replace(message(), time=datetime.now(timezone.utc) - timedelta(minutes=8))
+    _run(engine, eight_minutes_old)
+    assert len(terminal.orders) == 3
+
+
+def test_a_signal_older_than_its_source_max_signal_age_is_not_traded(tmp_path):
+    text = RULES_YAML.replace(
+        "    magic: 900001\n", "    magic: 900001\n    max_signal_age: 10m\n", 1
+    )
+    engine, terminal, _ = _engine(tmp_path, rules_from(tmp_path, text))
+    _run(engine, replace(message(), time=datetime.now(timezone.utc) - timedelta(minutes=11)))
+    assert terminal.orders == []
+
+
+def test_submit_returns_while_a_down_terminal_is_still_being_retried(tmp_path):
+    terminal = FakeTerminal()
+    terminal.outage_requests = 1
+    release = asyncio.Event()
+    clock = FakeClock()
+
+    async def held_sleep(seconds):
+        await clock.sleep(seconds)
+        await release.wait()
+
+    rules = rules_from(tmp_path)
+    client = TerminalClient("http://nginx", "fake-token", transport=terminal.transport())
+    state = State(str(tmp_path / "state.sqlite"))
+    engine = Engine(rules, client, state, sleep=held_sleep, now=clock.now)
+
+    async def scenario():
+        await engine.submit(message())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # The source got control back while the retry is still waiting.
+        assert clock.sleeps == [15.0]
+        assert terminal.orders == []
+        release.set()
+        await engine.drain()
+
+    asyncio.run(scenario())
+    assert len(terminal.orders) == 3
 
 
 def test_a_broker_refusal_is_logged(tmp_path, caplog):

@@ -7,6 +7,12 @@ and send one order per leg. Any check that fails skips the signal on that
 target only and logs why. A leg the terminal fails on is logged and the other
 legs are still sent.
 
+A terminal that is down or refusing writes for a reboot is retried until the
+signal reaches its source's max_signal_age. The checks before the first order only
+read, so they are simply run again; an order is resent with the same
+client_order_id, which the API answers as a duplicate if the first send went
+through.
+
 One lock per terminal keeps two signals for the same account from both
 passing a limit before either has opened anything.
 """
@@ -16,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -26,6 +33,8 @@ from signals.constants import (
     HTTP_CREATED,
     MARGIN_MODE_HEDGING,
     SIDE_BUY,
+    TERMINAL_RETRY_SECONDS,
+    TRANSIENT_HTTP_STATUSES,
 )
 from signals.errors import TerminalRejected, TerminalUnreachable
 from signals.model import Leg, Message, Signal
@@ -39,6 +48,13 @@ logger = logging.getLogger(__name__)
 
 def client_order_id(source: str, message_id: str, leg: int) -> str:
     return f"{source}:{message_id}:{leg}"
+
+
+def is_transient(err: TerminalUnreachable | TerminalRejected) -> bool:
+    """Whether the terminal failed the way a reboot or restart makes it fail."""
+    if isinstance(err, TerminalUnreachable):
+        return True
+    return err.status in TRANSIENT_HTTP_STATUSES
 
 
 def _signal_key(item: dict[str, Any]) -> tuple[str, str]:
@@ -121,15 +137,47 @@ def broker_symbol(rules: Rules, target: Target, symbol: str) -> str:
 
 
 class Engine:
-    def __init__(self, rules: Rules, client: TerminalClient, state: State) -> None:
+    def __init__(
+        self,
+        rules: Rules,
+        client: TerminalClient,
+        state: State,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    ) -> None:
         self._rules = rules
         self._client = client
         self._state = state
+        self._sleep = sleep
+        self._now = now
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # The websocket and a catch-up poll can hand over the same message at
         # the same moment; the second must not start before the first is
         # recorded as seen.
         self._in_flight: set[tuple[str, str]] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def submit(self, message: Message) -> None:
+        """Start trading a message and return at once.
+
+        Retrying a terminal that is down for a reboot can take as long as the
+        source's max_signal_age. A source that awaited handle() would stop
+        reading for that long: the catch-up poll after a restart would hold
+        back the live feed, and a websocket left unread drops its connection.
+        """
+        task = asyncio.create_task(self.handle(message))
+        self._tasks.add(task)
+        task.add_done_callback(self._finished)
+
+    def _finished(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("message handling failed", exc_info=task.exception())
+
+    async def drain(self) -> None:
+        """Wait for every submitted message to finish."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     async def handle(self, message: Message) -> None:
         """Trade one message on every target of its source, once."""
@@ -140,8 +188,8 @@ class Engine:
         source = self._rules.sources[message.source]
         fields = {"source": message.source, "message_id": message.id}
         try:
-            age = (datetime.now(timezone.utc) - message.time).total_seconds()
-            if age > self._rules.max_signal_age_seconds:
+            age = (self._now() - message.time).total_seconds()
+            if age > self._rules.max_age_for(message.source):
                 logger.info("message too old to trade", extra={**fields, "age_seconds": round(age)})
                 return
             signal = parse(self._rules.parsers[source.parser], message.text)
@@ -168,6 +216,31 @@ class Engine:
             self._state.mark_seen(*key)
             self._in_flight.discard(key)
 
+    async def _wait_to_retry(
+        self,
+        message: Message,
+        err: TerminalUnreachable | TerminalRejected,
+        fields: dict[str, Any],
+    ) -> bool:
+        """Sleep before another try when the failure is transient and the
+        signal will still be young enough to trade after the wait."""
+        if not is_transient(err):
+            return False
+        age = (self._now() - message.time).total_seconds()
+        if age + TERMINAL_RETRY_SECONDS > self._rules.max_age_for(message.source):
+            return False
+        logger.info(
+            "terminal down, retrying",
+            extra={
+                **fields,
+                "reason": type(err).__name__,
+                "error": str(err),
+                "retry_in_seconds": TERMINAL_RETRY_SECONDS,
+            },
+        )
+        await self._sleep(TERMINAL_RETRY_SECONDS)
+        return True
+
     async def _trade(
         self,
         target: Target,
@@ -177,20 +250,26 @@ class Engine:
     ) -> None:
         fields = {"source": source.name, "message_id": message.id, "terminal": target.terminal}
         async with self._locks[target.terminal]:
-            try:
-                await self._trade_locked(target, source, message, signal, fields)
-            except Skip as skip:
-                logger.info(
-                    "signal skipped",
-                    extra={**fields, "reason": skip.reason, **skip.detail},
-                )
-            except (TerminalUnreachable, TerminalRejected) as err:
-                logger.warning(
-                    "terminal call failed, signal not traded",
-                    extra={**fields, "reason": type(err).__name__, "error": str(err)},
-                )
-            except Exception:  # noqa: BLE001 - one target's failure must not stop the others
-                logger.exception("signal failed on this target", extra=fields)
+            while True:
+                try:
+                    await self._trade_locked(target, source, message, signal, fields)
+                except Skip as skip:
+                    logger.info(
+                        "signal skipped",
+                        extra={**fields, "reason": skip.reason, **skip.detail},
+                    )
+                except (TerminalUnreachable, TerminalRejected) as err:
+                    # Only reads come before the first order, so running the
+                    # whole target again cannot send anything twice.
+                    if await self._wait_to_retry(message, err, fields):
+                        continue
+                    logger.warning(
+                        "terminal call failed, signal not traded",
+                        extra={**fields, "reason": type(err).__name__, "error": str(err)},
+                    )
+                except Exception:  # noqa: BLE001 - one target's failure must not stop the others
+                    logger.exception("signal failed on this target", extra=fields)
+                return
 
     async def _trade_locked(
         self,
@@ -276,14 +355,18 @@ class Engine:
         # A leg is sent on its own: when the terminal fails on this one the
         # later legs still go out, because the message is marked seen either
         # way and nothing would send them again.
-        try:
-            status, body = await self._client.place(target, order)
-        except (TerminalUnreachable, TerminalRejected) as err:
-            logger.warning(
-                "terminal call failed, leg not sent",
-                extra={**leg_fields, "reason": type(err).__name__, "error": str(err)},
-            )
-            return
+        while True:
+            try:
+                status, body = await self._client.place(target, order)
+                break
+            except (TerminalUnreachable, TerminalRejected) as err:
+                if await self._wait_to_retry(message, err, leg_fields):
+                    continue
+                logger.warning(
+                    "terminal call failed, leg not sent",
+                    extra={**leg_fields, "reason": type(err).__name__, "error": str(err)},
+                )
+                return
         if body.get("duplicate"):
             logger.info(
                 "order already placed",

@@ -90,6 +90,12 @@ class FakeTerminal:
         # drops the connection, an int answers with that HTTP status. A failed
         # order is not recorded in `orders`.
         self.failing_orders: dict[str, int | None] = {}
+        # A terminal that is rebooting: this many requests, to any route,
+        # have their connection refused before the terminal answers again.
+        self.outage_requests = 0
+        # client_order_id -> how many sends of that order answer 503 before
+        # one goes through, the way the API refuses writes before a reboot.
+        self.reboot_pending_orders: dict[str, int] = {}
         self.order_status = 201
         self.next_ticket = 5000
 
@@ -98,6 +104,9 @@ class FakeTerminal:
         terminal = "/".join(parts[:3])
         route = "/" + "/".join(parts[3:])
         if terminal in self.unreachable:
+            raise httpx.ConnectError("connection refused", request=request)
+        if self.outage_requests > 0:
+            self.outage_requests -= 1
             raise httpx.ConnectError("connection refused", request=request)
         if request.method == "GET" and route.startswith("/symbols/"):
             info = self.symbols.get(route.removeprefix("/symbols/"))
@@ -112,6 +121,11 @@ class FakeTerminal:
             return httpx.Response(200, json=self.account)
         if request.method == "POST" and route == "/orders":
             body = json.loads(request.content)
+            if self.reboot_pending_orders.get(body["client_order_id"], 0) > 0:
+                self.reboot_pending_orders[body["client_order_id"]] -= 1
+                return httpx.Response(
+                    503, json={"error": "reboot pending", "code": "REBOOT_PENDING"}
+                )
             if body["client_order_id"] in self.failing_orders:
                 failure = self.failing_orders[body["client_order_id"]]
                 if failure is None:

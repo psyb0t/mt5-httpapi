@@ -48,6 +48,19 @@ POLL_MESSAGES = 20
 # A signal older than this when it is first seen (a catch-up after downtime)
 # is not traded: the price has moved on since the channel posted it.
 DEFAULT_MAX_SIGNAL_AGE_SECONDS = 300.0
+# max_signal_age is written as whole units, largest first: "10m", "10m30s",
+# "1h35m40s", "1d". A bare number is refused because nothing says whether it
+# means seconds or minutes.
+DURATION_RE = re.compile(r"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+DURATION_UNIT_SECONDS = (86400, 3600, 60, 1)
+
+# A scheduled VM reboot leaves every terminal unreachable for about four
+# minutes, and just before one the API refuses writes with 503
+# REBOOT_PENDING. A call that fails that way is retried at this interval for
+# as long as the signal is younger than its max_signal_age, so a signal
+# posted during a reboot is still traded once the terminal is back.
+TERMINAL_RETRY_SECONDS = 15.0
+TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
 
 DEFAULT_DEVIATION = 20
 

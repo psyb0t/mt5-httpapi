@@ -7,9 +7,11 @@
 # true sends no order on any target; every planned order is only logged.
 dry_run: false
 
-# A signal first seen later than this after it was posted (a catch-up after
-# downtime) is not traded.
-max_signal_age_seconds: 300
+# How old a signal may be and still be traded: a duration such as 10m,
+# 10m30s or 1h35m40s (units d, h, m, s, largest first). It also caps how long
+# a terminal that is down for a VM reboot is retried. A source can set its
+# own max_signal_age to override it.
+max_signal_age: 5m
 
 # Where the messages come from. The name (1 to 16 letters, digits or ._-) goes
 # into every order's client_order_id. Each source needs its own magic number:
@@ -25,6 +27,8 @@ sources:
     # 10). New messages arrive live anyway; the poll covers what the live
     # feed missed. A channel that posts every half hour does fine with 600.
     poll_seconds: 60
+    # An H4 channel can take a signal posted ten minutes ago.
+    max_signal_age: 10m
 
   mybot:
     type: websocket

@@ -126,3 +126,42 @@ def test_settings_take_the_token_and_telethon_key_from_config_yaml(tmp_path, mon
     assert settings.telethon_auth_key == "fake-telethon-key"
     assert settings.mt5_url == "http://nginx"
     assert terminal_keys(yaml.safe_load(config.read_text())) <= TERMINALS
+
+
+@pytest.mark.parametrize(
+    ("value", "seconds"),
+    [("10m", 600), ("10m30s", 630), ("1h35m40s", 5740), ("4h", 14400), ("1d", 86400), ("45s", 45)],
+)
+def test_max_signal_age_takes_a_duration(tmp_path, value, seconds):
+    rules = rules_from(tmp_path, f"max_signal_age: {value}\n" + RULES_YAML)
+    assert rules.max_signal_age_seconds == seconds
+    assert rules.max_age_for("testchan") == seconds
+
+
+@pytest.mark.parametrize("value", ["10", "600", "m", "10x", "0m", "30s10m", "-10m", "'1h 30m'"])
+def test_a_max_signal_age_that_is_not_a_duration_is_refused(tmp_path, value):
+    with pytest.raises(ConfigError, match="max_signal_age"):
+        rules_from(tmp_path, f"max_signal_age: {value}\n" + RULES_YAML)
+
+
+def test_a_source_can_set_its_own_max_signal_age(tmp_path):
+    text = RULES_YAML.replace(
+        "    magic: 900002\n", "    magic: 900002\n    max_signal_age: 1h35m40s\n", 1
+    )
+    rules = rules_from(tmp_path, "max_signal_age: 10m\n" + text)
+    assert rules.max_age_for("testchan") == 600
+    assert rules.max_age_for("otherchan") == 5740
+
+
+def test_max_signal_age_defaults_to_five_minutes(tmp_path):
+    assert rules_from(tmp_path).max_age_for("testchan") == 300
+
+
+def test_the_old_max_signal_age_seconds_still_works(tmp_path):
+    rules = rules_from(tmp_path, "max_signal_age_seconds: 900\n" + RULES_YAML)
+    assert rules.max_age_for("testchan") == 900
+
+
+def test_max_signal_age_and_max_signal_age_seconds_together_are_refused(tmp_path):
+    with pytest.raises(ConfigError, match="both set"):
+        rules_from(tmp_path, "max_signal_age: 10m\nmax_signal_age_seconds: 600\n" + RULES_YAML)

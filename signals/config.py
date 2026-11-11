@@ -26,6 +26,8 @@ from signals.constants import (
     DEFAULT_POLL_SECONDS,
     DEFAULT_STATE_PATH,
     DEFAULT_TELETHON_URL,
+    DURATION_RE,
+    DURATION_UNIT_SECONDS,
     ENV_API_TOKEN,
     ENV_HEARTBEAT_PATH,
     ENV_LOG_LEVEL,
@@ -82,6 +84,8 @@ class Source:
     headers: dict[str, str] = field(default_factory=dict)
     text_field: str = ""
     id_field: str = ""
+    # None takes the top-level max_signal_age.
+    max_signal_age_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,11 @@ class Rules:
 
     def targets_for(self, source: str) -> list[Target]:
         return [target for target in self.targets if target.source == source]
+
+    def max_age_for(self, source: str) -> float:
+        """How old a message from this source may be and still be traded."""
+        own = self.sources[source].max_signal_age_seconds
+        return self.max_signal_age_seconds if own is None else own
 
     def magics(self) -> frozenset[int]:
         return frozenset(source.magic for source in self.sources.values())
@@ -281,6 +290,43 @@ def _build_parser(name: str, raw: Any) -> Parser:
     )
 
 
+def _duration(raw: Any, where: str) -> float:
+    """Seconds in a duration such as "10m", "10m30s" or "1h35m40s"."""
+    text = str(raw).strip().lower() if isinstance(raw, str) else ""
+    match = DURATION_RE.match(text) if text else None
+    if match is None or not any(match.groups()):
+        raise ConfigError(
+            f"{where} must be a duration such as 10m, 10m30s or 1h35m40s "
+            "(units d, h, m, s, largest first)"
+        )
+    seconds = sum(
+        int(value) * unit
+        for value, unit in zip(match.groups(), DURATION_UNIT_SECONDS, strict=True)
+        if value
+    )
+    if seconds <= 0:
+        raise ConfigError(f"{where} must be longer than zero")
+    return float(seconds)
+
+
+def _max_age(block: dict[str, Any], where: str) -> float | None:
+    """max_signal_age, or the deprecated max_signal_age_seconds, from one
+    block; None when the block sets neither."""
+    prefix = f"{where}." if where else ""
+    has_duration = "max_signal_age" in block
+    has_seconds = "max_signal_age_seconds" in block
+    if has_duration and has_seconds:
+        raise ConfigError(
+            f"{prefix}max_signal_age and {prefix}max_signal_age_seconds are both set; "
+            "keep max_signal_age"
+        )
+    if has_duration:
+        return _duration(block["max_signal_age"], f"{prefix}max_signal_age")
+    if has_seconds:
+        return float(_decimal(block["max_signal_age_seconds"], f"{prefix}max_signal_age_seconds"))
+    return None
+
+
 def _build_source(name: str, raw: Any, parsers: dict[str, Parser]) -> Source:
     where = f"sources.{name}"
     if not SOURCE_NAME_RE.match(name):
@@ -297,6 +343,7 @@ def _build_source(name: str, raw: Any, parsers: dict[str, Parser]) -> Source:
     if parser not in parsers:
         raise ConfigError(f"{where}.parser names '{parser}', which parsers does not define")
     magic = _positive_int(block.get("magic"), f"{where}.magic")
+    max_age = _max_age(block, where)
 
     if source_type == SOURCE_TYPE_TELEGRAM:
         poll_seconds = float(
@@ -311,6 +358,7 @@ def _build_source(name: str, raw: Any, parsers: dict[str, Parser]) -> Source:
             magic=magic,
             chat=_string(str(block.get("chat") or ""), f"{where}.chat"),
             poll_seconds=poll_seconds,
+            max_signal_age_seconds=max_age,
         )
 
     url = _string(block.get("url"), f"{where}.url")
@@ -329,6 +377,7 @@ def _build_source(name: str, raw: Any, parsers: dict[str, Parser]) -> Source:
         headers=headers,
         text_field=str(block.get("text_field", "") or "").strip(),
         id_field=str(block.get("id_field", "") or "").strip(),
+        max_signal_age_seconds=max_age,
     )
 
 
@@ -472,17 +521,14 @@ def load_rules(path: str, terminals: set[str]) -> Rules:
     if not targets:
         raise ConfigError(f"{path} defines no targets")
 
-    max_age = _decimal(
-        raw.get("max_signal_age_seconds", DEFAULT_MAX_SIGNAL_AGE_SECONDS),
-        "max_signal_age_seconds",
-    )
+    max_age = _max_age(raw, "")
     return Rules(
         sources=sources,
         parsers=parsers,
         symbols=_symbol_map(raw.get("symbols"), "symbols"),
         targets=targets,
         dry_run=_bool(raw.get("dry_run"), "dry_run", False),
-        max_signal_age_seconds=float(max_age),
+        max_signal_age_seconds=DEFAULT_MAX_SIGNAL_AGE_SECONDS if max_age is None else max_age,
     )
 
 

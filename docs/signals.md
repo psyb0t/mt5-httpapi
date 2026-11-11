@@ -73,9 +73,31 @@ The account must have joined every channel or group a source reads: Telegram sen
 | `parsers` | The regexes that turn a message into a signal. |
 | `symbols` | The channel's symbol names mapped to one common name. |
 | `targets` | Which account copies which source, and how. |
-| `dry_run`, `max_signal_age_seconds` | `dry_run: true` sends no order anywhere and only logs them. A message first seen more than `max_signal_age_seconds` (default 300) after it was posted is not traded. |
+| `dry_run`, `max_signal_age` | `dry_run: true` sends no order anywhere and only logs them. `max_signal_age` is how old a message may be and still be traded, as a duration such as `10m`, `10m30s` or `1h35m40s` (units `d`, `h`, `m`, `s`, largest first; default `5m`). A source can set its own. See [How old a signal may be](#how-old-a-signal-may-be). |
 
 `config/signals.yml.example` shows every setting with a comment.
+
+### How old a signal may be
+
+`max_signal_age` decides two things: whether a message the copier sees late is still traded, and how long a terminal that is down keeps being retried for it. It is a duration made of whole units, largest first: `45s`, `10m`, `10m30s`, `4h`, `1h35m40s`, `1d`. A bare number is refused, because nothing would say whether it means seconds or minutes. The default is `5m`.
+
+Set it at the top of `signals.yml` for every source, and on a source to override it there. A channel trading the H4 chart can take a signal ten minutes after it was posted, while a scalping channel should not:
+
+```yaml
+max_signal_age: 5m
+
+sources:
+  swingchannel:
+    type: telegram
+    chat: "@some_h4_channel"
+    parser: classic
+    magic: 710001
+    max_signal_age: 10m
+```
+
+A message counts from when it was posted, not when the copier saw it. After a restart the copier reads each Telegram source's latest messages and trades the ones it has not seen yet that are still younger than `max_signal_age`; an order that already went out answers as a duplicate through its `client_order_id`, so nothing opens twice. While a scheduled VM reboot keeps the terminals down, the copier retries until the signal reaches the same age, and keeps reading new messages meanwhile.
+
+`max_signal_age_seconds` (a number of seconds) is the older name and still works; set one or the other, not both.
 
 ## Sources
 
@@ -104,7 +126,7 @@ sources:
 - **Name:** 1 to 16 letters, digits or `._-`. It becomes part of every order's `client_order_id`, which mt5-httpapi limits to 31 characters.
 - **`magic`:** a whole number above 0, different for every source. Every order from the source carries it, and the limits count by it. Pick numbers no EA on the same accounts uses.
 - **`type: telegram`:** `chat` is a username, a t.me link or a numeric id. New messages arrive live through telethon-plus. `poll_seconds` (default 60, minimum 10) is how often the copier also reads the chat's latest 20 messages, which catches anything the live feed missed. A channel that posts every half hour does fine with `poll_seconds: 600`. A shorter interval spends more of telethon-plus's read budget, which exists to keep Telegram from limiting the account.
-- **`type: websocket`:** `url` is a `ws://` or `wss://` address. Each frame is one message: the frame text itself, or, with `text_field`, a JSON object whose `text_field` holds the text. `id_field` names the field with the message id; without it each frame gets its own id. `id_field` is read only together with `text_field`; plain text frames always get a generated id. An id that is not 1 to 10 letters or digits is hashed to fit the `client_order_id`. A frame's time is when it arrived, so `max_signal_age_seconds` never skips a websocket message. `headers` are sent on connect. `${NAME}` in `url` or `headers` is replaced with the environment variable of that name, which the copier must have (add it to the `signals` service's `environment`).
+- **`type: websocket`:** `url` is a `ws://` or `wss://` address. Each frame is one message: the frame text itself, or, with `text_field`, a JSON object whose `text_field` holds the text. `id_field` names the field with the message id; without it each frame gets its own id. `id_field` is read only together with `text_field`; plain text frames always get a generated id. An id that is not 1 to 10 letters or digits is hashed to fit the `client_order_id`. A frame's time is when it arrived, so `max_signal_age` never skips a websocket message. `headers` are sent on connect. `${NAME}` in `url` or `headers` is replaced with the environment variable of that name, which the copier must have (add it to the `signals` service's `environment`).
 
 ## Parsers
 
@@ -221,7 +243,7 @@ A skip applies to one target only; the source's other targets still trade the si
 | `symbol_info_incomplete` | The terminal's symbol info lacks a field the sizing needs. |
 | `sl_at_entry` | `risk_percent` sizing with every SL at the entry price. `price_past_sl` normally catches this first. |
 
-A terminal that does not answer, or answers with an error, while the copier is still checking a signal (before any leg is sent) logs `terminal call failed, signal not traded`. Once the legs are being sent, each leg goes out on its own: when the call for one leg fails, that leg logs `terminal call failed, leg not sent` with its `leg`, `client_order_id`, `reason` (`TerminalUnreachable` or `TerminalRejected`) and `error`, and the remaining legs are still sent. A failed leg is not retried, so a signal can end up with fewer positions than legs planned; the log line names the missing one. An order the broker refuses logs `broker refused the order` with the `retcode` and the broker's comment, and does not stop the other legs either.
+A terminal that does not answer, or answers 502, 503 or 504, is retried every 15 seconds for as long as the signal is younger than its `max_signal_age`, and each wait logs `terminal down, retrying`. That covers a scheduled VM reboot (about four minutes with every terminal unreachable) and the 503 `REBOOT_PENDING` the API answers to writes just before one. The checks before the first leg only read, so they are run again from the start; a leg is resent with the same `client_order_id`, which the API answers as a duplicate if the first send went through. Any other error, or a signal that would be too old after the next wait, is not retried. While the copier is still checking a signal (before any leg is sent) that logs `terminal call failed, signal not traded`. Once the legs are being sent, each leg goes out on its own: when the call for one leg fails, that leg logs `terminal call failed, leg not sent` with its `leg`, `client_order_id`, `reason` (`TerminalUnreachable` or `TerminalRejected`) and `error`, and the remaining legs are still sent, so a signal can end up with fewer positions than legs planned; the log line names the missing one. An order the broker refuses logs `broker refused the order` with the `retcode` and the broker's comment, and does not stop the other legs either.
 
 A message is recorded as seen even when every target skipped it, failed or ran dry, so it is never retried.
 
@@ -230,7 +252,7 @@ A message is recorded as seen even when every target skipped it, failed or ran d
 - Every handled message is recorded in a SQLite file on the `signals-state` volume, so a message that arrives twice (live and in a poll, or again after a restart) trades once. Records are kept for 30 days.
 - Each leg's `client_order_id` makes the terminal itself refuse a second copy of the same order, so even a crash between placing an order and recording the message does not double it. See [Safe retries with client_order_id](trading-and-history.md#safe-retries-with-client_order_id).
 - The first time a Telegram source is read, its recent messages are recorded as seen and not traded, so adding a channel never fires its backlog.
-- Telegram messages posted while the copier or the live feed was down are picked up by the poll after it reconnects, and traded if they are younger than `max_signal_age_seconds`. A websocket source has no history, so frames sent while it is disconnected are lost.
+- Telegram messages posted while the copier or the live feed was down are picked up by the poll after it reconnects, and traded if they are younger than their source's `max_signal_age`. A websocket source has no history, so frames sent while it is disconnected are lost.
 
 ## Logs
 
@@ -246,12 +268,13 @@ Other `msg` values:
 | --- | --- |
 | `invalid configuration, not starting` | `signals.yml` or `config.yaml` has a mistake; `reason` names it. |
 | `first start, existing messages recorded as seen and not traded` | A Telegram source's first read. |
-| `message too old to trade` | The message is older than `max_signal_age_seconds`. |
+| `message too old to trade` | The message is older than its source's `max_signal_age`. |
 | `signal parsed` | A message matched `open`. |
 | `legs planned` | Volume and legs for one target, with `tps_without_leg` for TPs that got no leg. |
 | `dry run, order not sent` | A leg under `dry_run`. |
 | `order placed` | The broker filled the leg; carries the `ticket`. |
 | `order already placed` | The terminal found an order with this `client_order_id`. |
+| `terminal down, retrying` | The terminal did not answer or answered 502, 503 or 504; the call is tried again after `retry_in_seconds`. |
 | `terminal call failed, leg not sent` | The terminal did not answer, or answered with an error, for one leg's order; the other legs are still sent. |
 | `signal failed on this target` | An unexpected error on one target; the others still trade. |
 

@@ -6,6 +6,16 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## Unreleased
+
+### Added
+
+- **`max_signal_age` sets how old a signal may be, as a duration, for all sources or per source.** Write it as `10m`, `10m30s` or `1h35m40s` (units `d`, `h`, `m`, `s`); a source's own `max_signal_age` overrides the top-level one, so an H4 channel can accept a signal ten minutes old while the default stays `5m`. It decides whether a message seen late (after a restart, or caught by the poll) is still traded, and how long a terminal down for a reboot is retried. `max_signal_age_seconds` still works; setting both is a configuration error. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/#how-old-a-signal-may-be).
+
+### Fixed
+
+- **The signal copier retries a terminal that is down for a VM reboot instead of dropping the signal.** A signal that arrived while the terminal was unreachable, or while the API answered writes with 503 `REBOOT_PENDING`, logged `terminal call failed, signal not traded` (or `leg not sent`) and was never traded, because the message was already marked seen. With the default `reboot_interval: 30` that is about four minutes in every half hour. The copier now retries every 15 seconds on a refused connection or a 502, 503 or 504 while the signal is younger than its `max_signal_age`, and logs `terminal down, retrying`. A resent leg keeps its `client_order_id`, so it cannot open twice. The sources keep reading new messages while a retry waits. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
+
 ## [v4.33.0]: 2026-11-08
 
 ### Added

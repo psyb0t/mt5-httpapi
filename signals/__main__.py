@@ -40,11 +40,11 @@ async def run(settings: Settings) -> None:
     telegram_sources = [s for s in rules.sources.values() if s.type == SOURCE_TYPE_TELEGRAM]
     hub = None
     if telegram_sources:
-        hub = TelegramHub(settings, telegram_sources, state, engine.handle)
+        hub = TelegramHub(settings, telegram_sources, state, engine.submit)
         tasks.append(hub.run())
     for source in rules.sources.values():
         if source.type == SOURCE_TYPE_WEBSOCKET:
-            tasks.append(WebsocketSource(source, engine.handle).run())
+            tasks.append(WebsocketSource(source, engine.submit).run())
 
     logger.info(
         "signal copier started",
