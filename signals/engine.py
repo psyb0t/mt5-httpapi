@@ -286,6 +286,11 @@ class Engine:
             raise Skip("unknown_symbol")
         spec = SymbolSpec.from_info(info)
         price = entry_price(signal, spec)
+        if price <= 0:
+            # A terminal that just restarted answers symbol info with no quote
+            # (bid and ask 0) until its first tick. Checked as a price, 0 passes
+            # for "past the SL" and drops a signal the retry exists to save.
+            raise TerminalUnreachable(target.terminal, "no quote yet (price 0)")
         check_levels(signal, price, target, spec.point)
 
         items = await self._client.positions(target) + await self._client.orders(target)

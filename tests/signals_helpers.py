@@ -93,6 +93,9 @@ class FakeTerminal:
         # A terminal that is rebooting: this many requests, to any route,
         # have their connection refused before the terminal answers again.
         self.outage_requests = 0
+        # This many symbol lookups answer with no quote (bid and ask 0), the way
+        # a terminal answers in the first seconds after it restarts.
+        self.no_quote_requests = 0
         # client_order_id -> how many sends of that order answer 503 before
         # one goes through, the way the API refuses writes before a reboot.
         self.reboot_pending_orders: dict[str, int] = {}
@@ -112,6 +115,9 @@ class FakeTerminal:
             info = self.symbols.get(route.removeprefix("/symbols/"))
             if info is None:
                 return httpx.Response(404, json={"error": "symbol not found"})
+            if self.no_quote_requests > 0:
+                self.no_quote_requests -= 1
+                return httpx.Response(200, json={**info, "bid": 0.0, "ask": 0.0})
             return httpx.Response(200, json=info)
         if request.method == "GET" and route == "/positions":
             return httpx.Response(200, json=self.positions)

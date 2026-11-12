@@ -279,6 +279,23 @@ def test_a_signal_posted_during_a_reboot_trades_once_the_terminal_is_back(tmp_pa
     assert state.is_seen("testchan", "101")
 
 
+def test_a_terminal_with_no_quote_yet_is_retried_not_skipped(tmp_path, caplog):
+    terminal = FakeTerminal()
+    terminal.no_quote_requests = 2
+    clock = FakeClock()
+    engine, _, state = _engine(tmp_path, terminal=terminal, clock=clock)
+    with caplog.at_level(logging.INFO, logger="signals.engine"):
+        _run(engine, message())
+    assert [o["client_order_id"] for _, o in terminal.orders] == [
+        "testchan:101:1",
+        "testchan:101:2",
+        "testchan:101:3",
+    ]
+    assert clock.sleeps == [15.0, 15.0]
+    assert not any(r.msg == "signal skipped" for r in caplog.records)
+    assert state.is_seen("testchan", "101")
+
+
 def test_a_leg_refused_before_a_reboot_is_sent_again(tmp_path, caplog):
     terminal = FakeTerminal()
     terminal.reboot_pending_orders["testchan:101:2"] = 2
