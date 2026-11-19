@@ -378,11 +378,18 @@ Behavior:
   healthy or still starting is never touched, so running backtests on a working
   VM are never interrupted — the healthcheck stays green the whole time a
   terminal is serving.
+- Leaves a VM alone until it has been healthy once. The first `make up`
+  installs Windows, Python and MetaTrader, and the API the healthcheck probes
+  does not answer until that is done, which takes longer than the failing
+  streak; recreating the VM then would only restart the install. A VM that has
+  never been healthy is recovered only after `WATCHDOG_FIRST_BOOT_GRACE_SECONDS`
+  (default `10800`, 3 hours) from when the watchdog first saw it, so an
+  install that is truly stuck still gets a recovery.
 - Keeps a tiny state record per VM on a named volume, keyed by compose
   project + service (`/state/<project>.<service>.json` — stable across the
   recreate that recovery performs, unlike a container id): last restart,
-  attempt count, and when the VM
-  was last observed healthy.
+  attempt count, when the VM
+  was last observed healthy, and whether it has ever been healthy.
 - Enforces exponential backoff between recovery attempts
   (`WATCHDOG_BACKOFF_ATTEMPTS`, default `300,900,3600` — 5m → 15m → 1h), so a
   VM that crashes again immediately after recovery is not restarted into a
@@ -455,7 +462,7 @@ Set `WATCHDOG_WATCH_SIDECARS=0` to restore the VM-only scope.
 
 Environment overrides: `WATCHDOG_INTERVAL_SECONDS`, `WATCHDOG_MIN_FAILING_STREAK`,
 `WATCHDOG_IMAGE_FILTER`, `WATCHDOG_WATCH_SIDECARS`, `WATCHDOG_BACKOFF_ATTEMPTS`,
-`WATCHDOG_MAX_ATTEMPTS`, `WATCHDOG_RESET_SECONDS`, `WATCHDOG_COMPOSE_PROJECT`,
+`WATCHDOG_MAX_ATTEMPTS`, `WATCHDOG_RESET_SECONDS`, `WATCHDOG_FIRST_BOOT_GRACE_SECONDS`, `WATCHDOG_COMPOSE_PROJECT`,
 `WATCHDOG_STATE_DIR`, `WATCHDOG_DOCKER_SOCKET`, `WATCHDOG_SELF_ID`,
 `WATCHDOG_PROJECT_DIR`, `WATCHDOG_RECREATE_SCRIPT`, `WATCHDOG_RECREATE_TIMEOUT`.
 

@@ -250,6 +250,16 @@ MAX_ATTEMPTS = _env_int("WATCHDOG_MAX_ATTEMPTS", "3", minimum=1)
 # which silently makes MAX_ATTEMPTS unreachable and the give-up path dead code.
 RESET_SECONDS = _env_int("WATCHDOG_RESET_SECONDS", "1800", minimum=1)
 
+# A container that has never been healthy is still on its first boot: the
+# first `make up` installs Windows, Python and MetaTrader, and the API that the
+# healthcheck probes does not exist until that finishes, which takes far
+# longer than start_period plus the failing streak. Recreating it then only
+# restarts the install. So a service is left alone until it has been healthy
+# once, or until this many seconds have passed since the watchdog first saw it
+# without ever seeing it healthy (an install that is truly stuck still gets
+# recovered).
+FIRST_BOOT_GRACE_SECONDS = _env_int("WATCHDOG_FIRST_BOOT_GRACE_SECONDS", "10800", minimum=1)
+
 # Compose project to scope to. Empty = auto-discover from this container's own
 # labels (the watchdog runs as a service in the same project).
 COMPOSE_PROJECT = os.environ.get("WATCHDOG_COMPOSE_PROJECT", "")
@@ -432,6 +442,10 @@ def decide(state: dict, health_status: str, failing_streak: int, now: int) -> tu
     # RESET_SECONDS of proven stability.
     if health_status != "healthy":
         state["healthy_since"] = 0
+    else:
+        state["ever_healthy"] = True
+    if not state.get("ever_healthy"):
+        state.setdefault("first_seen", now)
 
     if health_status != "unhealthy":
         # Healthy or starting: never touch. Track when the current healthy run
@@ -448,6 +462,12 @@ def decide(state: dict, health_status: str, failing_streak: int, now: int) -> tu
     # Unhealthy from here on.
     if failing_streak < MIN_FAILING_STREAK:
         return "wait", f"unhealthy streak {failing_streak} < {MIN_FAILING_STREAK}"
+
+    if not state.get("ever_healthy"):
+        waited = now - state["first_seen"]
+        if waited < FIRST_BOOT_GRACE_SECONDS:
+            grace = FIRST_BOOT_GRACE_SECONDS
+            return "wait", f"never healthy yet, first boot or install ({waited}s of {grace}s grace)"
 
     attempts = state.get("attempts", 0)
     if attempts >= MAX_ATTEMPTS:

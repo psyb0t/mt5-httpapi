@@ -35,3 +35,5 @@ examples/
 # local caches, never part of a build
 .pytest_cache/
 .ruff_cache/
+
+.tutorial-video/

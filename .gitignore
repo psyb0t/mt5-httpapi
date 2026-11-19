@@ -90,3 +90,6 @@ git-update.sh.debot
 
 # Local agent and editor settings.
 *.local.json
+
+# Tutorial video runs (local scratch)
+.tutorial-video/

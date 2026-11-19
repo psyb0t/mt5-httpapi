@@ -6,14 +6,19 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
-## Unreleased
+## [v4.34.0]: 2026-11-19
 
 ### Added
 
 - **`max_signal_age` sets how old a signal may be, as a duration, for all sources or per source.** Write it as `10m`, `10m30s` or `1h35m40s` (units `d`, `h`, `m`, `s`); a source's own `max_signal_age` overrides the top-level one, so an H4 channel can accept a signal ten minutes old while the default stays `5m`. It decides whether a message seen late (after a restart, or caught by the poll) is still traded, and how long a terminal down for a reboot is retried. `max_signal_age_seconds` still works; setting both is a configuration error. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/#how-old-a-signal-may-be).
 
+### Changed
+
+- The documentation site loads a small visitor counter on every page.
+
 ### Fixed
 
+- **The vm-watchdog no longer recreates the VM during the first install.** On a first `make up`, Windows, Python and MetaTrader install before the API answers, which takes longer than the 10 failed healthchecks the watchdog waits for, so it recreated the VM partway through the install, up to three times, and the install never finished. The watchdog now leaves a VM alone until it has been healthy once. A VM that never becomes healthy is still recovered after `WATCHDOG_FIRST_BOOT_GRACE_SECONDS` (default 3 hours). See [VM crash watchdog](https://psyb0t.github.io/mt5-httpapi/operations/#vm-crash-watchdog).
 - **The signal copier no longer skips a signal because a restarted terminal has no quote yet.** In the first seconds after a terminal starts, symbol info answers with a bid and ask of 0 until the first tick. The price checks read that 0 as a price below any stop-loss and skipped the signal as `price_past_sl`, which defeated the retry for a signal that arrived during a reboot. A zero price is now treated like a terminal that is not ready: the copier waits 15 seconds and tries again until the signal reaches its `max_signal_age`. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
 - **The signal copier retries a terminal that is down for a VM reboot instead of dropping the signal.** A signal that arrived while the terminal was unreachable, or while the API answered writes with 503 `REBOOT_PENDING`, logged `terminal call failed, signal not traded` (or `leg not sent`) and was never traded, because the message was already marked seen. With the default `reboot_interval: 30` that is about four minutes in every half hour. The copier now retries every 15 seconds on a refused connection or a 502, 503 or 504 while the signal is younger than its `max_signal_age`, and logs `terminal down, retrying`. A resent leg keeps its `client_order_id`, so it cannot open twice. The sources keep reading new messages while a retry waits. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
 

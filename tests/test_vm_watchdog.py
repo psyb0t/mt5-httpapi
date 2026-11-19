@@ -31,6 +31,10 @@ def _load():
 def wd():
     module = _load()
     module.STATE_DIR = "unused-in-policy"
+    # Most tests start from an unhealthy VM the watchdog has never seen
+    # healthy, to exercise the policy that applies after the first boot. The
+    # first-boot grace has its own tests below, which set it back.
+    module.FIRST_BOOT_GRACE_SECONDS = 0
     return module
 
 
@@ -172,6 +176,49 @@ def test_unhealthy_at_streak_threshold_restarts(wd, tmp_path, recorder):
         mp.setattr(wd, "log", lambda *a, **k: None)
         assert wd.sweep_once(client, "mt5-httpapi") == 1
     assert recorder.services == [cid]
+
+
+# ── First boot ───────────────────────────────────────────────────────────────
+
+def test_a_vm_that_was_never_healthy_is_left_to_finish_its_first_install(wd):
+    """The first `make up` installs Windows, Python and MetaTrader; the API
+    the healthcheck probes does not exist until then, so the VM is unhealthy
+    long past the streak. Recreating it there restarted the install, twice,
+    before it could ever finish."""
+    wd.FIRST_BOOT_GRACE_SECONDS = 3600
+    wd.MIN_FAILING_STREAK = 10
+    state = wd.load_state("never-saved", state_dir="/nonexistent")
+    assert wd.decide(state, "starting", 0, 1000)[0] == "wait"
+    action, reason = wd.decide(state, "unhealthy", 40, 1000 + 1800)
+    assert action == "wait"
+    assert "never healthy" in reason
+    assert state["attempts"] == 0
+
+
+def test_a_first_install_that_never_comes_up_is_still_recovered(wd):
+    wd.FIRST_BOOT_GRACE_SECONDS = 3600
+    wd.MIN_FAILING_STREAK = 10
+    state = wd.load_state("never-saved", state_dir="/nonexistent")
+    wd.decide(state, "starting", 0, 1000)
+    assert wd.decide(state, "unhealthy", 200, 1000 + 3600)[0] == "restart"
+
+
+def test_a_vm_that_was_healthy_once_gets_no_first_boot_grace(wd):
+    wd.FIRST_BOOT_GRACE_SECONDS = 3600
+    wd.MIN_FAILING_STREAK = 10
+    state = wd.load_state("never-saved", state_dir="/nonexistent")
+    wd.decide(state, "healthy", 0, 1000)
+    assert wd.decide(state, "unhealthy", 10, 1600)[0] == "restart"
+
+
+def test_the_first_boot_record_survives_a_watchdog_restart(wd, tmp_path):
+    wd.FIRST_BOOT_GRACE_SECONDS = 3600
+    wd.MIN_FAILING_STREAK = 10
+    state = wd.load_state("vm", state_dir=str(tmp_path))
+    wd.decide(state, "healthy", 0, 1000)
+    wd.save_state("vm", state, state_dir=str(tmp_path))
+    again = wd.load_state("vm", state_dir=str(tmp_path))
+    assert wd.decide(again, "unhealthy", 10, 2000)[0] == "restart"
 
 
 # ── Image / label scoping ────────────────────────────────────────────────────
