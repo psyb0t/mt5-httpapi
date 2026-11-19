@@ -9,6 +9,8 @@ reached. A handler that errors *after* sending has already traded.
 from collections import namedtuple
 
 import MetaTrader5 as mt5
+
+import mt5api.mt5client as mt5client
 import pytest
 
 from mt5api.handlers import positions as positions_handler
@@ -150,6 +152,22 @@ def test_close_passes_a_custom_deviation_as_an_int(api_client, positions):
     sent = positions.sent_order()
     assert sent["deviation"] == 50
     assert isinstance(sent["deviation"], int)
+
+
+def test_close_uses_a_filling_type_the_symbol_allows(api_client, positions):
+    """The close was always sent as IOC, so a position on a FOK-only symbol
+    could never be closed through the API.
+    """
+    SymbolInfo = namedtuple("SymbolInfo", "filling_mode")
+    positions.set("positions_get", [_position()])
+    positions.set("symbol_info", SymbolInfo(filling_mode=mt5client.SYMBOL_FILLING_FOK))
+    positions.set("symbol_info_tick", Tick(bid=BID, ask=ASK))
+    positions.set("order_send", _result())
+
+    resp = api_client.delete(f"/positions/{TICKET}")
+
+    assert resp.status_code == 200
+    assert positions.sent_order()["type_filling"] == mt5.ORDER_FILLING_FOK
 
 
 def test_close_of_an_unknown_position_sends_nothing(api_client, positions):

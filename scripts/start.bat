@@ -434,9 +434,9 @@ if "!LA_MODE!"=="" set "LA_MODE=live"
 
 call :log "%START_LOG%" "Starting API (bg): !LA_BROKER!/!LA_ACCOUNT!/!LA_INSTANCE! on port !LA_PORT! (utc_offset=!LA_OFFSET! mode=!LA_MODE!)"
 if "!LA_INSTANCE!"=="default" (
-    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
+    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!" /MIN cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
 ) else (
-    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!/!LA_INSTANCE!" cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
+    start "MT5 API !LA_BROKER!/!LA_ACCOUNT!/!LA_INSTANCE!" /MIN cmd /c ""%SCRIPTS%\api_runner.bat" !LA_BROKER! !LA_ACCOUNT! !LA_INSTANCE! !LA_PORT! !API_TOKEN! !LA_OFFSET! !LA_MODE!"
 )
 exit /b 0
 

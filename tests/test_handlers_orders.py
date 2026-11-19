@@ -103,6 +103,43 @@ def test_market_buy_is_sent_at_the_ask(api_client, orders):
     assert orders.sent_order()["price"] == ASK
 
 
+SymbolInfo = namedtuple("SymbolInfo", "filling_mode")
+
+
+@pytest.mark.parametrize(
+    "filling_mode, expected",
+    [
+        (mt5client.SYMBOL_FILLING_FOK | mt5client.SYMBOL_FILLING_IOC, mt5.ORDER_FILLING_IOC),
+        (mt5client.SYMBOL_FILLING_FOK, mt5.ORDER_FILLING_FOK),
+        (mt5client.SYMBOL_FILLING_IOC, mt5.ORDER_FILLING_IOC),
+        (0, mt5.ORDER_FILLING_RETURN),
+    ],
+)
+def test_an_order_without_a_filling_type_uses_one_the_symbol_allows(api_client, orders, filling_mode, expected):
+    """A FOK-only symbol rejected the old fixed IOC default with retcode 10030
+    "Unsupported filling mode", so no order without type_filling could fill.
+    """
+    orders.set("symbol_info", SymbolInfo(filling_mode=filling_mode))
+    orders.set("symbol_info_tick", Tick(bid=BID, ask=ASK))
+    orders.set("order_send", _result())
+
+    resp = api_client.post("/orders", json={"symbol": "EURUSD", "type": "BUY", "volume": 0.1})
+
+    assert resp.status_code == 201
+    assert orders.sent_order()["type_filling"] == expected
+
+
+def test_an_explicit_filling_type_is_sent_as_given(api_client, orders):
+    orders.set("symbol_info", SymbolInfo(filling_mode=mt5client.SYMBOL_FILLING_FOK))
+    orders.set("symbol_info_tick", Tick(bid=BID, ask=ASK))
+    orders.set("order_send", _result())
+
+    resp = api_client.post("/orders", json={"symbol": "EURUSD", "type": "BUY", "volume": 0.1, "type_filling": "IOC"})
+
+    assert resp.status_code == 201
+    assert orders.sent_order()["type_filling"] == mt5.ORDER_FILLING_IOC
+
+
 def test_market_sell_is_sent_at_the_bid(api_client, orders):
     orders.set("symbol_info_tick", Tick(bid=BID, ask=ASK))
     orders.set("order_send", _result())
@@ -357,7 +394,8 @@ def test_without_a_client_order_id_nothing_is_looked_up(api_client, orders):
     resp = api_client.post("/orders", json=_buy())
 
     assert resp.status_code == 201
-    assert [c["fn"] for c in orders.calls] == ["order_send"]
+    # symbol_info is the filling-mode check, not a duplicate lookup.
+    assert [c["fn"] for c in orders.calls if c["fn"] != "symbol_info"] == ["order_send"]
     assert "duplicate" not in resp.get_json()
 
 

@@ -75,7 +75,7 @@ Inspect positions and pending orders, place or change trades, decode broker resu
 }
 ```
 
-All fields optional. `volume` defaults to full position, `deviation` defaults to 20. The close always goes out with `IOC` filling; you can't pick another policy here.
+All fields optional. `volume` defaults to full position, `deviation` defaults to 20. The close goes out with a filling policy the symbol accepts: `IOC` when the symbol allows it, otherwise `FOK`, otherwise `RETURN`; you can't pick another policy here.
 
 PUT and DELETE on a position answer the trade result on success, 404 for an unknown ticket, and 500 `{"error": "Failed to update position: <broker comment>"}` (or `close`) for any retcode other than 10009. PUT needs a non-empty body (400 `Request body required`); a field you leave out keeps its current value.
 
@@ -141,7 +141,7 @@ PUT and DELETE on a position answer the trade result on success, 404 for an unkn
 }
 ```
 
-Required: `symbol`, `type`, `volume`. Everything else is optional. `price` gets auto-filled for market orders. `position` and `position_by` (tickets) are passed through to MT5 too.
+Required: `symbol`, `type`, `volume`. Everything else is optional. `price` gets auto-filled for market orders. Without `type_filling`, the order goes out with a filling policy the symbol accepts (from the symbol's `filling_mode`): `IOC` when allowed, otherwise `FOK`, otherwise `RETURN`. Some brokers accept only `FOK` for forex; MetaQuotes-Demo is one. `position` and `position_by` (tickets) are passed through to MT5 too.
 
 | Status | When |
 | --- | --- |

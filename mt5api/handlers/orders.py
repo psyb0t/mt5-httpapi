@@ -10,6 +10,7 @@ from mt5api.logger import log
 from mt5api.mt5client import (
     EXPIRATION_REQUIRED_ERROR,
     build_order_request,
+    symbol_filling,
     ensure_initialized,
     ensure_symbol,
     m,
@@ -164,6 +165,8 @@ def create_order():
     req, err = build_order_request(body)
     if err:
         return jsonify({"error": err}), 400
+    if "type_filling" not in body:
+        req["type_filling"] = symbol_filling(m, body["symbol"])
 
     result = m(mt5.order_send, **req)
     if result is None:

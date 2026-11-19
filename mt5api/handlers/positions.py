@@ -2,7 +2,7 @@ from flask import jsonify, request
 
 import MetaTrader5 as mt5
 
-from mt5api.mt5client import ensure_initialized, m, to_dict, with_mt5
+from mt5api.mt5client import ensure_initialized, m, symbol_filling, to_dict, with_mt5
 
 
 @with_mt5
@@ -76,7 +76,7 @@ def close_position(ticket):
         "volume": volume,
         "type": close_type,
         "price": price,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": symbol_filling(m, pos.symbol),
         "deviation": int(body.get("deviation", 20)) if body else 20,
     }
 

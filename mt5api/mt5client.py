@@ -728,6 +728,31 @@ def parse_order_expiration(value):
     return utc_seconds_to_broker_seconds(seconds), None
 
 
+# symbol_info().filling_mode is a bit set of the filling policies a symbol
+# accepts. MQL5 reference, "Fill policy": SYMBOL_FILLING_FOK = 1,
+# SYMBOL_FILLING_IOC = 2. The Python SDK exports no names for these bits.
+SYMBOL_FILLING_FOK = 1
+SYMBOL_FILLING_IOC = 2
+
+
+def symbol_filling(call, symbol):
+    """The order filling type for a deal on symbol when the caller names none.
+
+    IOC when the symbol allows it (the default this API always sent), else
+    FOK, else RETURN. A broker that allows only FOK, such as MetaQuotes-Demo
+    for forex, rejected every IOC order with retcode 10030 "Unsupported
+    filling mode". call is the caller's `m`, so handlers keep their lock and
+    their test recorder. An unknown symbol keeps IOC.
+    """
+    info = call(mt5.symbol_info, symbol)
+    allowed = getattr(info, "filling_mode", None)
+    if not isinstance(allowed, int) or allowed & SYMBOL_FILLING_IOC:
+        return mt5.ORDER_FILLING_IOC
+    if allowed & SYMBOL_FILLING_FOK:
+        return mt5.ORDER_FILLING_FOK
+    return mt5.ORDER_FILLING_RETURN
+
+
 def build_order_request(body):
     """Build an MT5 order request dict from a JSON body. Returns (request, error).
 

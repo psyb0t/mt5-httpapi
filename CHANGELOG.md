@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.34.1]: 2026-11-19
+
+### Fixed
+
+- **Orders without `type_filling` and every position close now use a filling policy the symbol accepts.** The API always sent `IOC`, so on a broker that accepts only `FOK` for a symbol (MetaQuotes-Demo for forex, for example) every such order was rejected with retcode 10030 "Unsupported filling mode", and a position could not be closed through the API at all. It now reads the symbol's `filling_mode` and sends `IOC` when allowed, otherwise `FOK`, otherwise `RETURN`. An explicit `type_filling` on an order is still sent as given. See [Trading and history](https://psyb0t.github.io/mt5-httpapi/trading-and-history/).
+- **The API console windows open minimized.** Each terminal's API window ("MT5 API broker/account") opened on top of MetaTrader on every boot and hid it in noVNC. `start.bat` now starts them minimized; they stay in the taskbar.
+
 ## [v4.34.0]: 2026-11-19
 
 ### Added
