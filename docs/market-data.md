@@ -232,6 +232,8 @@ Examples:
 - `?timeframe=H1&from=2024_01_15&count=-100` — 100 candles ending at midnight UTC on 2024-01-15
 - `?timeframe=H1&from=2024_01_15_09_30_00&to=2024_01_15_16_00_00` — every H1 candle in the window
 
+A `from` far before the data the terminal already holds makes MetaTrader download its history back to that date before it answers. On a fresh install that took minutes for an anchor at the 1970 epoch, and the terminal's API serves nothing else meanwhile, so the request ends in nginx's 504 after 60 seconds. Anchor reads near the data you need.
+
 Use `count` when you want exactly N bars and do not care about the precise end time. Use `to` when you have a real window and want the whole damn thing. `count` adds weekend/holiday padding internally; `to` passes the range straight to `copy_rates_range`.
 
 **MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.

@@ -107,7 +107,7 @@ container. The source mount is read-only and module/build caches are ephemeral.
 
 `make status` is separate from the automated suite: it runs
 [`scripts/status.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/status.sh) against an already-running MT5 deployment and reports the
-live terminals and read-only API checks.
+live terminals and read-only API checks. Each request may take 15 seconds (`STATUS_CURL_TIMEOUT` sets another limit); one that times out or cannot connect counts as a failed check and the remaining checks still run. The exit code is the number of failed checks.
 
 `make lint` covers the scripts that run inside the VM as well as the host-side
 shell: `.ps1`, `.bat` and `.cmd` get a pure-ASCII check; `.ps1` also gets a

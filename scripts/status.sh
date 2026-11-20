@@ -46,6 +46,9 @@ if [ -z "${API_HOST_PORT:-}" ] && [ -f "${ROOT_DIR}/.env" ]; then
     API_HOST_PORT="$(sed -n "s/^API_HOST_PORT='\{0,1\}\([0-9]*\)'\{0,1\}$/\1/p" "${ROOT_DIR}/.env" | tail -n 1)"
 fi
 API_HOST_PORT="${API_HOST_PORT:-8888}"
+# Seconds each request may take. A request that times out or fails to connect
+# is reported as a failed check; it does not stop the remaining checks.
+STATUS_CURL_TIMEOUT="${STATUS_CURL_TIMEOUT:-15}"
 BASE="http://localhost:${API_HOST_PORT}/${FIRST_PREFIX}"
 
 # Detect auth
@@ -58,18 +61,18 @@ fi
 api() {
     local method="$1" path="$2"
     if [ -n "$AUTH" ]; then
-        curl -s --max-time 15 -X "$method" -H "Authorization: Bearer ${TOKEN}" "${BASE}${path}"
+        curl -s --max-time "$STATUS_CURL_TIMEOUT" -X "$method" -H "Authorization: Bearer ${TOKEN}" "${BASE}${path}" || true
     else
-        curl -s --max-time 15 -X "$method" "${BASE}${path}"
+        curl -s --max-time "$STATUS_CURL_TIMEOUT" -X "$method" "${BASE}${path}" || true
     fi
 }
 
 api_status() {
     local method="$1" path="$2"
     if [ -n "$AUTH" ]; then
-        curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X "$method" -H "Authorization: Bearer ${TOKEN}" "${BASE}${path}"
+        curl -s -o /dev/null -w '%{http_code}' --max-time "$STATUS_CURL_TIMEOUT" -X "$method" -H "Authorization: Bearer ${TOKEN}" "${BASE}${path}" || true
     else
-        curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X "$method" "${BASE}${path}"
+        curl -s -o /dev/null -w '%{http_code}' --max-time "$STATUS_CURL_TIMEOUT" -X "$method" "${BASE}${path}" || true
     fi
 }
 
@@ -93,7 +96,7 @@ echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get
 
 # Auth test (only if token is configured)
 if [ -n "$TOKEN" ]; then
-    CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${BASE}/ping")
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${BASE}/ping" || true)
     [ "$CODE" = "401" ] &&
         pass "/ping without token returns 401" ||
         fail "/ping no-auth" "expected 401 got $CODE"
@@ -223,11 +226,9 @@ R_COUNT=$(echo "$RATES" | python3 -c "import sys,json; print(len(json.load(sys.s
     pass "GET rates count=0 returns empty" ||
     fail "GET rates count=0" "got $R_COUNT"
 
-# Negative count with ancient from (pre-data) should return empty, not crash
-CODE=$(api_status GET "/symbols/${TEST_SYM}/rates?timeframe=W1&from=86400&count=-10")
-[ "$CODE" = "200" ] &&
-    pass "GET rates backward from epoch doesn't crash (HTTP $CODE)" ||
-    fail "GET rates backward from epoch" "got HTTP $CODE"
+# No check anchors rates far in the past: the terminal then downloads its
+# history back to that date, which holds the API for minutes on a fresh
+# install. The unit tests cover an anchor before the first bar.
 
 # Range mode: from+to
 DAY_AGO=$((NOW - 86400))

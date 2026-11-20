@@ -19,6 +19,11 @@ WORKDIR /app
 #
 # pytest runs the suite. requests is what tests/live/ (`make test-live`, which
 # runs in this same image) talks to the target stack with.
+# curl: tests/test_status_script.py runs scripts/status.sh, which calls the
+# API with curl, against a stub server.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements-api.txt requirements-mcpunifier.txt requirements-signals.txt /tmp/
 RUN grep -v -i '^MetaTrader5' /tmp/requirements-api.txt > /tmp/req-test.txt && \
     pip install --no-cache-dir -r /tmp/req-test.txt -r /tmp/requirements-mcpunifier.txt \
@@ -45,6 +50,7 @@ COPY scripts/config_helper.py \
     scripts/desktop_heap.py \
     scripts/reboot_guard.py \
     scripts/healthcheck.sh \
+    scripts/status.sh \
     scripts/rotate-logs.sh \
     scripts/verify_binaries.py \
     scripts/wickworks-healthcheck.py \

@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.34.2]: 2026-11-20
+
+### Fixed
+
+- **`make status` passes on a fresh install.** Its rates check asked for weekly bars anchored at the 1970 epoch, which made MetaTrader download history back that far; the terminal's API answered nothing else for minutes, nginx returned 504, and `status.sh` stopped at that check (curl exit 28 under `set -e`) without running the rest. The check is gone, and a request that times out or cannot connect now counts as one failed check while the others still run. `STATUS_CURL_TIMEOUT` sets the per-request limit (15 seconds by default). See [Operations](https://psyb0t.github.io/mt5-httpapi/operations/).
+- The rates docs say that an anchor far before the terminal's data makes MetaTrader download history first, which can take minutes. See [Market data](https://psyb0t.github.io/mt5-httpapi/market-data/).
+
 ## [v4.34.1]: 2026-11-19
 
 ### Fixed
