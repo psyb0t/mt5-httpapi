@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.34.3]: 2026-11-23
+
+### Fixed
+
+- **The VM starts MetaTrader and the API after every reboot again.** `install.bat` created the `MT5Start` logon task with `schtasks`, which gives the trigger a start boundary of the guest's local time at that moment. A logon trigger never fires before its boundary, so when the guest clock ran ahead during the first install and was corrected later, every reboot (the scheduled one, a crash, a watchdog recreate) logged on and started nothing; the VM stayed unhealthy and `vm-watchdog` recreated it into the same state. `start.bat` now runs `scripts/ensure_start_task.ps1` on every boot, and `install.bat` runs it right after creating the task. It re-registers the task with no start boundary, starting and running on battery power allowed, and no time limit (the old task would have stopped `start.bat` and its health loop after 72 hours). It logs `MT5Start ok` or what it fixed to `start.log`. An existing install is fixed the first time `start.bat` runs on the new scripts; if its trigger is already stuck, run `make up`, then `schtasks /run /tn MT5Start` once in the VM. See [Operations](https://psyb0t.github.io/mt5-httpapi/operations/#startup-after-a-reboot).
+
 ## [v4.34.2]: 2026-11-20
 
 ### Fixed

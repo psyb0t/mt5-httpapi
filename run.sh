@@ -81,6 +81,8 @@ cp "${DIR}/scripts/reboot.bat" "${DIR}/data/shared/scripts/reboot.bat"
 cp "${DIR}/scripts/reboot_guard.py" "${DIR}/data/shared/scripts/reboot_guard.py"
 # Boot-stamped lock acquire used by both start.bat and install.bat.
 cp "${DIR}/scripts/acquire_lock.ps1" "${DIR}/data/shared/scripts/acquire_lock.ps1"
+# Keeps the MT5Start logon task free of a start boundary and battery limits.
+cp "${DIR}/scripts/ensure_start_task.ps1" "${DIR}/data/shared/scripts/ensure_start_task.ps1"
 cp "${DIR}/scripts/api_runner.bat" "${DIR}/data/shared/scripts/api_runner.bat"
 cp "${DIR}/scripts/compile-warmup-ea.bat" "${DIR}/data/shared/scripts/compile-warmup-ea.bat"
 

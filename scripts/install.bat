@@ -95,6 +95,10 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 call :log "  MT5Start task created."
+:: schtasks gives the logon trigger a StartBoundary of "now" and keeps the
+:: battery and 72-hour defaults; ensure_start_task.ps1 explains why each one
+:: can stop every later boot, and re-registers the task without them.
+call :ensure_start_task
 
 :: Remove startup folder entries - schtask takes over from next boot
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\start.bat" 2>nul
@@ -359,6 +363,15 @@ exit /b 0
 
 
 :: ==================================================================
+:ensure_start_task
+set "TASK_OUT=%TEMP%\mt5_start_task.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\ensure_start_task.ps1" -StartBat "%SCRIPTS%\start.bat" > "%TASK_OUT%" 2>&1
+set "TASK_EC=!errorlevel!"
+for /f "usebackq delims=" %%A in ("%TASK_OUT%") do call :log "  %%A"
+del "%TASK_OUT%" 2>nul
+if !TASK_EC! neq 0 call :log "  WARN ensure_start_task.ps1 failed (exit !TASK_EC!), MT5Start keeps its old definition."
+exit /b 0
+
 :log
 echo [%date% %time%] %~1
 echo [%date% %time%] %~1 >> "%INSTALL_LOG%"

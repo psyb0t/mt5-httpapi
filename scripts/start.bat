@@ -89,6 +89,21 @@ if !errorlevel! neq 0 (
 )
 call :log "%START_LOG%" "install.bat done."
 
+:: -- Keep the MT5Start logon task able to fire --------------------
+:: Installs made before ensure_start_task.ps1 existed carry a logon trigger
+:: with a StartBoundary from the first install's guest clock; once that clock
+:: corrects itself the trigger is "in the future" and no later boot runs this
+:: script. The task fires whenever this script does run (a manual start, or
+:: once that time passes), so fixing it here heals those installs. Only after
+:: install.bat: stage 1 decides it is a first boot by the task being absent.
+:: Re-registering does not stop this running instance (checked on a live VM).
+set "TASK_OUT=%TEMP%\mt5_start_task.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPTS%\ensure_start_task.ps1" -StartBat "%SCRIPTS%\start.bat" > "%TASK_OUT%" 2>&1
+set "TASK_EC=!errorlevel!"
+for /f "usebackq delims=" %%A in ("%TASK_OUT%") do call :log "%START_LOG%" "%%A"
+del "%TASK_OUT%" 2>nul
+if !TASK_EC! neq 0 call :log "%START_LOG%" "WARN: ensure_start_task.ps1 failed (exit !TASK_EC!)."
+
 :: -- Pip install --------------------------------------------------
 :: Install base deps first (pyyaml required for config_helper.py below).
 :: numpy<2 pin: MetaTrader5 5.0.5735 was built against numpy 1.x and breaks

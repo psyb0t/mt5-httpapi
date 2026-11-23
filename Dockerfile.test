@@ -45,6 +45,7 @@ COPY config/config.yaml.example config/signals.yml.example ./config/
 COPY scripts/config_helper.py \
     scripts/start.bat \
     scripts/install.bat \
+    scripts/ensure_start_task.ps1 \
     scripts/check_health.py \
     scripts/api_runner.bat \
     scripts/desktop_heap.py \

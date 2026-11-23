@@ -537,6 +537,12 @@ When every API is idle the guard creates `reboot.draining` in the shared folder 
 
 `reboot_max_postpone` (minutes, default 360) caps the wait, so a job that never ends cannot keep a wedged VM from its reboot. The guard then reboots anyway and logs `reason=max_postpone` with what was still busy. `0` turns the guard off. An API that does not answer counts as idle, and a guard that fails logs `reason=guard_error` and lets the reboot go ahead: the guard decides when, never whether. Reboots made during boot (`pip-changed`, `install-requested`) happen before any API is up and skip the guard.
 
+### Startup after a reboot
+
+`start.bat` runs at every logon through the `MT5Start` scheduled task, which `install.bat` creates on the first boot. On every boot after the install, `start.bat` runs [`scripts/ensure_start_task.ps1`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/ensure_start_task.ps1), which keeps three things true about that task: its logon trigger has no start boundary, it starts and keeps running on battery power, and it has no time limit. The start boundary matters most. `schtasks` sets it to the guest's local time when it creates the task, and a logon trigger never fires before its boundary. If the guest clock ran ahead during the first install and was corrected later, the boundary is in the future: every reboot logs on without starting MetaTrader or the API, and the watchdog recreates the VM into the same state. The script writes `MT5Start ok`, or `MT5Start re-registered (<what was wrong>)`, to `start.log`.
+
+An install made before v4.34.3 is fixed the first time `start.bat` runs on the new scripts. If its trigger is already stuck, run `make up` to copy the new scripts, then start the task once by hand in the VM (noVNC): open a command prompt and run `schtasks /run /tn MT5Start`.
+
 ### The probe budget: why the ports are probed concurrently
 
 The check's wall clock used to be the **product** of the probe timeout and the
