@@ -98,7 +98,7 @@ targets:
       XAUUSD: GOLD            # or name a symbol outright
     netting_tp: first         # netting accounts hold one position: use TP1 (first) or the last TP
     deviation: 20             # max price deviation for the market order, in points
-    # type_filling: FOK       # when the broker refuses the default IOC
+    # type_filling: FOK       # force one policy; by default the API picks one the symbol accepts
     limits:
       max_open_per_source: 2
     dry_run: true

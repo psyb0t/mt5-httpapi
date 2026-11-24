@@ -1,8 +1,7 @@
 ---
 title: "Backtesting"
 description: "Run Strategy Tester jobs over HTTP: build the tester files, start and cancel jobs, poll their status and download the reports."
-nav_order: 5
-has_children: true
+sidebar_position: 10
 ---
 
 # Backtesting without babysitting MT5
@@ -42,7 +41,7 @@ running to back the live SDK, a Strategy Tester subprocess against the same
 directory exits silently with code `0` and produces no report. `mode: backtest`
 skips the auto-launch and the live-mode SDK init, leaving the data dir free
 for the tester. Pick the broker/account namespace whose credentials you want
-injected into the run's `[Common]` section — e.g. a dedicated
+injected into the run's `[Common]` section, e.g. a dedicated
 `darwinex/tester` entry next to your live `darwinex/main`.
 
 If your broker uses suffixed symbols like `EURUSDp` or `EURUSD.p`, set
@@ -63,9 +62,9 @@ symbols, set `symbol_suffix: ""` explicitly.
 For a plain backtest, leave `[Tester].Optimization=0` or omit it. For an
 optimization, set `[Tester].Optimization` to one of:
 
-- `1` — slow complete algorithm
-- `2` — fast genetic algorithm
-- `3` — all symbols selected in Market Watch
+- `1`: slow complete algorithm
+- `2`: fast genetic algorithm
+- `3`: all symbols selected in Market Watch
 
 Optimization runs require a `.set` file whose input parameters already contain
 optimization ranges. mt5-httpapi can now either stage an MT5-saved `.set`
@@ -214,8 +213,8 @@ the host-managed pool:
 
 ```
 assets/
-  experts/   # *.ex5 — host-managed expert advisors (mounted read-only)
-  sets/      # *.set — host-managed parameter files
+  experts/   # *.ex5, host-managed expert advisors (mounted read-only)
+  sets/      # *.set, host-managed parameter files
 ```
 
 The `docker-compose.yml` mount `./assets:/shared/assets:ro` exposes them inside
@@ -458,7 +457,7 @@ cache when no log line names that symbol. `optimization_cache` also carries
   "job_id": "b05643…",
   "status": "completed",
   "broker": "darwinex",
-  "account": "live",
+  "account": "tester",
   "report_name": "mode3-gbpcad-m15-last5y-rerun5.symbols.xml",
   "report_url": "/backtest/b05643…/report",
   "log_url": "/backtest/b05643…/log",
@@ -560,18 +559,22 @@ curl -sS -X POST "$URL/backtest/build-ini" \
   > tester.ini
 
 # 2. Submit using a host-managed expert + set already sitting in assets/.
-JOB=$(curl -sS -X POST "$URL/backtest" \
+SUBMIT=$(curl -sS -X POST "$URL/backtest" \
   -H "Authorization: Bearer $TOK" \
   -F "ini=@tester.ini" \
   -F "expert_name=EA Studio NZDJPY M15 1615044595.ex5" \
-  -F "set_name=ea studio nzdjpy m15 1615044595.set" \
-  | jq -r .job_id)
+  -F "set_name=ea studio nzdjpy m15 1615044595.set")
+JOB=$(printf '%s' "$SUBMIT" | jq -r '.job_id // empty')
+[ -n "$JOB" ] || { printf '%s\n' "$SUBMIT"; false; }
 
-# 3. Poll until done.
+# 3. Poll while the job is queued or running; any other status ends the loop.
 while :; do
   STATUS=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB" | jq -r .status)
-  echo "$STATUS"; [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break
-  sleep 30
+  echo "$STATUS"
+  case "$STATUS" in
+    queued|running) sleep 30 ;;
+    *) break ;;
+  esac
 done
 
 # 4. Fetch the report.
@@ -580,50 +583,4 @@ curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB/report" -o report.h
 
 ### Optimization example
 
-This assumes you already created a `.set` file in MT5 with optimization ranges
-enabled and placed it in `assets/sets/` or plan to upload it inline.
-
-```bash
-export URL=http://127.0.0.1:8888/darwinex/tester
-export TOK=changeme-mt5-httpapi-token
-
-# Build the INI, submit the multipart job, poll to completion, then print both
-# the parsed API summary and the first rows from the raw MT5 XML report.
-tmp_ini=$(mktemp) && \
-job_json=$(mktemp) && \
-trap 'rm -f "$tmp_ini" "$job_json"' EXIT && \
-curl -sS -X POST "$URL/backtest/build-ini" \
-  -H "Authorization: Bearer $TOK" \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"GBPCAD","timeframe":"M15","expert":"EA Studio GBPCAD M15 1615044595.ex5","last_years":1,"modelling":"open-prices","expert_parameters":"ea studio gbpcad m15 1615044595.take-profit-opt-80-92-step4.set","optimization":1,"optimization_criterion":0,"report_name":"gbpcad-m15-last1y-openprices-opt"}' \
-  > "$tmp_ini" && \
-curl -sS -X POST "$URL/backtest" \
-  -H "Authorization: Bearer $TOK" \
-  -F "ini=@$tmp_ini;filename=tester.ini" \
-  -F "expert_name=EA Studio GBPCAD M15 1615044595.ex5" \
-  -F "set_name=ea studio gbpcad m15 1615044595.take-profit-opt-80-92-step4.set" \
-  -F "top_passes=20" \
-  > "$job_json" && \
-JOB=$(jq -r '.job_id' "$job_json") && \
-echo "Submitted job: $JOB" && \
-while :; do \
-  STATUS_JSON=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB") && \
-  STATUS=$(printf '%s' "$STATUS_JSON" | jq -r '.status') && \
-  echo "Status: $STATUS" && \
-  [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break; \
-  sleep 10; \
-done && \
-echo && echo "Final API summary:" && \
-printf '%s\n' "$STATUS_JSON" | jq '{job_id,status,exit_code,duration_seconds,optimization_results}' && \
-echo && echo "Report preview:" && \
-curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB/report" \
-  | grep -E '(<Row>|<Cell><Data ss:Type="String">|<Cell><Data ss:Type="Number">|<Cell ss:StyleID="[^"]+"><Data ss:Type="Number">)' \
-  | head -n 60
-```
-
-Notes:
-
-- Use a terminal configured with `mode: backtest`, not a live terminal namespace.
-- Optimization results depend on the ranges encoded in the `.set` file. If no ranges are enabled in MT5, optimization is not meaningful.
-- `optimization_results` is a convenience summary. For modes `1` and `2`, the raw XML at `/report` remains the full source of truth. For mode `3`, the parsed `.opt` cache plus `optimization_cache` metadata are the best debugging source because `/report` is the MT5 `.symbols.xml` header export.
-- If a metric you expect is missing from `optimization_results` in mode `1` or `2`, first check the raw XML report. For XML rows the API preserves MT5's exported columns rather than remapping them to a fixed schema; mode `3` cache rows have the fixed column set listed above.
+The [optimization guide](backtest-optimization.md#end-to-end-example-script) has the script for this: it builds the INI from a `.set` file with optimization ranges enabled, submits the job, polls it and prints `optimization_results`, for all three modes. [Raw artifacts and debugging](backtest-optimization.md#raw-artifacts-and-debugging) says what to read when the results look wrong.

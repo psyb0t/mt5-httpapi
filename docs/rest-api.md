@@ -1,11 +1,10 @@
 ---
 title: "REST API"
 description: "URL routing per broker and account, bearer auth, health checks, terminal control, account info, broker time and the full endpoint index."
-nav_order: 4
-has_children: true
+sidebar_position: 5
 ---
 
-# REST API — MT5 without the clicky bullshit
+# REST API: MT5 without the clicky bullshit
 
 One HTTP surface for routing, auth, health, terminal control, account state, and MT5's cursed broker-time timestamps.
 
@@ -44,7 +43,7 @@ Example: with a `roboforex/main` terminal in `config.yaml`'s `terminals:` list, 
 If `api_token` is set in `config.yaml`, include the token on every request:
 
 ```bash
-export MT5_API_TOKEN=$(grep ^api_token config/config.yaml | awk -F'"' '{print $2}')
+export MT5_API_TOKEN=$(python3 scripts/config_helper.py api_token)
 curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/roboforex/main/ping
 ```
 
@@ -69,15 +68,18 @@ Routes of a feature that is off don't exist, so they answer 404.
 
 ### Errors
 
-Errors are JSON with an `error` string. The common ones any route can throw at you (the 503/504 MT5 ones only on routes that call the SDK):
+The API's own errors are JSON with an `error` string. The common ones any route can throw at you (the 503/504 MT5 ones only on routes that call the SDK):
 
 | Status | When |
 | --- | --- |
 | 401 | Missing or wrong bearer token |
-| 413 | Body over `max_request_body_bytes` (4 MiB) or, for uploads, `max_upload_body_bytes` (25 MiB); see [Installation and configuration](installation-and-configuration.md) |
+| 413 | Body over `max_request_body_bytes` (4 MiB) or, for uploads, `max_upload_body_bytes` (25 MiB); see [Installation and configuration](installation-and-configuration.md). `POST /compile` skips this check and caps its body itself ([Compiling MQL5](compiling.md)), and `POST /symbols/import` has a tighter cap of its own |
 | 503 | `MT5 not initialized`, queue full, or `mt5 call is wedged` (with `Retry-After`); see [Concurrency and backpressure](operations.md#concurrency-and-backpressure) |
+| 503 | `MT5 not initialized` on a `mode: backtest` terminal, every time, from every route that reads or trades through the SDK (account, terminal info, symbol details, ticks, rates, orders, positions, history); retrying never helps, and `/ping` shows the `mode`. There `GET /symbols` answers 409 instead and `POST /terminal/init` answers 500 |
 | 503 | `REBOOT_PENDING` on a write right before a scheduled reboot (with `Retry-After: 120`) |
 | 504 | `mt5 call timed out` |
+
+Some errors come from Flask or nginx instead and are HTML or plain text, not JSON: an unknown path or method on a terminal (Flask's 404 or 405 page, which includes the routes of a feature that is off), a `POST /orders`, `PUT /orders/:ticket` or `PUT /positions/:ticket` body sent without `Content-Type: application/json` (415) or with broken JSON (400), an unhandled exception (500), and nginx's own 404 `no route`, 413, 502 and 504. Check the `Content-Type` before parsing an error body.
 
 ### Health
 
@@ -155,8 +157,7 @@ Errors are JSON with an `error` string. The common ones any route can throw at y
 }
 ```
 
-**POST `/terminal/init`**, **POST `/terminal/shutdown`**, and
-**POST `/terminal/restart`**:
+**POST `/terminal/init`**, **POST `/terminal/shutdown`**, and **POST `/terminal/restart`**:
 
 ```json
 { "success": true }
@@ -165,9 +166,8 @@ Errors are JSON with an `error` string. The common ones any route can throw at y
 On failure `init` answers 500 `{"success": false, "error": "<MT5 last_error>"}` and `restart` answers 500 `{"success": false, "error": "Terminal restart failed"}`.
 
 The API initializes itself on the first real request. You almost never need to poke these endpoints by hand unless the terminal is being a dick.
-`shutdown` leaves `terminal64.exe` running; a later MT5-backed request can
-initialize the SDK connection again. `restart` kills and relaunches only the
-terminal selected by this API process and may take several minutes.
+
+`shutdown` leaves `terminal64.exe` running; a later MT5-backed request can initialize the SDK connection again. `restart` kills and relaunches only the terminal selected by this API process and may take several minutes.
 
 ### Account
 
@@ -214,7 +214,7 @@ No account logged in: 404 `{"error": "No account logged in"}`.
 
 ### Broker time vs real UTC
 
-MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2 — so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
+MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2, so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
 
 The MT5 Python SDK doesn't expose `TimeCurrent()` / `TimeGMT()`, so the API can't auto-detect this. Instead, set `utc_offset` per terminal in `config.yaml`:
 

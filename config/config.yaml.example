@@ -60,7 +60,7 @@ wickworks:
   timeout: "30s"
 
 tailscale:
-  auth_key: ""       # leave empty to disable the tailscale sidecar entirely
+  auth_key: ""       # needed by the tailscale sidecar, which runs only once its docker-compose.yml block is uncommented
   login_server: ""   # Headscale login server URL; empty = Tailscale cloud
 
 # Chart Deployments (chartctl): remote EA hosting. Stage .ex5/.set
@@ -115,7 +115,7 @@ telegram:
   auth_key: ""
 
 # Extra pip packages installed in the VM on every boot.
-# MetaTrader5, flask, waitress, and flask-compress are always installed.
+# The base packages pinned in requirements-api.txt are always installed.
 requirements: []
 
 # MT5 broker accounts. Structure: accounts.<broker>.<account_name>

@@ -1,7 +1,7 @@
 ---
 title: "Signal copier"
 description: "Copy trade signals from Telegram channels or a websocket feed onto MT5 accounts, with regex parsers, per-account sizing, TP legs and limits."
-nav_order: 7
+sidebar_position: 14
 ---
 
 # Signal copier: trade signals from Telegram and other feeds
@@ -201,7 +201,7 @@ The rest:
 - `require_sl` (default `true`): skip signals without an SL.
 - `max_entry_slippage_points`: skip when the price is more than this many points worse than the signal's entry (above it for a buy, below it for a sell). With an entry range the far edge counts. Signals without an entry are not checked.
 - `deviation` (default 20): the market order's maximum price deviation in points.
-- `type_filling`: `FOK`, `IOC` or `RETURN`, for brokers that refuse the API's default `IOC`. It is not checked at startup; the API ignores any other value.
+- `type_filling`: `FOK`, `IOC` or `RETURN`, to force one policy; without it the API picks one the symbol accepts. It is not checked at startup, and any other value makes the API send the order with no filling policy at all. See [Trading and history](trading-and-history.md#orders).
 - `dry_run`: log this target's orders without sending them.
 
 ## Take profit legs
@@ -275,7 +275,11 @@ Other `msg` values:
 | `order placed` | The broker filled the leg; carries the `ticket`. |
 | `order already placed` | The terminal found an order with this `client_order_id`. |
 | `terminal down, retrying` | The terminal did not answer or answered 502, 503 or 504; the call is tried again after `retry_in_seconds`. |
+| `terminal call failed, signal not traded` | The terminal did not answer, or answered with an error, while the copier was still checking the signal, before any leg was sent. |
 | `terminal call failed, leg not sent` | The terminal did not answer, or answered with an error, for one leg's order; the other legs are still sent. |
+| `broker refused the order` | The broker answered a leg with a retcode other than 10009 (`DONE`); carries `retcode` and `broker_comment`. The other legs are still sent. |
+| `telegram updates disconnected, reconnecting` | The live Telegram feed dropped; the copier reconnects, and the poll picks up what was missed. |
+| `websocket source disconnected, reconnecting` | A websocket source dropped; frames sent while it is down are lost. |
 | `signal failed on this target` | An unexpected error on one target; the others still trade. |
 
 The `signals` service also reads these environment variables:

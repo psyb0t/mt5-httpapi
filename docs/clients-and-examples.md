@@ -1,7 +1,7 @@
 ---
 title: "Clients and examples"
 description: "Copy-paste curl calls, the typed Go client in clients/go, and technical analysis request examples for the REST API."
-nav_order: 9
+sidebar_position: 16
 ---
 
 # Clients, examples, and copy-pasteable shit
@@ -23,7 +23,7 @@ Working REST calls, the typed Go client, and TA examples. Copy the bit you need 
 
 ```bash
 export MT5_API_URL=http://localhost:8888/roboforex/main
-export MT5_API_TOKEN=$(grep ^api_token config/config.yaml | awk -F'"' '{print $2}')  # omit if no auth configured
+export MT5_API_TOKEN=$(python3 scripts/config_helper.py api_token)  # empty when no auth is configured
 
 # Check your balance
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/account
@@ -62,7 +62,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" http://localhost:8888/ftmo/challe
 curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/history/deals?from=$(date -d '1 day ago' +%s)&to=$(date +%s)"
 ```
 
-## Go Client
+## Go client
 
 The typed Go client in [`clients/go/`](https://github.com/psyb0t/mt5-httpapi/tree/master/clients/go) covers the live terminal,
 market data, orders, positions, and history. Backtest, Chart Deployments, file
@@ -163,21 +163,22 @@ HTTP status maps to typed errors you can `errors.Is()` against:
 | 429 | `aichteeteapee.ErrTooManyRequests` |
 | 500 | `aichteeteapee.ErrInternalServer` |
 | 502 | `aichteeteapee.ErrBadGateway` |
-| 503 | `mt5.ErrNotInitialized` (MT5 still booting) |
+| 503 | `mt5.ErrNotInitialized` (MT5 not initialized yet, the SDK queue full or wedged, a reboot pending, or a `mode: backtest` terminal) |
 | 504 | `aichteeteapee.ErrGatewayTimeout` |
 | any other non-2xx | `aichteeteapee.ErrUnexpectedResponseStatus` |
 
 `mt5.New` returns `mt5.ErrEmptyBaseURL` without a `BaseURL`, and the methods that
 take a request struct return `mt5.ErrNilRequest` when it is nil.
 
-With the import alias used above, `mt5.IsNotInitialized(err)` shortcuts the
-common 503 retry case.
+With the import alias used above, `mt5.IsNotInitialized(err)` matches every
+503. Most of them pass if you retry later, but on a `mode: backtest` terminal
+the routes that read or trade through the SDK answer 503 every time.
 
-## Technical Analysis
+## Technical analysis
 
 Pick your poison:
 
-**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)** — bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, swing structure, S/R levels, dozens more). Primitives only — wickworks emits raw indicator series and SMC structural facts; interpretive signals (divergences, crossover events, etc.) belong in your consumer. The wickworks container ships with the docker-compose and is locked to the mt5 net namespace — no external traffic, no separate deploy. See the [endpoint docs](market-data.md#symbols) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
+**Server-side via the wickworks sidecar (`POST /symbols/:symbol/rates/ta`)**: bars come out already enriched with indicators (RSI, MACD, Bollinger Bands, ADX, VWAP, Ichimoku, Order Blocks / FVGs / BOS / CHoCH, swing structure, S/R levels, dozens more). Primitives only: wickworks emits raw indicator series and SMC structural facts; interpretive signals (divergences, crossover events, etc.) belong in your consumer. The wickworks container ships with the docker-compose and is locked to the mt5 net namespace, with no external traffic and no separate deploy. See the [endpoint docs](market-data.md#rates-with-technical-analysis) and the full indicator catalog with params + output shapes at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks).
 
 **Client-side**: grab raw candles with `GET /symbols/<symbol>/rates` and crunch the shit yourself. [`examples/python/`](https://github.com/psyb0t/mt5-httpapi/tree/master/examples/python) has a working [pandas-ta](https://github.com/twopirllc/pandas-ta) example with ATR, RSI, MACD, Bollinger Bands, MFI, Stochastic, ADX, VWAP, and moving averages.
 
@@ -207,7 +208,7 @@ Check out `indicators.py` for the individual indicator functions and `signals.py
 
 ## Chart Deployments script
 
-[`examples/chartctl/deploy.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/examples/chartctl/deploy.sh) stages an expert and a set file, deploys them to a chart, waits up to 60 seconds for it to run, checks `/charts`, saves a screenshot of its chart with [`POST /charts/<chart_id>/screenshot`](chart-deployments.md#post-chartschart_idscreenshot), and prints the `DELETE` command that removes the deployment. It leaves the deployment running, so run that command when you are done. It reads `MT5_API_URL` and `MT5_API_TOKEN`. See [Chart Deployments](chart-deployments.md).
+[`examples/chartctl/deploy.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/examples/chartctl/deploy.sh) stages an expert and a set file, deploys them to a chart, polls the deployment every 5 seconds for up to 60 seconds, prints the first lines of `/charts`, and prints the `DELETE` command that removes the deployment. It leaves the deployment running, so run that command when you are done. It reads `MT5_API_URL` and `MT5_API_TOKEN`. Two things in it do not work yet: its screenshot step looks for an `id` field that `/charts` entries do not have (they carry `chart_id`), so it never saves a screenshot, and its last line says the deployment is running whatever status the poll ended on. Check the status it printed, and take a screenshot yourself with [`POST /charts/<chart_id>/screenshot`](chart-deployments.md#post-chartschart_idscreenshot). See [Chart Deployments](chart-deployments.md).
 
 ```bash
 ./examples/chartctl/deploy.sh <expert.ex5> <file.set> <symbol> <timeframe>

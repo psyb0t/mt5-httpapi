@@ -1,8 +1,7 @@
 ---
 title: "Backtest optimization"
 description: "Strategy Tester optimization over HTTP: slow complete, fast genetic and Market Watch modes, .set ranges, results and raw artifacts."
-nav_order: 1
-parent: "Backtesting"
+sidebar_position: 11
 ---
 
 # Backtest optimization without clicking the fucking GUI
@@ -48,7 +47,7 @@ No matter which mode you pick, the dance is the same:
 5. Poll `GET /backtest/<job_id>` until `completed`, `failed` or `cancelled`.
 6. Inspect `optimization_results`, `optimization_cache`, `/report`, and `/log`.
 
-## Optimization Modes
+## Optimization modes
 
 | Mode | MT5 meaning | Scope | Primary parsed source | Report artifact |
 | ---- | ----------- | ----- | --------------------- | --------------- |
@@ -56,7 +55,7 @@ No matter which mode you pick, the dance is the same:
 | `2` | Fast genetic algorithm | Single `[Tester].Symbol` | XML report | `<report>.xml` |
 | `3` | All symbols selected in Market Watch | Market Watch symbol set | Tester cache `.opt` | `<report>.symbols.xml` |
 
-### Mode 1: Slow Complete
+### Mode 1: slow complete
 
 Mode `1` brute-forces the full search space for one symbol. Use it when the grid is small enough that exhaustive search will finish before the heat death of the universe.
 
@@ -116,7 +115,7 @@ Typical completed payload shape:
 }
 ```
 
-## Mode 2: Fast Genetic
+### Mode 2: fast genetic
 
 Mode `2` lets MT5's genetic optimizer hunt the promising parts of a single-symbol search space. Use it when mode `1` would take forever and you can live without evaluating every combination.
 
@@ -169,7 +168,7 @@ Example completed payload shape:
 }
 ```
 
-## Mode 3: Market Watch Symbols
+### Mode 3: Market Watch symbols
 
 Mode `3` is the weird bastard. It changes both what MT5 searches and where MT5 hides the results.
 
@@ -246,7 +245,7 @@ Example completed payload shape from a real replay:
   ],
   "optimization_cache": {
     "name": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.22.788ECDD113BA3097A58EF888EBEFF9CA.opt",
-    "path": "C:\\Users\\Docker\\Desktop\\Shared\\terminals\\darwinex\\live\\a\\Tester\\cache\\EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.22.788ECDD113BA3097A58EF888EBEFF9CA.opt",
+    "path": "C:\\Users\\Docker\\Desktop\\Shared\\terminals\\darwinex\\tester\\default\\Tester\\cache\\EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.22.788ECDD113BA3097A58EF888EBEFF9CA.opt",
     "pattern": "EA Studio GBPCAD M15 1615044595.all_symbols.M15.20210525.20260525.*.opt",
     "build": "22",
     "cache_hash": "788ECDD113BA3097A58EF888EBEFF9CA",
@@ -262,7 +261,7 @@ Example completed payload shape from a real replay:
 }
 ```
 
-## `.set` Files for Optimization
+## `.set` files for optimization
 
 An optimization without ranges is just an expensive way to run the same shit repeatedly. The `.set` file needs MT5 optimization ranges.
 
@@ -316,7 +315,7 @@ Example JSON to generate a `.set`:
 }
 ```
 
-## Polling and Interpreting Results
+## Polling and interpreting results
 
 All modes use the same status endpoint:
 
@@ -334,7 +333,7 @@ Important fields:
 - `report_url`: fetch raw MT5 report artifact
 - `log_url`: fetch `run.log`, the stdout/stderr of `terminal64.exe` for the job (the terminal and tester journals are in `GET /backtest/<job_id>/tail`)
 
-## Raw Artifacts and Debugging
+## Raw artifacts and debugging
 
 When MT5 produces confusing garbage, start here:
 
@@ -343,7 +342,7 @@ When MT5 produces confusing garbage, start here:
 - If mode `3` symbols look wrong or missing, inspect the agent logs under `Tester/Agent-127.0.0.1-*/logs/` because pass numbers are recovered from those logs.
 - If `optimization_results` is empty for mode `1` or `2`, inspect the raw XML report and the terminal journal (`/tail`) first.
 
-## End-to-End Example Script
+## End-to-end example script
 
 This script works for all three modes. Change `optimization`, point it at the right `.set`, and let the bastard run.
 
@@ -377,15 +376,19 @@ curl -sS -X POST "$URL/backtest" \
   -F "set_name=ea studio gbpcad m15 1615044595.take-profit-opt-80-92-step4.set" \
   -F "top_passes=20" > "$job_json"
 
-JOB=$(jq -r '.job_id' "$job_json")
+JOB=$(jq -r '.job_id // empty' "$job_json")
+[ -n "$JOB" ] || { cat "$job_json"; false; }
 echo "Submitted job: $JOB"
 
+# Poll while the job is queued or running; any other status ends the loop.
 while :; do
   STATUS_JSON=$(curl -sS -H "Authorization: Bearer $TOK" "$URL/backtest/$JOB")
   STATUS=$(printf '%s' "$STATUS_JSON" | jq -r '.status')
   echo "Status: $STATUS"
-  [[ "$STATUS" == completed || "$STATUS" == failed || "$STATUS" == cancelled ]] && break
-  sleep 10
+  case "$STATUS" in
+    queued|running) sleep 10 ;;
+    *) break ;;
+  esac
 done
 
 printf '%s\n' "$STATUS_JSON" | jq '{job_id,status,report_name,optimization_type,optimization_cache,optimization_results}'

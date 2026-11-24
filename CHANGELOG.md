@@ -6,6 +6,18 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.34.4]: 2026-11-24
+
+### Changed
+
+- **The README links a video walkthrough** that goes from `git clone` to a first trade on a demo account over plain HTTP: <https://www.youtube.com/watch?v=YW4gz6PIJWg>.
+- **The docs site at <https://psyb0t.github.io/mt5-httpapi/> is built with Docusaurus now, with full-text search, and every page keeps its old URL.** The sidebar keeps the same sections and sub-pages, and `llms.txt` lists every page. `make docs` builds the site locally in Docker, and `make docs-preview` serves it on `http://127.0.0.1:61328/mt5-httpapi/`. See [Operations](https://psyb0t.github.io/mt5-httpapi/operations/).
+
+### Fixed
+
+- **The docs now say what the API does in cases where they said something else.** An unknown `type_filling` sends the order with no filling policy at all, not the symbol's choice, and `IOC` is no longer called the default. `/history/orders` and `/history/deals` read a `YYYY_MM_DD` date as a number and answer 200 with the wrong range instead of 400. A position close can answer 500 after closing part of the volume, so read the position again before you retry. A `mode: backtest` terminal answers 503 every time on the routes that read or trade through the SDK. Some errors are HTML from Flask or nginx, not JSON. `POST /orders` has no default `deviation`, and `recentBars` on `/rates/ta` is ignored. See [REST API](https://psyb0t.github.io/mt5-httpapi/rest-api/#errors) and [Trading and history](https://psyb0t.github.io/mt5-httpapi/trading-and-history/).
+- **Setup gaps the docs left out are written down.** `POST /compile` needs the MetaQuotes installer as `mt5setup-metaquotes.exe`; `run.sh` needs `python3` with `pip` and installs `aria2c` only on Debian or Ubuntu; noVNC is published on every host interface without a password; an empty `tailscale.auth_key` does not stop an uncommented sidecar. With `vms.yaml`, every terminal needs a `vm`, the unified MCP endpoint reaches only the first VM's terminals, every `make up` runs the Windows debloat again, and `make clean` leaves the VM disks. The token one-liners read `api_token` through `scripts/config_helper.py api_token`, so an unquoted or single-quoted token works and the Chart Deployments quick start no longer picks up `compile_api_token` as well. See [Installation and configuration](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/#requirements) and [Multi-VM setup](https://psyb0t.github.io/mt5-httpapi/multi-vm-setup/#known-limits).
+
 ## [v4.34.3]: 2026-11-23
 
 ### Fixed

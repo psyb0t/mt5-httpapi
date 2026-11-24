@@ -1,8 +1,7 @@
 ---
 title: "Multi-VM setup"
 description: "Spread MT5 terminals across several Windows VMs or NUMA nodes with vms.yaml, keep hot storage apart, and add more VMs later."
-nav_order: 1
-parent: "Operations"
+sidebar_position: 4
 ---
 
 # Multi-VM setup when one Windows bastard is not enough
@@ -20,7 +19,7 @@ One VM eventually runs out of CPU, RAM, disk, or patience. This is how you sprea
 ## Backward compatibility
 
 - **No `vms.yaml`**: single-VM mode. `run.sh` seeds `docker-compose.yml` from `docker-compose.yml.example` instead of the template, and all terminals route to the default `mt5` container. The VM list is the single `default` VM (the `mt5` service), so `run.sh` writes one `data/vm-group-default.txt` and sets up DNAT for the `mt5` container only. `vms.yaml.example` is a template to copy and is never read, and `config_helper.py generate_compose` refuses to run without a real `vms.yaml`.
-- **No `vm` field on a terminal**: defaults to `default`, routes to `mt5`.
+- **No `vm` field on a terminal**: the terminal belongs to a VM named `default`. Without `vms.yaml` that is the single `mt5` VM. With `vms.yaml` it only works if one of your VMs is literally named `default`: otherwise nginx still routes the terminal to `mt5`, but no VM's group file lists it, so no VM launches it and every call to it fails with a 502. Give every terminal a `vm` once `vms.yaml` exists.
 
 ## Prerequisites
 
@@ -117,6 +116,12 @@ python3 scripts/config_helper.py generate_compose
 ```
 
 This shits out one service block per VM and wickworks sidecar, plus the shared log rotator, vm-watchdog, MCP unifier, nginx router, and the `signals` / `telegram` profile services. It overwrites `docker-compose.yml`.
+
+## Known limits
+
+- **The unified MCP endpoint reaches only the first VM's terminals.** The template gives the `mcpunifier` service `MT5_HOST` set to the first VM's service, and the unifier sends every call to `<that host>:<terminal port>`. A terminal port is forwarded only inside the VM container that owns it, so unified MCP calls to a terminal on any other VM fail. Use the per-terminal endpoint (`/<broker>/<account>[/<instance>]/mcp/`) for those terminals; see [MCP and agents](mcp-and-agents.md).
+- **Every `make up` sends each VM through the Windows debloat again.** `run.sh` clears the `*.done` flags in the shared directory when `data/storage/data.img` is missing, to restart a fresh install. With `vms.yaml` the VM disks live at each VM's `storage` path, so that file never exists, `debloat.done` is deleted on every run, and the next boot of each VM runs the debloat script and reboots once more.
+- **`make clean` does not wipe multi-VM disks.** It removes `data/storage`, `data/shared`, `data/metatrader5`, `data/oem` and `run.log`. Delete each VM's `storage` path yourself.
 
 ### 4. Point `/data/mt5-shared` at the shared directory
 

@@ -1,11 +1,10 @@
 ---
 title: "Market data"
 description: "Find symbols, read contract specs, pull ticks and OHLCV bars, and run wickworks technical analysis on the bars in the same request."
-nav_order: 1
-parent: "REST API"
+sidebar_position: 6
 ---
 
-# Market data API — get the fucking bars
+# Market data API: get the fucking bars
 
 Find symbols, inspect the contract details that brokers love making weird, pull ticks or OHLCV bars, and bolt on server-side TA in the same request.
 
@@ -22,32 +21,23 @@ Find symbols, inspect the contract details that brokers love making weird, pull 
 
 | Method | Endpoint                 | Description                               |
 | ------ | ------------------------ | ----------------------------------------- |
-| GET    | `/symbols`               | List symbols (`?group=*USD*`). **Refused with 409 on a `mode: backtest` terminal** — it never attaches the SDK; see below. |
-| POST   | `/symbols/import`        | Prime the symbol cache from a JSON body without touching the SDK — the safe path on a `mode: backtest` terminal. |
+| GET    | `/symbols`               | List symbols (`?group=*USD*`). **Refused with 409 on a `mode: backtest` terminal**, which never attaches the SDK; see below. |
+| POST   | `/symbols/import`        | Prime the symbol cache from a JSON body without touching the SDK, the safe path on a `mode: backtest` terminal. |
 | GET    | `/symbols/:symbol`       | Symbol details                            |
 | GET    | `/symbols/:symbol/tick`  | Latest tick                               |
 | GET    | `/symbols/:symbol/rates` | OHLCV candles (`?timeframe=H1&count=100`, `?timeframe=H1&from=<unix>&count=-100`, or `?timeframe=H1&from=<unix>&to=<unix>`) |
-| POST   | `/symbols/:symbol/rates/ta` | Same query params as `/rates`; JSON body `{indicators: {...}, recentBars?: N}`. Returns bars + wickworks TA analysis. |
+| POST   | `/symbols/:symbol/rates/ta` | Same query params as `/rates`; JSON body `{indicators: {...}}`. Returns bars + wickworks TA analysis. |
 | GET    | `/symbols/:symbol/ticks` | Tick data (`?count=100`, `?from=<unix>&count=-100`, or `?from=<unix>&to=<unix>`)                                            |
 
-**GET `/symbols`** — array of symbol names:
+**GET `/symbols`**: array of symbol names:
 
 ```json
 ["EURUSD", "GBPUSD", "ADAUSD", "BTCUSD", "..."]
 ```
 
-On success (unfiltered, i.e. no `?group=`) this also persists the list to that
-terminal's symbol cache, which the backtest INI builder reads to decide
-whether a broker's `symbol_suffix` applies (see [Backtesting](backtesting.md)).
-`GET /symbols` calls the MT5 SDK, so on a `mode: backtest` terminal — which
-never attaches the SDK — it is refused with 409 instead of triggering a full
-`mt5.initialize()` that would spawn `terminal64.exe` and hold the tester's
-single-instance lock, leaving the next backtest run with an empty report.
+On success (unfiltered, i.e. no `?group=`) this also persists the list to that terminal's symbol cache, which the backtest INI builder reads to decide whether a broker's `symbol_suffix` applies (see [Backtesting](backtesting.md)). `GET /symbols` calls the MT5 SDK, so on a `mode: backtest` terminal, which never attaches the SDK, it is refused with 409 instead of triggering a full `mt5.initialize()` that would spawn `terminal64.exe` and hold the tester's single-instance lock, leaving the next backtest run with an empty report.
 
-**POST `/symbols/import`** — prime a terminal's symbol cache directly, with no
-MT5 SDK call at all. This is the only supported way to prime a `mode: backtest`
-terminal: get the list from a live terminal on the same broker/account (`GET
-/symbols` there) or from the broker's own documentation, then post it here.
+**POST `/symbols/import`**: prime a terminal's symbol cache directly, with no MT5 SDK call at all. This is the only supported way to prime a `mode: backtest` terminal: get the list from a live terminal on the same broker/account (`GET /symbols` there) or from the broker's own documentation, then post it here.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
@@ -60,13 +50,7 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 {"imported": 3, "cached": 3, "complete": false}
 ```
 
-Each import is merged into the terminal's existing cache (a cache past
-`symbol_cache_max_age` counts as empty). The INI builder only skips
-`symbol_suffix` for a symbol when the cache is **complete**, because only the
-broker's full book can show that `EURUSD.i` does not exist. A partial list such
-as the one above is stored but never changes a remap. To make the cache
-complete, send the full book with `"complete": true`, which replaces the cache
-instead of merging:
+Each import is merged into the terminal's existing cache (a cache past `symbol_cache_max_age` counts as empty). The INI builder only skips `symbol_suffix` for a symbol when the cache is **complete**, because only the broker's full book can show that `EURUSD.i` does not exist. A partial list such as the one above is stored but never changes a remap. To make the cache complete, send the full book with `"complete": true`, which replaces the cache instead of merging:
 
 ```bash
 curl -s "$LIVE_MT5_API_URL/symbols" \
@@ -76,32 +60,21 @@ curl -s "$LIVE_MT5_API_URL/symbols" \
       "$MT5_API_URL/symbols/import"
 ```
 
-An unfiltered `GET /symbols` on a `mode: live` terminal writes a complete cache
-itself. `symbol_cache_max_age` (default `7d`) takes seconds as a bare number or
-a duration with `d`/`h`/`m`/`s` units.
+An unfiltered `GET /symbols` on a `mode: live` terminal writes a complete cache itself. `symbol_cache_max_age` (default `7d`) takes seconds as a bare number or a duration with `d`/`h`/`m`/`s` units.
 
-The body is bounded on three axes, each configurable at the top level of
-`config/config.yaml` or under the same name uppercased in the environment:
+The body is bounded on three axes, each configurable at the top level of `config/config.yaml` or under the same name uppercased in the environment:
 
 | Setting | Default | Enforced |
 | ------- | ------- | -------- |
 | `symbol_import_max_body_bytes` | `2097152` (2 MiB) | `413` from the declared `Content-Length`, before the body is parsed. A request with no `Content-Length` at all (chunked) is refused with `411`. |
-| `symbol_import_max_symbols` | `20000` | `400` — entries in `symbols`, counted before deduplication. |
-| `symbol_import_max_symbol_length` | `64` | `400` — characters per symbol, measured on the whitespace-stripped name. |
+| `symbol_import_max_symbols` | `20000` | `400`: entries in `symbols`, counted before deduplication. |
+| `symbol_import_max_symbol_length` | `64` | `400`: characters per symbol, measured on the whitespace-stripped name. |
 
-The defaults sit far above any real broker book — the widest seen in this fleet
-is 841 symbols, and MT5 itself caps a symbol name at 31 characters — so they
-only fire on input that was never going to be a usable symbol list. Nothing is
-written to the cache when a request is refused. Zero, a negative or a
-non-integer setting falls back to the default with a warning; there is no value
-that turns a cap off.
+The defaults sit far above any real broker book (the widest seen in this fleet is 841 symbols, and MT5 itself caps a symbol name at 31 characters), so they only fire on input that was never going to be a usable symbol list. Nothing is written to the cache when a request is refused. Zero, a negative or a non-integer setting falls back to the default with a warning; there is no value that turns a cap off.
 
-Other refusals: `400` when the body is not a JSON object with a `symbols` array
-of strings, when `complete` is not `true`/`false`, or when every name is empty
-after trimming whitespace; `500` `failed to write symbol cache` if the cache
-file can't be written.
+Other refusals: `400` when the body is not a JSON object with a `symbols` array of strings, when `complete` is not `true`/`false`, or when every name is empty after trimming whitespace; `500` `failed to write symbol cache` if the cache file can't be written.
 
-**GET `/symbols/:symbol`** — full symbol info:
+**GET `/symbols/:symbol`**: full symbol info:
 
 ```json
 {
@@ -166,7 +139,7 @@ file can't be written.
 }
 ```
 
-There's a shitload of fields — these are the ones you'll actually use:
+There's a shitload of fields; these are the ones you'll actually use:
 
 | Field                                     | What it is                                 |
 | ----------------------------------------- | ------------------------------------------ |
@@ -222,25 +195,25 @@ Query params (rates):
 | Param | Behavior |
 | --- | --- |
 | `timeframe` | Defaults `M1` |
-| `count` | Signed integer (default `100`). Positive = N forward from `from` (or last N if no `from`). Negative = `\|N\|` ending at `from`. Zero = empty result. Mutually exclusive with `to`. |
+| `count` | Signed integer (default `100`). Positive = N forward from `from` (or the last N if no `from`). Negative = `\|N\|` ending at `from` (or the last `\|N\|` if no `from`). Zero = empty result. Mutually exclusive with `to`. |
 | `from` | Anchor (real UTC). Omitted = now. Accepts unix seconds, `YYYY_MM_DD_HH_MM_SS`, or `YYYY_MM_DD` (midnight UTC). |
 | `to` | Range end (real UTC, same formats as `from`). Requires `from`. Returns all bars in `[from, to]`, no count cap beyond `terminal_info().maxbars`. Mutually exclusive with `count`. |
 
 Examples:
-- `?timeframe=H1&count=100` — last 100 H1 candles up to current bar
-- `?timeframe=H1&from=1700000000&count=100` — 100 candles forward from anchor
-- `?timeframe=H1&from=2024_01_15&count=-100` — 100 candles ending at midnight UTC on 2024-01-15
-- `?timeframe=H1&from=2024_01_15_09_30_00&to=2024_01_15_16_00_00` — every H1 candle in the window
+- `?timeframe=H1&count=100`: last 100 H1 candles up to current bar
+- `?timeframe=H1&from=1700000000&count=100`: 100 candles forward from anchor
+- `?timeframe=H1&from=2024_01_15&count=-100`: 100 candles ending at midnight UTC on 2024-01-15
+- `?timeframe=H1&from=2024_01_15_09_30_00&to=2024_01_15_16_00_00`: every H1 candle in the window
 
 A `from` far before the data the terminal already holds makes MetaTrader download its history back to that date before it answers. On a fresh install that took minutes for an anchor at the 1970 epoch, and the terminal's API serves nothing else meanwhile, so the request ends in nginx's 504 after 60 seconds. Anchor reads near the data you need.
 
 Use `count` when you want exactly N bars and do not care about the precise end time. Use `to` when you have a real window and want the whole damn thing. `count` adds weekend/holiday padding internally; `to` passes the range straight to `copy_rates_range`.
 
-**MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000 — visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
+**MaxBars cap:** MT5 returns at most `terminal_info().maxbars` rows per request (default 100,000, visible at `GET /terminal`). For long backfills (e.g. M1 over a year ≈ 525k bars) chunk the time range client-side and stitch the results.
 
 Symbols are auto-selected into MarketWatch on first access, so backfilling rarely-traded instruments works without a manual select step.
 
-`count` must be an integer: anything else (`1.5`, `abc`, `1e3`) is a 400 with `{"error": "'count' must be an integer"}`. An empty `count=` counts as not sent. Errors on `/rates`, `/rates/ta`, `/ticks`, `/tick` and `/symbols/:symbol`:
+`count` must be an integer: anything else (`1.5`, `abc`, `1e3`) is a 400 with `{"error": "'count' must be an integer"}`. An empty `count=` counts as not sent, except next to `to`, where it is still a 400 `use either 'count' or 'to', not both`. Errors on `/rates`, `/rates/ta`, `/ticks`, `/tick` and `/symbols/:symbol`:
 
 | Status | When |
 | --- | --- |
@@ -264,8 +237,8 @@ JSON body:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `indicators` | yes | Non-empty object — wickworks indicator spec. Each entry maps an output key to either `true` (run with defaults) or a flat params object (e.g. `{"length": 20, "std": 2}`); add `"type": "<name>"` only when the output key differs from the indicator name (e.g. `{"rsi21": {"type": "rsi", "length": 21}}` to run a second RSI under a custom key). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
-| `recentBars` | no | Accepted for mt5-httpapi compatibility but not sent to Wickworks. To get fewer bars back, lower `count` on the query string or slice client-side. |
+| `indicators` | yes | Non-empty object, the wickworks indicator spec. Each entry maps an output key to either `true` (run with defaults) or a flat params object (e.g. `{"length": 20, "std": 2}`); add `"type": "<name>"` only when the output key differs from the indicator name (e.g. `{"rsi21": {"type": "rsi", "length": 21}}` to run a second RSI under a custom key). See the [wickworks indicator catalog](https://github.com/psyb0t/docker-wickworks#available-indicators) for the full list of types, params, and output shapes. |
+| `recentBars` | no | Ignored: the API never reads it. To get fewer bars back, lower `count` on the query string or slice client-side. |
 
 When the query yields no bars you get 200 with `"bars": []` and `"ta": null`, and wickworks is never called. Errors:
 
@@ -282,7 +255,7 @@ Example:
 ```bash
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"indicators":{"rsi":true,"macd":true},"recentBars":50}' \
+     -d '{"indicators":{"rsi":true,"macd":true}}' \
      "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
 ```
 
@@ -303,7 +276,7 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 }
 ```
 
-Query params (ticks): same `count` / `from` / `to` model as rates: positive `count` = forward from `from`, negative = backward ending at `from`, `from+to` = range, `count` and `to` mutually exclusive, `to` requires `from`. **Without `from` you get the latest ticks**: the last `|count|` ticks up to now, whatever the sign of `count`, and the last 100 when you send no `count`. Ticks always come back oldest first, in every mode. MT5 has no call that reads ticks backward by count, so a backward read (a negative `count`, or no `from`) asks for a window ending at the anchor, starts at 60 seconds (longer for a big `count`) and doubles it until `|count|` ticks fit, up to a window of about 2.8 days, which crosses a weekend close. A symbol with no ticks in that time gives fewer than `|count|` ticks, or an empty array. Plus:
+Query params (ticks): same `count` / `from` / `to` model as rates: positive `count` = forward from `from`, negative = backward ending at `from`, `from+to` = range, `count` and `to` mutually exclusive, `to` requires `from`. **Without `from` you get the latest ticks**: the last `|count|` ticks up to now, whatever the sign of `count`, and the last 100 when you send no `count`. Ticks always come back oldest first, in every mode. MT5 has no call that reads ticks backward by count, so a backward read (a negative `count`, or no `from`) asks for a window ending at the anchor, starts at 60 seconds (longer for a big `count`) and doubles it until `|count|` ticks fit, 12 times at most, so the last window is 4096 times the first: about 2.8 days from the 60-second start, which crosses a weekend close, and longer for a `|count|` above 600. A symbol with no ticks in that time gives fewer than `|count|` ticks, or an empty array. Plus:
 
 | Param | Values | Default | Meaning |
 | --- | --- | --- | --- |
@@ -316,6 +289,6 @@ Examples:
 - `?from=1700000000&count=-500`: 500 ticks ending at anchor
 - `?from=2024_01_15_09_00_00&to=2024_01_15_10_00_00`: every tick in that 1-hour window
 
-Tick-density warning: a liquid pair can shit out 10–100 ticks/sec. A one-hour `from+to` window can become millions of rows, so prefer `count` unless you genuinely need every twitch in the window.
+Tick-density warning: a liquid pair can shit out 10 to 100 ticks/sec. A one-hour `from+to` window can become millions of rows, so prefer `count` unless you genuinely need every twitch in the window.
 
-Responses are gzip-compressed when the client sends `Accept-Encoding: gzip` — typically a 5–10× bandwidth reduction for large rate/tick fetches. `curl` honors this if you pass `--compressed`.
+Responses are gzip-compressed when the client sends `Accept-Encoding: gzip`, typically a 5 to 10× bandwidth reduction for large rate/tick fetches. `curl` honors this if you pass `--compressed`.

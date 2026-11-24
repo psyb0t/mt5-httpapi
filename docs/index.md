@@ -1,10 +1,8 @@
 ---
 title: "Home"
 description: "mt5-httpapi runs real Windows MetaTrader 5 terminals in a Docker VM and puts a REST API and MCP servers in front of them."
-nav_order: 1
-permalink: /
-seo:
-  type: WebSite
+sidebar_position: 1
+slug: /
 ---
 
 # mt5-httpapi
@@ -25,8 +23,11 @@ client
 
 It runs as many brokers, accounts and cloned terminal instances as the host can hold. Over HTTP you get terminal state, symbols, ticks, bars with server-side indicators, orders, positions, history, Strategy Tester jobs, MQL5 compiling, file access and EA deployment onto charts. The same surface is available as MCP tools, per terminal or through one unified endpoint.
 
-{: .warning }
+:::warning
+
 This can trade real money. Start with a demo account.
+
+:::
 
 ## Install
 
@@ -41,7 +42,7 @@ make up
 make status
 ```
 
-The first run installs Windows, Python and MT5, which takes about ten minutes. [Installation and configuration](installation-and-configuration.md) covers sizing, every `config.yaml` setting and how the installer name must match the broker key.
+The first run installs Windows, Python and MT5, which takes 10 to 15 minutes. [Installation and configuration](installation-and-configuration.md) covers sizing, every `config.yaml` setting and how the installer name must match the broker key.
 
 ## Where to go next
 
@@ -53,11 +54,12 @@ The first run installs Windows, Python and MT5, which takes about ten minutes. [
 | Learn the routing, auth, health and terminal endpoints | [REST API](rest-api.md) |
 | Pull symbols, ticks, bars and server-side TA | [Market data](market-data.md) |
 | Place and close trades, read orders, positions and history | [Trading and history](trading-and-history.md) |
-| Read and write files in a terminal's MQL5 tree | [File API](files.md) |
+| Read and write files in a terminal's install directory and the compile tree | [File API](files.md) |
 | Compile MQL5 source into an `.ex5` | [Compiling MQL5](compiling.md) |
 | Run Strategy Tester jobs and fetch the reports | [Backtesting](backtesting.md) |
 | Run optimizations over parameter ranges | [Backtest optimization](backtest-optimization.md) |
 | Attach Expert Advisors to live charts over HTTP | [Chart Deployments](chart-deployments.md) |
+| Make your own EA speak the loader's file protocol | [Chart Control Protocol](chart-control-protocol.md) |
 | Copy trade signals from Telegram or a websocket feed | [Signal copier](signals.md) |
 | Connect Claude Code, Codex or OpenClaw over MCP | [MCP and agents](mcp-and-agents.md) |
 | Copy working curl and Go client examples | [Clients and examples](clients-and-examples.md) |

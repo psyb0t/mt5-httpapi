@@ -1,8 +1,7 @@
 ---
 title: "Chart Control Protocol"
 description: "The file protocol between mt5-httpapi and the MT5ChartLoader EA: command files, loader duties, self-healing and custom loaders."
-nav_order: 1
-parent: "Chart Deployments"
+sidebar_position: 13
 ---
 
 # Chart Control Protocol v1

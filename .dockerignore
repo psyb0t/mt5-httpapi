@@ -37,3 +37,8 @@ examples/
 .ruff_cache/
 
 .tutorial-video/
+.thumbnails/
+.psyb0t-post/
+
+# Documentation site build: Node packages and output, never part of an image.
+website/

@@ -1,8 +1,7 @@
 ---
 title: "File API"
 description: "List, read, upload, unzip and delete files in a terminal's install directory and the compile tree, with the paths the API refuses."
-nav_order: 3
-parent: "REST API"
+sidebar_position: 8
 ---
 
 # File API: read and write a terminal's files over HTTP
@@ -112,9 +111,9 @@ A directory listing is the JSON version of `ls -al`. The response carries `count
 - `readable` and `writable` say what this API allows, not what the file system does.
 - A symlink or junction also carries `link_target` and `link_outside_tree`. One that leads out of the tree is listed but can be neither read nor written.
 
-An upload answers `201` when it created the file and `200` when it replaced one, with `tree`, `path`, the stored `size` and `sha256`, and `created`.
+An upload answers `201` when it created the file and `200` when it replaced one, with `tree`, `path`, the stored `size` and `sha256`, and `created`. A delete answers `200` with `tree`, `deleted` (the path) and `type` (`file` or `dir`).
 
-Uploads are capped at `max_upload_body_bytes` (25 MiB, the same as nginx's limit). A request whose `Content-Length` is over the cap is refused before the handler runs, with a 413 that carries an `error` but no `code`. Every write is atomic: the bytes land in a staging file beside the target and are renamed over it, so the terminal never reads half a file.
+Uploads are capped at `max_upload_body_bytes` (25 MiB, the same as nginx's limit). A request whose `Content-Length` is over the cap is refused before the handler runs, with a 413 that carries an `error` but no `code`. nginx's own `client_max_body_size 25m` is fixed in the generated config, so raising `max_upload_body_bytes` changes nothing for requests that come through nginx, and a body over 25 MiB gets nginx's HTML 413 page instead of the JSON one. Every write is atomic: the bytes land in a staging file beside the target and are renamed over it, so the terminal never reads half a file.
 
 ## Uploading a zip
 
@@ -129,7 +128,7 @@ curl "${AUTH[@]}" -X PUT --data-binary @MyLib.zip \
 - The archive's tree is merged into the directory. Files it names are replaced, and everything else already there is left alone. To get an exact copy, delete the directory first with `?recursive`.
 - The zip itself is never stored. The API unpacks it into a staging directory, checks every entry, and only then moves the files into place. A bad entry or a cap exceeded anywhere fails the whole upload with nothing written. The files are then moved one at a time, so a file the terminal holds open (`FILE_LOCKED`) or a directory in the way (`CONFLICT`) at that stage leaves the files moved before it in place.
 - The response is `201` with `tree`, `path`, `count` and `files`, which lists every file written with `path`, `size` and `sha256`.
-- Refused: entries that would leave the target (`../`, absolute paths, drive letters), symlinks, encrypted entries, the same file named twice, and anything the single-file rules refuse. An archive that unpacks to more than `max_extract_files` files or `max_extract_bytes` bytes is refused with 413. The API counts the bytes it actually inflates, not the size the archive declares. `max_extract_bytes` is raised to at least 1 MiB and `max_extract_files` to at least 1.
+- Refused: entries that would leave the target (`../`, absolute paths, drive letters), symlinks, encrypted entries, the same file named twice, and anything the single-file rules refuse. An archive that unpacks to more than `max_extract_files` files or `max_extract_bytes` bytes is refused with 413. The API checks the total size the archive declares first, then counts the bytes it actually inflates, so an archive that lies about its sizes is still stopped. `max_extract_bytes` is raised to at least 1 MiB and `max_extract_files` to at least 1.
 - `?extract=0` (or `false`) stores the bytes as an ordinary file.
 
 ## What the API refuses
@@ -244,7 +243,7 @@ Both MCP endpoints have typed tools for this, so an agent never needs curl:
 - `put_file(path, content? | content_base64?, extract?, tree?)`
 - `delete_file(path, recursive?, tree?)`
 
-`tree` is `terminal` (the default) or `compile`. On the unified endpoint each tool also takes `broker`, `account` and `instance`, and `list_terminals` reports `files` per terminal. A per-terminal endpoint lists the tools only when the file API is on for it. The unified endpoint always lists them, and calling one on a terminal without the file API says so instead of returning a bare 404. The `/mcp` request is capped at 25 MiB, about 18 MiB of file after base64.
+`tree` is `terminal` (the default) or `compile`. On the unified endpoint each tool also takes `broker`, `account` and `instance`, and `list_terminals` reports `files` per terminal. A per-terminal endpoint lists the tools only when the file API is on for it. The unified endpoint always lists them, and calling one on a terminal without the file API says so instead of returning a bare 404. The `/mcp` request is capped at 25 MiB by nginx, about 18 MiB of file after base64; the API's own body cap does not apply to `/mcp`.
 
 ## Errors
 

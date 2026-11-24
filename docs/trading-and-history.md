@@ -1,16 +1,18 @@
 ---
 title: "Trading and history"
 description: "Open, modify and close positions and pending orders, decode MT5 trade results and retcodes, and read order and deal history."
-nav_order: 2
-parent: "REST API"
+sidebar_position: 7
 ---
 
-# Trading and history API — the real-money shit
+# Trading and history API: the real-money shit
 
 Inspect positions and pending orders, place or change trades, decode broker results, and pull the order/deal history afterward.
 
-> [!WARNING]
-> These endpoints move real fucking money. Confirm the terminal, account, symbol, side, volume, price, SL, and TP before sending anything. There is no undo button after the broker fills it.
+:::warning
+
+These endpoints move real fucking money. Confirm the terminal, account, symbol, side, volume, price, SL, and TP before sending anything. There is no undo button after the broker fills it.
+
+:::
 
 ## Contents
 
@@ -29,7 +31,7 @@ Inspect positions and pending orders, place or change trades, decode broker resu
 | PUT    | `/positions/:ticket` | Update SL/TP                     |
 | DELETE | `/positions/:ticket` | Close position                   |
 
-**GET `/positions`** — array of position objects:
+**GET `/positions`**: array of position objects:
 
 ```json
 {
@@ -57,7 +59,7 @@ Inspect positions and pending orders, place or change trades, decode broker resu
 
 `type` 0 = buy, 1 = sell. `profit` is unrealized P&L.
 
-**PUT `/positions/:ticket`** — move your stop loss / take profit:
+**PUT `/positions/:ticket`**: move your stop loss / take profit:
 
 ```json
 {
@@ -66,7 +68,7 @@ Inspect positions and pending orders, place or change trades, decode broker resu
 }
 ```
 
-**DELETE `/positions/:ticket`** — close that shit:
+**DELETE `/positions/:ticket`**: close that shit:
 
 ```json
 {
@@ -77,7 +79,7 @@ Inspect positions and pending orders, place or change trades, decode broker resu
 
 All fields optional. `volume` defaults to full position, `deviation` defaults to 20. The close goes out with a filling policy the symbol accepts: `IOC` when the symbol allows it, otherwise `FOK`, otherwise `RETURN`; you can't pick another policy here.
 
-PUT and DELETE on a position answer the trade result on success, 404 for an unknown ticket, and 500 `{"error": "Failed to update position: <broker comment>"}` (or `close`) for any retcode other than 10009. PUT needs a non-empty body (400 `Request body required`); a field you leave out keeps its current value.
+PUT and DELETE on a position answer the trade result on success, 404 for an unknown ticket, and 500 `{"error": "Failed to update position: <broker comment>"}` (or `close`) for any retcode other than 10009. That includes 10010 (`DONE_PARTIAL`): a close can answer 500 after part of the volume was closed, so read `GET /positions/:ticket` again before you retry, or you close more than you meant to. A symbol with no current tick makes a close fail with a 500 that is not JSON. PUT needs a non-empty body (400 `Request body required`); a field you leave out keeps its current value.
 
 ## Orders
 
@@ -89,7 +91,7 @@ PUT and DELETE on a position answer the trade result on success, 404 for an unkn
 | PUT    | `/orders/:ticket` | Modify order                     |
 | DELETE | `/orders/:ticket` | Cancel order                     |
 
-**GET `/orders`** — array of pending order objects:
+**GET `/orders`**: array of pending order objects:
 
 ```json
 {
@@ -122,7 +124,7 @@ PUT and DELETE on a position answer the trade result on success, 404 for an unkn
 
 `type`: 0=BUY, 1=SELL, 2=BUY_LIMIT, 3=SELL_LIMIT, 4=BUY_STOP, 5=SELL_STOP, 6=BUY_STOP_LIMIT, 7=SELL_STOP_LIMIT. `state`: 1=placed, 2=canceled, 3=partial, 4=filled, 5=rejected, 6=expired.
 
-**POST `/orders`** — send it:
+**POST `/orders`**: send it:
 
 ```json
 {
@@ -184,7 +186,7 @@ Order types:
 - Market: `BUY`, `SELL`
 - Pending: `BUY_LIMIT`, `SELL_LIMIT`, `BUY_STOP`, `SELL_STOP`, `BUY_STOP_LIMIT`, `SELL_STOP_LIMIT`
 
-Fill policies: `FOK`, `IOC` (default), `RETURN`. An unknown value is silently dropped.
+Fill policies: `FOK`, `IOC`, `RETURN`. Without `type_filling` the API picks one the symbol accepts, as described above. An unknown value is dropped and the order goes out with no filling policy at all, not the symbol's choice, so send one of the three or leave the field out.
 
 Expiration types: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`. An unknown value is silently dropped.
 
@@ -202,7 +204,7 @@ Expiration types: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`. An unkno
 }
 ```
 
-**PUT `/orders/:ticket`** — change your mind on a pending order:
+**PUT `/orders/:ticket`**: change your mind on a pending order:
 
 ```json
 {
@@ -215,7 +217,7 @@ Expiration types: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`. An unkno
 
 All fields optional, but the body can't be empty (400 `Request body required`). A field you leave out keeps its current value, `stoplimit` and `expiration` included. They work as on `POST /orders`: `stoplimit` is a price and `expiration` is real UTC unix seconds. A new `expiration` with no `type_time` makes the order `SPECIFIED`, unless it is already `SPECIFIED` or `SPECIFIED_DAY`. Setting `type_time` to `SPECIFIED` or `SPECIFIED_DAY` on an order with no expiry needs an `expiration` too. A bad `stoplimit` or `expiration` is a 400. Answers the trade result on success, 404 for an unknown ticket, and 500 `{"error": "Failed to modify order: <broker comment>"}` for any retcode other than 10009. `DELETE /orders/:ticket` works the same way (`Failed to cancel order`).
 
-## Trade Result
+## Trade result
 
 After you send, modify, cancel, or close something, MT5 throws this back:
 
@@ -243,7 +245,7 @@ After you send, modify, cancel, or close something, MT5 throws this back:
 | GET    | `/history/orders` | Order history (`?from=TS&to=TS`) |
 | GET    | `/history/deals`  | Deal history (`?from=TS&to=TS`)  |
 
-`from` and `to` are required, integer unix epoch seconds in real UTC (no `YYYY_MM_DD` form here, unlike rates). Missing or non-integer: 400.
+`from` and `to` are required, integer unix epoch seconds in real UTC. There is no `YYYY_MM_DD` form here, unlike rates, and it is not refused either: Python reads `2024_01_15` as the number 20240115, a moment in August 1970, so you get a 200 with an empty or wrong history. Missing or not a number: 400.
 
 **History order object** (completed/cancelled orders):
 

@@ -93,3 +93,17 @@ git-update.sh.debot
 
 # Tutorial video runs (local scratch)
 .tutorial-video/
+
+# Thumbnail drafts
+.thumbnails/
+.psyb0t-post/
+
+# Documentation site build (make docs)
+/website/.assets/
+/website/.content/
+/website/.corepack/
+/website/.docusaurus/
+/website/.pnpm-store/
+/website/build/
+/website/node_modules/
+.discuss/

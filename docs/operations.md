@@ -1,26 +1,28 @@
 ---
 title: "Operations"
 description: "Make targets, ports, Tailscale and Cloudflare Tunnel access, request queues, memory per API process, auto-recovery and logs."
-nav_order: 3
-has_children: true
+sidebar_position: 3
 ---
 
-# Operations — keeping the bastard alive
+# Operations: keeping the bastard alive
 
 The commands, ports, tunnels, locks, queues, and logs you need after the thing boots and eventually does something stupid.
 
 ## Contents
 
-- [Make targets](#make-targets)
+- [Make targets](#make-targets), including [testing a running stack](#testing-a-running-stack)
 - [Ports](#ports)
 - [Tailscale](#tailscale-optional)
 - [Cloudflare Tunnel](#cloudflare-tunnel-optional)
 - [Project structure](#project-structure)
 - [Concurrency and backpressure](#concurrency-and-backpressure)
+- [Memory per API process](#memory-per-api-process)
+- [Many terminals per VM: the desktop heap](#many-terminals-per-vm-the-desktop-heap)
+- [VM recreate and the wickworks sidecar](#vm-recreate-and-the-wickworks-sidecar)
 - [Auto-recovery](#auto-recovery)
 - [Logs](#logs)
 
-## Make Targets
+## Make targets
 
 ```
 make             Same as make up (the default target)
@@ -36,8 +38,11 @@ make test-integration  Container-backed suites: nginx routing, MCP unifier, vm-w
 make test-go     Compile and race-test the public Go client
 make test-live   Test a running stack end to end (see below)
 make telegram-login  Log in to Telegram once for the signal copier (docs/signals.md)
-make docs        Build the docs/ site into .testing/docs-site with GitHub Pages' Jekyll image
-make clean       Nuke VM disk and state (keeps ISO)
+make docs        Build the docs/ site with Docusaurus into website/build and .testing/docs-site
+make docs-preview  Build the docs site and serve it on http://127.0.0.1:61328/mt5-httpapi/
+make docs-lock   Refresh website/pnpm-lock.yaml from website/package.json
+make docs-audit  Check the locked docs dependencies against known advisories
+make clean       Nuke the single-VM disk and state (keeps ISO; multi-VM storage paths stay)
 make distclean   Nuke everything including ISO
 make verify-binaries  Check every tracked executable against assets/binaries.lock.json
 make help        List the targets
@@ -79,7 +84,7 @@ Use the same `MT5_LIVE_URL`, token, broker and account settings as above. This m
 
 The same module reads the latest process's `BLAS_RUNTIME` startup record for every configured worker. It checks both the three environment limits and OpenBLAS's native thread-count getter. An absent, failed or stale record fails the test; it does not treat an environment variable as proof of the native limit. Deploy and restart API workers before testing this record on an older installation.
 
-`make test-unit` is the offline suite — it runs inside a throwaway image with
+`make test-unit` is the offline suite: it runs inside a throwaway image with
 the MT5 SDK stubbed, so it needs nothing but docker and finishes in seconds.
 
 `make test-integration` is everything that needs real containers, driven by
@@ -126,22 +131,17 @@ won't see until the VM boots. `make format` fixes whatever shfmt flags.
 
 `run.sh` writes an override you pass to `.env`, so a later `docker compose` command, including the vm-watchdog's recreate, publishes the same port. `.env` is rebuilt on every `make up`, so an override you leave out of a run goes back to the default; pass it each time you run `make up`.
 
-In single-VM mode, only these two ports leave the docker network. A
-[multi-VM deployment](multi-vm-setup.md) publishes one distinct noVNC port per
-VM while keeping the single nginx API port. Per-terminal ports from
-`config.yaml` stay container-internal — nginx routes each terminal path to the
-owning VM over docker DNS, then that container's iptables DNAT forwards it into
-Windows. The API binds to loopback (`127.0.0.1:8888`) by default; change the
-bind in `docker-compose.yml` for LAN exposure, or use a private access option
-below.
+In single-VM mode, only these two ports leave the docker network. A [multi-VM deployment](multi-vm-setup.md) publishes one distinct noVNC port per VM while keeping the single nginx API port. Per-terminal ports from `config.yaml` stay container-internal: nginx routes each terminal path to the owning VM over docker DNS, then that container's iptables DNAT forwards it into Windows. The API binds to loopback (`127.0.0.1:8888`) by default; change the bind in `docker-compose.yml` for LAN exposure, or use a private access option below.
+
+noVNC is not bound to loopback. `docker-compose.yml.example` publishes it as `"${NOVNC_PORT:-8006}:8006"` and the multi-VM template as `"<novnc_port>:8006"`, on every host interface, and it serves the VM desktop with the logged-in terminals; the `dockurr/windows` image asks for no password. Anyone on your network can click through it. In a single-VM setup, change the mapping in `docker-compose.yml` to `"127.0.0.1:${NOVNC_PORT:-8006}:8006"`. A multi-VM `docker-compose.yml` is rewritten by `config_helper.py generate_compose`, so a hand edit there is lost on the next regenerate: change the `ports:` lines in [`docker-compose.yml.j2`](https://github.com/psyb0t/mt5-httpapi/blob/master/docker-compose.yml.j2) to `"127.0.0.1:<port>:8006"` instead, or firewall the port.
 
 ## Tailscale (optional)
 
 Shove the API through your tailnet at `http://mt5-httpapi/<broker>/<account>/...`. This works with stock Tailscale or self-hosted Headscale. It deliberately uses plain HTTP inside WireGuard because bare MagicDNS names do not have matching certs and the tunnel already encrypts the traffic.
 
-How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity — ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays out of the sidecar's inbound path. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `nginx.conf` is auto-generated from `config.yaml`'s `terminals:` list on every `make up`; the Tailscale Serve config is wired in via the `tailscale serve` CLI from inside the sidecar (it needs the live FQDN, which only the CLI knows) and persisted in tailscaled state.
+How it works: a `tailscale` sidecar joins the tailnet in its **own netns** (bridge mode, not host net) so it gets its own tailnet identity: ACLs scope to the sidecar's node only, and the host's tailscale (if any) stays out of the sidecar's inbound path. Tailscale Serve listens on port 80 inside that netns and proxies to the always-on `nginx` sidecar (`http://nginx:80`) over docker's internal network. nginx then strips `/<broker>/<account>/` and proxies to the right terminal via docker DNS. `nginx.conf` is auto-generated from `config.yaml`'s `terminals:` list on every `make up`; the Tailscale Serve config is wired in via the `tailscale serve` CLI from inside the sidecar (it needs the live FQDN, which only the CLI knows) and persisted in tailscaled state.
 
-The sidecar runs in TUN mode (`TS_USERSPACE=false`) so a real `tailscale0` interface exists inside its netns. That means any outbound to `100.64.0.0/10` from the sidecar is routed via the sidecar's own tunnel under its tailnet identity — not via the host's `tailscale0` (if the host has one on a different account). Note the scope: this only applies to traffic originating in the sidecar's netns. The other containers (`nginx`, `mt5`) are on the docker bridge, not in the sidecar's netns, so any tailnet-bound traffic from them would still fall through to the host's tunnel. We don't initiate tailnet outbound from those containers in the default setup, so it doesn't bite — but if you add a service that does, put it on `network_mode: service:tailscale`.
+The sidecar runs in TUN mode (`TS_USERSPACE=false`) so a real `tailscale0` interface exists inside its netns. That means any outbound to `100.64.0.0/10` from the sidecar is routed via the sidecar's own tunnel under its tailnet identity, not via the host's `tailscale0` (if the host has one on a different account). Note the scope: this only applies to traffic originating in the sidecar's netns. The other containers (`nginx`, `mt5`) are on the docker bridge, not in the sidecar's netns, so any tailnet-bound traffic from them would still fall through to the host's tunnel. The default setup starts no tailnet traffic from those containers, so it doesn't bite, but if you add a service that does, put it on `network_mode: service:tailscale`.
 
 **Setup**:
 
@@ -152,11 +152,11 @@ The sidecar runs in TUN mode (`TS_USERSPACE=false`) so a real `tailscale0` inter
      login_server: ""   # for Headscale, set "https://headscale.your.domain"
    ```
 
-2. Uncomment the `tailscale` block in `docker-compose.yml`. (nginx is always on — no need to uncomment anything for it.)
+2. Uncomment the `tailscale` block in `docker-compose.yml`. (nginx is always on; there is nothing to uncomment for it.)
 
 3. `make up`. `run.sh` reads `config.yaml`, writes `TS_AUTHKEY` (and `TS_EXTRA_ARGS=--accept-dns=false --login-server=...` if Headscale) to `.env`, brings the stack up, waits for tailscaled to authenticate, and runs `tailscale serve reset` then `tailscale serve --bg --http=80 http://nginx:80` inside the sidecar to wire the tailnet :80 listener to nginx. It does that on every `make up` while `auth_key` is set and the sidecar is running; the Serve config also persists in `.data/tailscale/state`, so plain container restarts keep it.
 
-**State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login — `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
+**State persistence**: tailnet identity lives in `.data/tailscale/state/`. `make down`/`make up` reuses the existing login: `TS_AUTHKEY` is consumed only on first auth (or after `rm -rf .data/tailscale/state`). Use a reusable auth key if you expect to wipe state.
 
 **Hostname**: the tailnet name comes from `TS_HOSTNAME` (default `mt5-httpapi`) on the `tailscale` service in `docker-compose.yml`.
 
@@ -167,7 +167,7 @@ http://mt5-httpapi/roboforex/main/symbols/EURUSD/rates?count=100
 http://mt5-httpapi/ftmo/challenge1/positions
 ```
 
-The API token (if set in `config.yaml`) still applies — Tailscale handles network-level access, the token handles application-level auth.
+The API token (if set in `config.yaml`) still applies. Tailscale handles network-level access, the token handles application-level auth.
 
 ## Cloudflare Tunnel (optional)
 
@@ -213,70 +213,35 @@ https://mt5-api.yourdomain.com/roboforex/main/account
 https://mt5-api.yourdomain.com/ftmo/challenge1/positions
 ```
 
-Cloudflare terminates TLS at the edge — you get HTTPS for free without managing certs. The connection from cloudflared to `nginx:80` is plain HTTP over the docker bridge, but it never leaves the host.
+Cloudflare terminates TLS at the edge, so you get HTTPS for free without managing certs. The connection from cloudflared to `nginx:80` is plain HTTP over the docker bridge, but it never leaves the host.
 
 **Subdomain depth**: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper levels like `*.mt5.yourdomain.com`. Use a single subdomain directly under the root domain.
 
-The API token still applies on top — Cloudflare gates the public reachability, the bearer token gates the application. Treat the public hostname as hostile and **always set `api_token` in `config.yaml`** when using this.
+The API token still applies on top. Cloudflare gates the public reachability, the bearer token gates the application. Treat the public hostname as hostile and **always set `api_token` in `config.yaml`** when using this.
 
-## Project Structure
+## Project structure
+
+The repository layout is in the [README](https://github.com/psyb0t/mt5-httpapi#project-layout). What `make up` generates at run time, all of it gitignored:
 
 ```
-config/                      Your config shit
-  config.yaml                Single source of truth (gitignored)
-  config.yaml.example        Committed template — copy to config.yaml
-  signals.yml                Signal copier rules (gitignored, docs/signals.md)
-  signals.yml.example        Committed template, copy to signals.yml
-  setup.bat                  Copied into the VM if present; start.bat runs it every boot
-  hosts                      Extra entries for the VM's hosts file (optional)
-
-vms.yaml                     VM topology definition (optional — absent = single VM)
-docker-compose.yml.j2        Jinja2 template for N-VM compose generation
-
-scripts/                     Windows VM scripts, plus host-side glue
-                             (config_helper.py, status.sh, healthcheck.sh,
-                             rotate-logs.sh, recreate-vm.sh, vm-watchdog.py)
-  oem-install.bat            First-boot OEM script (creates startup entry)
-  install.bat                Setup (Python, MT5, firewall), runs every boot
-  start.bat                  Boot entrypoint (install + start terminals + APIs)
-  reboot.bat                 The only reboot path — writes rebooting.flag and
-                             releases both lock dirs before shutting down
-  reboot_guard.py            Holds a scheduled reboot while an API runs a
-                             backtest or a write request (GET /busy)
-  acquire_lock.ps1           Boot-stamped lock acquire for start.bat and
-                             install.bat; auto-clears reboot-orphaned locks
-  debloat.bat                Windows debloat script
-  defender-remover/          Windows Defender removal tool
-
-signals/                     Signal copier service (docs/signals.md)
-  sources/                   One module per source type (telegram, websocket)
-
-mt5api/                      Python HTTP API server
-  handlers/                  Route handlers
-  config.py                  Configuration (--broker, --account, --instance,
-                             --port, --token, --utc-offset, --mode CLI args)
-  mt5client.py               MT5 wrapper
-  server.py                  Flask routes
-
-examples/                    Usage examples
-  python/                    TA, charting, and API client modules
-
-mt5installers/               Broker MT5 setup executables (gitignored)
-data/                        Generated/volatile data (gitignored)
+data/                        Generated and volatile data
   win.iso                    Windows ISO
-  storage/                   VM disk
-  shared/                    Shared folder with VM
-    scripts/                 Bat scripts synced from scripts/
+  storage/                   Single-VM disk (a multi-VM setup uses each VM's storage path)
+  shared/                    Shared directory the VM mounts
+    scripts/                 Windows scripts synced from scripts/
     config/                  Config synced from config/
     terminals/               MT5 installs per broker/account/instance
     logs/                    All log files
     mt5api/                  Python API package
   oem/                       First-boot scripts
   vm-group-<name>.txt        Terminals each VM owns (written by make up)
-.data/                       Generated host-side state (gitignored)
+.data/                       Generated host-side state
   nginx/nginx.conf           nginx routes, written by make up
   tailscale/state/           Tailscale identity and Serve config
   cloudflared/               Tunnel credentials and config (yours)
+.env                         Ports, token and sidecar settings, rewritten by make up
+docker-compose.yml           Seeded from docker-compose.yml.example, or generated from vms.yaml, on the first run; yours after that
+run.log                      Output of the last make up
 ```
 
 ## Concurrency and backpressure
@@ -286,7 +251,7 @@ The MT5 Python SDK is single-connection-per-process and not remotely fucking thr
 Knock-on effects you'll observe:
 
 - **`/ping`** is the only SDK route that doesn't take the lock. The Chart Deployments, file API and `/compile` handlers never call the SDK and never take it either. Use it for liveness probes. It answers even when the SDK is stuck, and reports `sdk_threads_alive` and `sdk_oldest_alive_s`, so a stuck call shows up there first.
-- Every `mt5.*` call has a hard 30s timeout (`MT5_CALL_TIMEOUT`). A call that runs past it returns **`504 mt5 call timed out`** and releases the lock, but its thread is still stuck inside the SDK and Python can't kill it.
+- Every `mt5.*` call has a hard 30s timeout, a fixed constant in the code (`MT5_CALL_TIMEOUT` in `mt5api/mt5client.py`), not a setting. A call that runs past it returns **`504 mt5 call timed out`** and releases the lock, but its thread is still stuck inside the SDK and Python can't kill it.
 - While that thread is alive, every later SDK call on that terminal fails at once with **`503 mt5 call is wedged`** and `Retry-After: 30`, instead of piling a second call onto the stuck connection and waiting out its own 30s. Calls work again as soon as the stuck thread returns.
 - If it never returns, the live health monitor restarts the terminal. The restart kills the terminal without calling `mt5.shutdown`, reconnects, and once the reconnect succeeds it stops tracking the stuck thread, so calls go through again.
 - When too many requests pile up on the lock, new ones get **`503 queue depth N exceeds max M`** instead of waiting. Default cap is 20. The API process reads `MT5_MAX_QUEUE_DEPTH` from its environment; there is no `config.yaml` key and nothing passes it into the VM, so changing it means setting it in [`scripts/api_runner.bat`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/api_runner.bat).
@@ -347,14 +312,14 @@ This is covered by the real Compose lifecycle regression in
 
 The Windows VM(s) run inside `dockurr/windows` containers with a Docker healthcheck
 ([`scripts/healthcheck.sh`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/healthcheck.sh)) that probes every terminal port this VM owns. A crash
-inside the guest — an unexpected shutdown (Event 6008), a wedged terminal, an
-OOM — leaves the **container** up while the **API** is dead, so
+inside the guest (an unexpected shutdown such as Event 6008, a wedged terminal, an
+OOM) leaves the **container** up while the **API** is dead, so
 `restart: unless-stopped` never fires and nothing recovers it on its own.
 
 ### VM crash watchdog
 
 `vm-watchdog` is a Compose-managed sidecar for exactly that case. It is part of
-the project (`docker compose up -d` brings it up with everything else) — no
+the project (`docker compose up -d` brings it up with everything else), with no
 host cron, no systemd unit, no machine-specific checkout path. It polls Docker
 health through the mounted unix socket and uses Docker's own
 `State.Health.FailingStreak` as the source of truth.
@@ -363,11 +328,11 @@ Behavior:
 
 - Scopes itself to this Compose project (`com.docker.compose.project`,
   discovered from its own container labels) and to the `dockurr/windows` VM
-  image, so the VM sweep only ever recovers the VM containers — never nginx,
+  image, so the VM sweep only ever recovers the VM containers, never nginx,
   the log rotator, or other containers. The netns sidecars get a second,
   narrower sweep of their own (below).
 - **Recovers by recreating the VM together with its netns sidecars**, by
-  running `scripts/recreate-vm.sh <service>` — the same helper documented above
+  running `scripts/recreate-vm.sh <service>`, the same helper documented above
   and covered by `tests/integration/test_wickworks_lifecycle.py`. It does not
   use `docker restart`: that keeps the container ID but gives the VM a fresh
   netns on start, which strands the wickworks sidecar exactly as recreating the
@@ -376,7 +341,7 @@ Behavior:
   for `WATCHDOG_MIN_FAILING_STREAK` consecutive healthcheck failures (default
   `10`, i.e. ~5 minutes at the default 30s interval). A container that is
   healthy or still starting is never touched, so running backtests on a working
-  VM are never interrupted — the healthcheck stays green the whole time a
+  VM are never interrupted: the healthcheck stays green the whole time a
   terminal is serving.
 - Leaves a VM alone until it has been healthy once. The first `make up`
   installs Windows, Python and MetaTrader, and the API the healthcheck probes
@@ -386,27 +351,27 @@ Behavior:
   (default `10800`, 3 hours) from when the watchdog first saw it, so an
   install that is truly stuck still gets a recovery.
 - Keeps a tiny state record per VM on a named volume, keyed by compose
-  project + service (`/state/<project>.<service>.json` — stable across the
+  project + service (`/state/<project>.<service>.json`, stable across the
   recreate that recovery performs, unlike a container id): last restart,
   attempt count, when the VM
   was last observed healthy, and whether it has ever been healthy.
 - Enforces exponential backoff between recovery attempts
-  (`WATCHDOG_BACKOFF_ATTEMPTS`, default `300,900,3600` — 5m → 15m → 1h), so a
+  (`WATCHDOG_BACKOFF_ATTEMPTS`, default `300,900,3600`: 5m, 15m, then 1h), so a
   VM that crashes again immediately after recovery is not restarted into a
   loop.
 - Stops after `WATCHDOG_MAX_ATTEMPTS` consecutive failed recoveries (default
   `3`) and logs loudly, instead of threshing forever.
 - Resets the attempt budget only after the VM has stayed **continuously**
   healthy for `WATCHDOG_RESET_SECONDS` (default `1800`), so a VM that recovered
-  then crashed later gets a fresh budget. Any non-healthy observation — a
+  then crashed later gets a fresh budget. Any non-healthy observation (a
   `starting` container after a restart, or an `unhealthy` poll below the streak
-  threshold — restarts that clock; it does not carry over from an earlier
+  threshold) restarts that clock; it does not carry over from an earlier
   healthy run.
-- Never selects itself, whatever `WATCHDOG_IMAGE_FILTER` is set to — it resolves
+- Never selects itself, whatever `WATCHDOG_IMAGE_FILTER` is set to. It resolves
   its own full container id at startup and excludes it by equality (falling
-  back to Docker's short-id hostname only if that inspect fails) — and matches
+  back to Docker's short-id hostname only if that inspect fails), and matches
   the image **repository exactly** (`dockurr/windows`, `dockurr/windows:5.14`,
-  `dockurr/windows@sha256:…` — not `dockurr/windows-something`).
+  `dockurr/windows@sha256:…`, not `dockurr/windows-something`).
 - `--dry-run` on its command line prints what it would do without touching
   any container. There is no environment switch for it: the watchdog does not
   read `WATCHDOG_DRY_RUN`.
@@ -423,13 +388,13 @@ sweep has nothing to act on.
 
 That is not hypothetical here. On 2026-09-07 the `mt5` container exited cleanly
 and `restart: unless-stopped` brought it back; its `wickworks` sidecar sat in
-the dead namespace for **two days** — `FailingStreak` 13,700, only `lo` left,
-every `/rates/ta` call 502-ing — with the VM green throughout.
+the dead namespace for **two days** (`FailingStreak` 13,700, only `lo` left,
+every `/rates/ta` call 502-ing) with the VM green throughout.
 
 The failing streak is the point. The sidecar's own healthcheck saw the fault
 the whole time. There was simply no supervisor for it. So a second sweep
-follows the VM sweep and applies the **same rule** — Docker health, past the
-same `WATCHDOG_MIN_FAILING_STREAK`, the same backoff and attempt cap — to the
+follows the VM sweep and applies the **same rule** (Docker health, past the
+same `WATCHDOG_MIN_FAILING_STREAK`, the same backoff and attempt cap) to the
 netns sidecars:
 
 - It recreates **that sidecar alone** (`recreate-vm.sh <sidecar>` →
@@ -443,8 +408,8 @@ netns sidecars:
   together. An owner that is not running is left alone too, and that one is
   load-bearing rather than a default: `/containers/json` lists running
   containers only, so a **stopped** owner is indistinguishable from a destroyed
-  one. Recreating a sidecar under a stopped owner cannot work — the helper
-  stops it first, then `up --no-deps` has no namespace to join — so the sidecar
+  one. Recreating a sidecar under a stopped owner cannot work: the helper
+  stops it first, then `up --no-deps` has no namespace to join, so the sidecar
   would end up stopped, invisible to both sweeps, and never retried. A
   `docker compose stop mt5` for maintenance must not cost you the sidecar.
 - `container:<name>` and `container:<short-id>` are legal to write by hand and
@@ -487,7 +452,7 @@ That path reaches compose as `MT5_PROJECT_DIR`, and compose interpolates it on
   [`tests/integration/test_vm_watchdog_lifecycle.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/integration/test_vm_watchdog_lifecycle.py) drives a real recovery
   through the built sidecar on a disposable Compose project.
 
-### Busy is not dead — and hung is not busy
+### Busy is not dead, and hung is not busy
 
 `healthcheck.sh` reports a port **healthy** when the TCP handshake completes but
 no HTTP answer arrives inside the probe window: something is listening, the
@@ -496,7 +461,7 @@ being busy would turn a slow batch into an outage.
 
 That tolerance is **bounded**. A port that accepts TCP but stays silent for
 `HEALTHCHECK_SLOW_GRACE` consecutive checks (default `10`, ≈5 minutes at the 30s
-interval) is reported as `hung` and the check fails — from there the watchdog's
+interval) is reported as `hung` and the check fails. From there the watchdog's
 own streak gate (`WATCHDOG_MIN_FAILING_STREAK`, another ≈5 minutes) applies, so
 a wedged API is recovered in roughly ten minutes rather than never. The
 per-port counters live in `HEALTHCHECK_STATE_DIR` (default `/tmp/healthcheck-slow`
@@ -507,7 +472,7 @@ written (a full disk), the bound is off for that check and the verdict says so:
 `ok (slow but listening: …) [slow-state unwritable: hung detection off]`.
 
 **Blast radius.** One hung terminal API is enough to mark the whole VM `DOWN`,
-and the watchdog's recovery is the whole VM — every other terminal on it, and
+and the watchdog's recovery is the whole VM: every other terminal on it, and
 whatever they were running, goes with it. That is the same rule the check has
 always applied to a dead port; it is just now applied to a hung one after the
 grace. When you catch a single wedged terminal before the watchdog does,
@@ -535,7 +500,7 @@ Reads (`GET`, `HEAD`, `OPTIONS`) never hold a reboot. While any API is busy the 
 
 When every API is idle the guard creates `reboot.draining` in the shared folder and checks once more. While that flag is fresh (under 2 minutes old) the APIs answer any new write with 503 `REBOOT_PENDING` and `Retry-After: 120`, so nothing starts in the seconds before the reboot. `start.bat` deletes the flag on the next boot.
 
-`reboot_max_postpone` (minutes, default 360) caps the wait, so a job that never ends cannot keep a wedged VM from its reboot. The guard then reboots anyway and logs `reason=max_postpone` with what was still busy. `0` turns the guard off. An API that does not answer counts as idle, and a guard that fails logs `reason=guard_error` and lets the reboot go ahead: the guard decides when, never whether. Reboots made during boot (`pip-changed`, `install-requested`) happen before any API is up and skip the guard.
+`reboot_max_postpone` (minutes, default 360) caps the wait, so a job that never ends cannot keep a wedged VM from its reboot. The guard then reboots anyway and logs `reason=max_postpone` with what was still busy. `0` turns the guard off. An API that does not answer counts as idle, and a guard that fails logs `reason=guard_error` and lets the reboot go ahead: the guard decides when, never whether. Reboots made during boot (`pip-changed`, `install-requested`, `desktop-heap`) happen before any API is up and skip the guard.
 
 ### Startup after a reboot
 
@@ -560,7 +525,7 @@ The probes therefore run **concurrently**, one background job per port. The
 worst case is now one port's **host walk**, not one probe: each job still tries
 the leased VM IP and then the two fallback hosts in turn, so the bound is
 `PROBE_TIMEOUT_SECONDS × 3` = 9s, independent of terminal count. Keep three
-times `PROBE_TIMEOUT_SECONDS` comfortably under the compose `timeout:` — at 10s
+times `PROBE_TIMEOUT_SECONDS` comfortably under the compose `timeout:`; at 10s
 it would be 30s and the original bug is back.
 
 **The verdicts travel in exit statuses, not in files, and that is the whole
@@ -572,7 +537,7 @@ VM, destroying two dozen running backtests, because `/tmp` filled up. The
 sequential loop this replaced needed no disk, and neither does this: each job
 returns `0` up, `1` busy, `2` hung, `3` dead, `4` busy-but-the-counter-could-
 not-be-written, and the parent reads them back with `wait` in port order.
-Anything else — a job killed by a signal — is unknown and fails closed as down.
+Anything else, such as a job killed by a signal, is unknown and fails closed as down.
 
 The only thing here that touches the disk is the slow/hung counter, and it is
 deliberately off the path that decides up or down: if the counters cannot be
@@ -582,7 +547,7 @@ still whatever its probe actually found.
 
 A port configured twice is probed once. Two terminals on one port is a
 misconfiguration rather than a topology, and acting on it twice meant two jobs
-writing one counter — and, before the fan-out, a hung bound that fired at half
+writing one counter and, before the fan-out, a hung bound that fired at half
 the configured grace. `config_helper.py` is where a duplicated port should be
 reported; a healthcheck's job is liveness.
 
@@ -618,7 +583,7 @@ The archives are gzipped because the live logs are sparse. Truncating the host f
 
 #### Size cap on terminal journals
 
-Retention alone does not bound the terminal journals, because it will not consider a journal until it is `RETAIN_DAYS` old. A high-frequency grid strategy logs every order placement, modification and cancellation, so a single backtest can write tens of gigabytes into *today's* journal — and the disk fills a week before that file is even eligible for the age pass.
+Retention alone does not bound the terminal journals, because it will not consider a journal until it is `RETAIN_DAYS` old. A high-frequency grid strategy logs every order placement, modification and cancellation, so a single backtest can write tens of gigabytes into *today's* journal, and the disk fills a week before that file is even eligible for the age pass.
 
 So a journal still inside the retention window is reclaimed by size instead, once it goes quiet:
 
@@ -627,8 +592,8 @@ So a journal still inside the retention window is reclaimed by size instead, onc
 
 Both are set on the `log-rotator` service in `docker-compose.yml` alongside `RETAIN_DAYS`. All three are validated at startup: a non-positive or non-numeric value exits non-zero rather than silently falling back to a default and quietly pruning on the wrong terms.
 
-**What this does not do:** `IDLE_MINUTES` deliberately exempts a journal a backtest is actively writing, because truncating it destroys the diagnostics for the run producing it. So the cap reclaims the space *after* the run goes quiet — it will not stop a single runaway backtest filling the disk while it is still going. If that is your failure mode, the lever is the strategy's own logging, or a larger volume; the rotator only guarantees the space comes back afterwards instead of never. A journal over the cap and still active is logged as `over cap but still active, left alone` on each pass, so it is visible in `docker compose logs log-rotator` rather than silently skipped.
+**What this does not do:** `IDLE_MINUTES` deliberately exempts a journal a backtest is actively writing, because truncating it destroys the diagnostics for the run producing it. So the cap reclaims the space *after* the run goes quiet; it will not stop a single runaway backtest filling the disk while it is still going. If that is your failure mode, the lever is the strategy's own logging, or a larger volume; the rotator only guarantees the space comes back afterwards instead of never. A journal over the cap and still active is logged as `over cap but still active, left alone` on each pass, so it is visible in `docker compose logs log-rotator` rather than silently skipped.
 
-Oversized journals are truncated in place rather than deleted: the terminal holds them open, so unlinking the inode would leave `terminal64.exe` writing to a deleted file and the space would not come back until it exited. The same exclusions as the age pass apply — MQL5 expert logs, MetaEditor logs, reports and backtest jobs are never touched.
+Oversized journals are truncated in place rather than deleted: the terminal holds them open, so unlinking the inode would leave `terminal64.exe` writing to a deleted file and the space would not come back until it exited. The same exclusions as the age pass apply: MQL5 expert logs, MetaEditor logs, reports and backtest jobs are never touched.
 
 When shit breaks, check these first.

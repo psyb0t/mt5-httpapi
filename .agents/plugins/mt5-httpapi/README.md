@@ -10,7 +10,7 @@ stdio traffic, forward it to the running terminal, and add the bearer token
 when required. That is the whole fucking plugin.
 
 > mt5-httpapi is **self-hosted** and talks to a **live trading terminal**. This
-> plugin does not ship the MT5 bridge — it connects to a terminal that **you**
+> plugin does not ship the MT5 bridge; it connects to a terminal that **you**
 > run. See the [mt5-httpapi repo](https://github.com/psyb0t/mt5-httpapi) to
 > stand one up.
 
@@ -33,10 +33,12 @@ session is pinned to that terminal.
 
 On terminals with Chart Deployments enabled the agent can also stage and run
 EAs on charts: `upload_expert` and `upload_set` (file content as base64),
-`create_deployment`, `update_deployment`, `delete_deployment`,
-`list_deployments`, `list_charts`, `screenshot_chart` (returns the PNG as an
-image), `close_chart`, and the WebRequest allowlist tools `get_webrequest`,
-`set_webrequest`, `apply_webrequest`. On terminals with the file API enabled
+`list_experts`, `delete_expert`, `list_sets`, `get_set`, `delete_set`,
+`create_deployment`, `list_deployments`, `get_deployment`,
+`update_deployment`, `delete_deployment`, `reconcile_deployments`,
+`list_charts`, `get_loader`, `screenshot_chart` (returns the PNG as an image),
+`close_chart`, and the WebRequest allowlist tools `get_webrequest`,
+`set_webrequest`, `apply_webrequest` and `verify_webrequest`. On terminals with the file API enabled
 it can read and write the terminal's files, libraries and logs with
 `list_files`, `get_file`, `put_file` (which can unpack a zip) and
 `delete_file`. See the
@@ -53,7 +55,7 @@ running deployment is a live EA that trades.
 | Env var | Required | Description |
 |---|---|---|
 | `MT5_API_URL` | yes | Server root (for unified tools plus `list_terminals`) or one terminal URL (for a pinned session), e.g. `http://localhost:8888` or `http://localhost:8888/<broker>/<account>`. The bridge appends `/mcp/`. |
-| `MT5_API_TOKEN` | no | Bearer token — required whenever the terminal's `api_token` is set (same token as the REST API); omit only if the server has auth disabled. |
+| `MT5_API_TOKEN` | no | Bearer token, required whenever the server's `api_token` is set (same token as the REST API); omit only if the server has auth disabled. |
 
 ## Install
 
@@ -69,7 +71,7 @@ plugin's environment.
 ## Native remote MCP (no install)
 
 If your MCP client already supports remote Streamable HTTP, you do not need
-this bridge at all — point the client straight at `$MT5_API_URL/mcp/`
+this bridge at all: point the client straight at `$MT5_API_URL/mcp/`
 (with an `Authorization: Bearer <token>` header if your terminal requires
 one).
 

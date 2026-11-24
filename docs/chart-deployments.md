@@ -1,37 +1,35 @@
 ---
 title: "Chart Deployments"
 description: "Upload .ex5 and .set files and attach Expert Advisors to live charts over HTTP, plus the WebRequest allowlist the API sets in each terminal."
-nav_order: 6
-has_children: true
+sidebar_position: 12
 ---
 
 # Chart Deployments: remote EA deployment over HTTP
 
 Attach Expert Advisors to charts with set files over the HTTP API. No RDP, no
-terminal restart, and no human clicking through the Navigator.
+terminal restart, and no human clicking through the Navigator. Stage an `.ex5`
+and a `.set`, declare a deployment (expert + set + symbol + timeframe), and a
+resident loader EA inside the terminal reconciles the terminal's actual charts
+to match. The API holds *desired state*; the loader reports *observed truth*
+back, so a deployment only reads `running` once the expert is confirmed live on
+a chart.
 
 ## Contents
 
+- [Endpoints](#endpoints)
+- [Turning it on](#turning-it-on)
 - [Quick start](#quick-start)
-- [`POST /experts` and the Navigator refresh](#post-experts-and-the-navigator-refresh)
-- [`POST /deployments`](#post-deployments)
-- [`GET /deployments` and the other deployment routes](#get-deployments-and-the-other-deployment-routes)
-- [`GET /loader`](#get-loader)
-- [`GET /charts`](#get-charts)
-- [Screenshots](#post-chartschart_idscreenshot) and [closing charts](#post-chartschart_idclose)
+- [Route reference](#route-reference)
+  - [`POST /experts` and the Navigator refresh](#post-experts-and-the-navigator-refresh)
+  - [`POST /deployments`](#post-deployments)
+  - [`GET /deployments` and the other deployment routes](#get-deployments-and-the-other-deployment-routes)
+  - [`GET /loader`](#get-loader)
+  - [`GET /charts`](#get-charts)
+  - [Screenshots](#post-chartschart_idscreenshot) and [closing charts](#post-chartschart_idclose)
 - [WebRequest allowlist](#webrequest-allowlist)
 - [Chart Control Protocol](chart-control-protocol.md), the file contract the loader speaks
 
-
-> **Video walkthrough:** *Coming soon. A full walkthrough of staging, deploying, and
-> debugging EAs via the chartctl API.*
-
-Attach Expert Advisors to charts with set files over the HTTP API. No RDP,
-no terminal restart. Stage an `.ex5` + `.set`, declare a deployment (expert +
-set + symbol + timeframe), and a resident loader EA inside the terminal
-reconciles the terminal's actual charts to match. The API holds *desired
-state*; the loader reports *observed truth* back, so a deployment only reads
-`running` once the expert is confirmed live on a chart.
+## Endpoints
 
 Any client (a dashboard, a script, an AI agent) drives it over plain REST.
 Full protocol contract and file formats: [`docs/chart-control-protocol.md`](chart-control-protocol.md).
@@ -40,7 +38,8 @@ AI agents get the same thing as typed MCP tools, file uploads and chart screensh
 
 | Method                                           | Endpoint                              | Description                                              |
 | ------------------------------------------------ | ------------------------------------- | -------------------------------------------------------- |
-| `POST` / `GET` / `DELETE`                        | `/experts` `/experts/<name>`          | Stage, list, remove EA `.ex5` files                      |
+| `POST` / `GET`                                   | `/experts`                            | Stage, list EA `.ex5` files                              |
+| `DELETE`                                         | `/experts/<name>`                     | Remove an EA `.ex5` file                                 |
 | `POST` / `GET` / `DELETE`                        | `/sets` `/sets/<name>`                | Stage, list, inspect (parsed), remove `.set` parameter files |
 | `POST` / `GET`                                   | `/deployments`                        | Create or list deployments                               |
 | `GET` / `PATCH` / `DELETE`                       | `/deployments/<id>`                   | Inspect, pause/resume/change set, tear down a deployment |
@@ -50,7 +49,9 @@ AI agents get the same thing as typed MCP tools, file uploads and chart screensh
 | `POST`                                           | `/charts/<chart_id>/screenshot`       | Capture a chart PNG from inside the terminal             |
 | `POST`                                           | `/charts/<chart_id>/close`            | Close a chart by id (any chart, including leaks)         |
 
-`DELETE /experts/<name>` and `DELETE /sets/<name>` answer 409 `IN_USE` while any deployment, paused ones included, names the file, because the API rebuilds a deployment's chart template from its expert and set on every change. Delete the deployment first. Host-managed files under `assets/` that were never copied into the terminal answer 403 `HOST_ASSET`. Staged sets live in the terminal's `chartctl/sets/`, which the [file API](files.md) only reads, so remove them here.
+`DELETE /experts/<name>` and `DELETE /sets/<name>` answer 404 `ARTIFACT_NOT_FOUND` for a file that is not staged, and 409 `IN_USE` while any deployment, paused ones included, names the file, because the API rebuilds a deployment's chart template from its expert and set on every change. Delete the deployment first. Host-managed files under `assets/` that were never copied into the terminal answer 403 `HOST_ASSET`. Staged sets live in the terminal's `chartctl/sets/`, which the [file API](files.md) only reads, so remove them here.
+
+## Turning it on
 
 **Opt-in.** `chartctl.enabled` defaults to `false`; set it to `true` in
 `config.yaml` to switch the feature on. Live-mode terminals only, and any single
@@ -78,12 +79,12 @@ automatically (single-loader mutex via terminal GlobalVariable).
 - `max_upload_bytes` (default `16777216`, 16 MiB, floor 1 KiB): the largest `.ex5` or `.set` that `POST /experts` and `POST /sets` take.
 - `navigator_labels`: the Navigator's labels on a terminal that does not run MT5 in English; see [`POST /experts` and the Navigator refresh](#post-experts-and-the-navigator-refresh).
 
-### Quick start
+## Quick start
 
 ```bash
 # 0. Set your base URL + auth token
 export MT5_API_URL=http://localhost:8888/yourbroker/yourlogin
-export MT5_API_TOKEN=$(grep api_token config/config.yaml | awk -F'"' '{print $2}')
+export MT5_API_TOKEN=$(python3 scripts/config_helper.py api_token)
 
 # 1. Stage an expert (.ex5) and a set file (.set)
 curl -H "Authorization: Bearer $MT5_API_TOKEN" \
@@ -118,6 +119,8 @@ curl -X PATCH  "$MT5_API_URL/deployments/dep_a1b2c3d4" \
 curl -X DELETE "$MT5_API_URL/deployments/dep_a1b2c3d4" \
   -H "Authorization: Bearer $MT5_API_TOKEN"
 ```
+
+## Route reference
 
 ### `POST /experts` and the Navigator refresh
 
@@ -225,8 +228,9 @@ has applied the current revision, and its report is fresh.
 - `PATCH /deployments/<id>` takes `set` and/or `enabled`. `"set": null` or
   `""` removes the set. It answers `{"id", "deployment"}`. An empty body
   answers 400, an unknown id 404 `NOT_FOUND`, a set that is not staged 404
-  `ARTIFACT_NOT_FOUND`, and resuming onto a busy symbol and timeframe 409
-  `DUPLICATE_CHART`.
+  `ARTIFACT_NOT_FOUND`, resuming onto a busy symbol and timeframe 409
+  `DUPLICATE_CHART`, and a new set whose chart template cannot be built 500
+  `TPL_GENERATION_FAILED`.
 - `DELETE /deployments/<id>` answers `{"deleted": "<id>", "was": {...}}`.
 - `POST /deployments/reconcile` rewrites `desired.json` under a new revision
   and answers 202 `{"revision": N}`. The bundled loader reconciles every
@@ -248,7 +252,9 @@ Returns the resident loader EA's status:
 ```
 
 `alive` is true when `observed.json` exists, names a loader, and is younger
-than `observed_stale_after`. When it is false the response adds a `hint`.
+than `observed_stale_after`. When it is false the response adds a `hint`. The
+hint still says to attach `MT5ChartLoader` to a chart by hand; ignore that part,
+because the loader attaches itself at launch once `chartctl.enabled` is on.
 
 If `alive` is `false`, the loader hasn't started yet. Check that
 `chartctl.enabled` is on and the terminal was restarted after provisioning.

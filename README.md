@@ -4,9 +4,13 @@
 [![version](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/version.svg)](https://github.com/psyb0t/mt5-httpapi/releases)
 [![license](https://raw.githubusercontent.com/psyb0t/mt5-httpapi/badges/license.svg)](LICENSE)
 
-MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with REST and MCP APIs slapped on top. No Wine bullshit, no janky compatibility hacks — the real Windows MT5 terminal in portable mode, controllable without clicking through that fucking GUI all day.
+MetaTrader 5 running inside a real Windows VM (Docker + QEMU/KVM) with REST and MCP APIs slapped on top. No Wine bullshit, no janky compatibility hacks: the real Windows MT5 terminal in portable mode, controllable without clicking through that fucking GUI all day.
 
 Run multiple brokers, accounts, and cloned terminal instances at the same time. Each one gets its own Python API process inside the VM, while nginx puts the whole mess behind one port at `http://localhost:8888/<broker>/<account>/...`.
+
+Rather watch the damn thing than read about it? The walkthrough goes from `git clone` to a first trade on a demo account, all over plain HTTP:
+
+[![mt5-httpapi: MetaTrader 5 over HTTP, from Docker to your first trade](https://img.youtube.com/vi/YW4gz6PIJWg/maxresdefault.jpg)](https://www.youtube.com/watch?v=YW4gz6PIJWg)
 
 ## Contents
 
@@ -27,18 +31,19 @@ Run multiple brokers, accounts, and cloned terminal instances at the same time. 
 
 ## What this fucker does
 
-- **Real MT5 on real Windows** — no Wine, no pretending, no compatibility-layer roulette.
-- **As many brokers, accounts, and terminal clones as your machine can stomach** — all behind one nginx port.
-- **The useful MT5 shit over HTTP** — terminal state, market data, orders, positions, history, and Strategy Tester jobs.
-- **Built-in technical analysis** — [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
-- **MCP for the robot overlords** — one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
+- **Real MT5 on real Windows**: no Wine, no pretending, no compatibility-layer roulette.
+- **As many brokers, accounts, and terminal clones as your machine can stomach**, all behind one nginx port.
+- **The useful MT5 shit over HTTP**: terminal state, market data, orders, positions, history, and Strategy Tester jobs.
+- **Built-in technical analysis**: [wickworks](https://github.com/psyb0t/docker-wickworks) calculates indicators and SMC primitives server-side without exposing its own port.
+- **MCP for the robot overlords**: one endpoint per terminal or one unified endpoint for the whole pile, plus Claude Code, Codex, and OpenClaw integrations.
 - **Optional Telegram signal copier**: follow signal channels or a websocket feed and place their trades on as many accounts as you want, each with its own sizing and open-trade limits. Off until you turn it on. See [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/).
-- **Optional multi-VM fuckery** — spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
+- **Optional multi-VM fuckery**: spread terminals across VMs or NUMA nodes, then reach them through Tailscale or Cloudflare Tunnel if you need to.
 
 ## Requirements
 
 - Linux with KVM available at `/dev/kvm`
 - Docker with Docker Compose
+- `python3` with `pip`, `aria2c` (installed for you only on Debian or Ubuntu) and `openssl` ([why each one](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/#requirements))
 - About 20 GB of disk for the ISO, VM, and MT5 installations
 - Enough RAM for however hard you plan to abuse the Windows VM; the default low-memory setup leans heavily on host swap
 
@@ -67,7 +72,7 @@ make status
 ```
 
 Before `make up`, replace the template's sample `accounts:` and `terminals:`
-blocks — they contain placeholder FTMO and RoboForex entries and **will not
+blocks: they contain placeholder FTMO and RoboForex entries and **will not
 magically start your broker**. Keep the other template settings, but the three
 names below must line up exactly, or Windows installs one terminal and the API
 tries to launch another fucking thing:
@@ -94,7 +99,7 @@ this repo cannot download it for you. Remove the unused example accounts and
 terminals, or configure an installer for every one of them.
 
 The first run downloads tiny11 and installs Windows, Python, and MT5, so give
-the fucker roughly ten minutes. `make up` returning only means Docker and the
+the fucker 10 to 15 minutes. `make up` returning only means Docker and the
 VM booted; `make status` passing means the configured terminal API is actually
 alive. Watch the installation through noVNC at <http://localhost:8006>; the
 API lands at `http://localhost:8888/mybroker/main/` for the config above.
@@ -104,7 +109,7 @@ API lands at `http://localhost:8888/mybroker/main/` for the config above.
 ```text
 client
   ├─ REST: /<broker>/<account>[/<instance>]/...
-  └─ MCP:  /mcp or /<broker>/<account>/mcp
+  └─ MCP:  /mcp/ or /<broker>/<account>[/<instance>]/mcp/
           │
       nginx :8888
           │
@@ -133,6 +138,7 @@ The old README became a massive wall of API shit, so the details now live on the
 | Operate the bastard: Make targets, ports, remote access, concurrency, and logs | [Operations](https://psyb0t.github.io/mt5-httpapi/operations/) |
 | Split terminals across several Windows VMs or NUMA nodes | [Multi-VM setup](https://psyb0t.github.io/mt5-httpapi/multi-vm-setup/) |
 | Deploy EAs onto charts over HTTP instead of clicking through the Navigator | [Chart Deployments](https://psyb0t.github.io/mt5-httpapi/chart-deployments/) |
+| Make your own resident EA speak the chart loader's file protocol | [Chart Control Protocol](https://psyb0t.github.io/mt5-httpapi/chart-control-protocol/) |
 | Push libraries, DLLs and data into a terminal, zipped or not, and read its files and logs back | [File API](https://psyb0t.github.io/mt5-httpapi/files/) |
 | Copy trade signals from Telegram channels or a websocket feed onto your accounts, sized per account | [Signal copier](https://psyb0t.github.io/mt5-httpapi/signals/) |
 
@@ -180,8 +186,8 @@ Run `make help` when you forget the rest. The [operations guide](https://psyb0t.
 
 Every executable tracked in this repo is declared in
 [`assets/binaries.lock.json`](assets/binaries.lock.json) with its SHA-256, size,
-upstream URL and the state of its code signature. `make verify-binaries` — which
-`make test` runs first, so CI enforces it on every pull request — fails the
+upstream URL and the state of its code signature. `make verify-binaries` (which
+`make test` runs first, so CI enforces it on every pull request) fails the
 build on an undeclared binary, on one whose bytes changed, or on a signature
 that degrades.
 
@@ -190,7 +196,7 @@ waves through the `.exe` beside it because there is nothing to skim, and that is
 the shape every serious supply-chain compromise has taken. If you need to add
 one: verify the download yourself against the vendor's published hash, then
 record it in the manifest with where it came from. If it cannot be verified, say
-so in its `note` — the gate will keep warning about it on every run, which is
+so in its `note`. The gate will keep warning about it on every run, which is
 the point.
 
 ## Project layout
@@ -207,6 +213,7 @@ mt5installers/   your broker installers, named mt5setup-<broker>.exe (gitignored
 examples/        Python and shell examples for the API and Chart Deployments
 tests/           unit, contract, integration, and race-test shit
 docs/            all the details that no longer clog up this README
+website/         the Docusaurus build that turns docs/ into the documentation site
 ```
 
 ## Recommended brokers and prop firms

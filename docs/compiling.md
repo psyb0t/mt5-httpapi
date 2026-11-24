@@ -1,8 +1,7 @@
 ---
 title: "Compiling MQL5"
 description: "POST /compile turns MQL5 source into an .ex5 through MetaEditor: request fields, responses, settings, caching, concurrency and limits."
-nav_order: 4
-parent: "REST API"
+sidebar_position: 9
 ---
 
 # Compiling MQL5
@@ -11,7 +10,7 @@ parent: "REST API"
 Windows machine, no MetaEditor GUI, no RDP session.
 
 This exists because MetaEditor is the only thing that can produce an `.ex5`, and
-it only runs on Windows — which this stack already has. If you are generating,
+it only runs on Windows, which this stack already has. If you are generating,
 templating, or patching EA source anywhere else (CI, a code generator, a web
 app, an agent), this is how you get a binary out of it without a human in the
 loop.
@@ -46,15 +45,17 @@ curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `source` | string | yes | The complete `.mq5` text. Capped at `COMPILE_MAX_SOURCE_BYTES` (default 2 MB). |
-| `filename` | string | no | Cosmetic. Reduced to a bare stem — see [Security](#security). Defaults to `ea.mq5`. |
-| `ea_version` | string | no | Recorded in the server log to correlate a compile with your build. Not passed to the compiler. 1–64 characters of `A-Z a-z 0-9 . _ + -`; anything else is a 400. |
+| `filename` | string | no | Cosmetic. Reduced to a bare stem; see [Security](#security). Defaults to `ea.mq5`. |
+| `ea_version` | string | no | Recorded in the server log to correlate a compile with your build. Not passed to the compiler. 1 to 64 characters of `A-Z a-z 0-9 . _ + -`; anything else is a 400. |
 
 ## Responses
 
-Every response is JSON, including failures. `log` is always a string, never
-`null`, and is capped at the last 8 KB.
+Every response the handler sends is JSON, including failures. `log` is always a
+string, never `null`, and is capped at the last 8 KB. Two answers come from
+outside the handler and do not have that shape: the 503 `REBOOT_PENDING` below,
+and nginx's own HTML error pages (502, 504) when the proxy gives up.
 
-**200 — compiled.**
+**200: compiled.**
 
 ```json
 {
@@ -78,27 +79,27 @@ and carries a digest per matching header:
 
 It exists because `include_hash` cannot say *what* moved. Upgrading the stock
 MQL5 library and editing your own shared header both change it, and the correct
-responses are opposites — the first needs no rebuild, the second needs every
+responses are opposites: the first needs no rebuild, the second needs every
 dependent artifact rebuilt. Without per-header digests a caller has to assume
 the expensive one. Keys are paths relative to the include root.
 
-A configured header that is **absent from the tree** is absent from this map —
+A configured header that is **absent from the tree** is absent from this map,
 never null. That is a distinct third case, and it is worth handling as one:
 
 | Observed | Means | Response |
 | --- | --- | --- |
 | digest unchanged | that header did not move | nothing, even if `include_hash` moved |
 | digest changed | that header was edited | rebuild what depends on it |
-| **key gone** | the header is not in the tree the compiler read | **do not rebuild — investigate** |
+| **key gone** | the header is not in the tree the compiler read | **do not rebuild; investigate** |
 | whole field absent | nothing is configured, none of the configured headers is in the tree, or the tree was unreadable | unknown; treat as rebuild |
 
 The third row is the one that bites. A missing header is a provisioning fault on
 *this* host, not drift on the caller's side, and rebuilding against it cannot
-succeed — every dependent source fails with `error 106: file not found`. A
+succeed: every dependent source fails with `error 106: file not found`. A
 caller that treats a vanished key as "rebuild" queues a run of guaranteed 422s
 instead of alerting someone.
 
-`include_hash` identifies the include tree this binary was built against —
+`include_hash` identifies the include tree this binary was built against:
 sha256 over the relative paths and contents of everything under the `/inc:`
 root. Record it with the build and "which artifacts used a library that has
 since changed" becomes a comparison instead of an assumption. It is computed
@@ -108,7 +109,7 @@ tree as it is at each compile: an edit made in the include directory, or
 a mirror refresh done by another API process, shows up in the next response.
 Omitted if the tree cannot be read; never guessed.
 
-**422 — the source did not compile.** This is your code being wrong, not the
+**422: the source did not compile.** This is your code being wrong, not the
 server. `log` carries MetaEditor's own diagnostics.
 
 ```json
@@ -119,9 +120,9 @@ server. `log` carries MetaEditor's own diagnostics.
 }
 ```
 
-A missing `#include` lands here too — it is a compile error, not a server fault.
+A missing `#include` lands here too: it is a compile error, not a server fault.
 
-**504 — the compile exceeded its deadline**, or waited too long for the
+**504: the compile exceeded its deadline**, or waited too long for the
 compiler lock.
 
 ```json
@@ -156,18 +157,25 @@ header, instead of holding a server thread. See [Concurrency](#concurrency).
 or source whose `#include`, `#resource` or `#property icon` names a file
 outside the allowed trees (see [What the source can reach](#what-the-source-can-reach)).
 The log names the directive and the path.
-**401 — bad or missing credentials.**
-**500 — the host cannot compile** (MetaEditor missing, unreadable,
+
+**401: bad or missing credentials.**
+
+**503: a scheduled VM reboot is about to happen.** In the seconds before a
+scheduled reboot every write, `/compile` included, answers
+`{"error": "...", "code": "REBOOT_PENDING"}` with `Retry-After: 120`. This body
+has no `ok` and no `log`. See [Scheduled reboots](operations.md#scheduled-reboots).
+
+**500: the host cannot compile** (MetaEditor missing, unreadable,
 unlaunchable), an unexpected server error (reported as a generic
-`"internal error"` — details go to the server log, not the response), or a
+`"internal error"`; details go to the server log, not the response), or a
 compiled binary over `COMPILE_MAX_EX5_BYTES`. That last one means the source
-compiled but the server refuses to return an artifact that size — it is
+compiled but the server refuses to return an artifact that size. It is
 checked on disk, before the binary would be read into memory and
 base64-inflated into the response. Raise the cap if your EA legitimately
 embeds resources that big.
 
 Warnings never fail a compile. MetaEditor exits non-zero on warnings as well as
-errors, so the exit code is not used to decide the outcome — the log is parsed
+errors, so the exit code is not used to decide the outcome: the log is parsed
 and the produced binary is the tiebreaker.
 
 ## Configuration
@@ -182,7 +190,9 @@ compile_api_token: ""
 
 All optional. Each is a top-level `config.yaml` key in lower case
 (`compile_timeout`, `compile_local_cache`, ...) or an environment variable in
-upper case; the environment variable wins:
+upper case. The environment variable wins, but only in the API process inside
+the VM, which gets none unless you add it to
+[`scripts/api_runner.bat`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/api_runner.bat):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -205,7 +215,7 @@ them stops the API from starting.
 
 Compiles run in a dedicated terminal directory, not a broker terminal.
 MetaEditor is a separate executable from `terminal64.exe` and does not contend
-with a running terminal for the SDK — but it does write into the directory it
+with a running terminal for the SDK, but it does write into the directory it
 compiles under, and sharing that with a live terminal or a running Strategy
 Tester buys nothing. `metaquotes/base` is the default because it ships
 MetaEditor and no terminal runs out of it.
@@ -214,7 +224,7 @@ MetaEditor and no terminal runs out of it.
 
 Drop `.mqh` files into `<COMPILE_INCLUDE_DIR>/Include/` and `#include <Name.mqh>`
 resolves. If you are generating source against a library you maintain
-elsewhere, sync it into that directory as part of your deploy — a stale `.mqh`
+elsewhere, sync it into that directory as part of your deploy. A stale `.mqh`
 compiles clean and then misbehaves at runtime, which is the worst failure shape
 available.
 
@@ -234,7 +244,7 @@ re-validates it first.
 ## Performance
 
 If your terminals live on a network or host-shared mount, the compile is not
-what costs you — dragging MetaEditor across the mount is.
+what costs you. Dragging MetaEditor across the mount is.
 
 Measured on a docker-hosted Windows VM with the terminals on a 9p share: a
 compile MetaEditor's own log timed at **4.1s** took **29s** wall-clock, on every
@@ -261,13 +271,13 @@ never reads them.
 Only files that are missing or changed are copied, compared on size and
 whole-second mtime, so a mirror that survived a restart costs nothing to
 re-validate. This matters more than it looks: the stock MQL5 `Include` tree is
-~260 files, and copying it unconditionally took **103s** on a 9p share —
+~260 files, and copying it unconditionally took **103s** on a 9p share,
 directly in front of the first caller after every process start. Populating it
 the first time still costs that once.
 
 Even with the mirror warm, the first compile after a VM restart pays
-MetaEditor's own cold load: measured at **30–55s** on a busy host, against ~2–3s
-warm. With `COMPILE_LOCAL_CACHE` set, the server now absorbs that itself — it
+MetaEditor's own cold load: measured at **30 to 55s** on a busy host, against ~2 to 3s
+warm. With `COMPILE_LOCAL_CACHE` set, the server now absorbs that itself: it
 compiles a throwaway EA in the background 180s after start, so a real caller
 finds MetaEditor warm.
 
@@ -278,27 +288,27 @@ That warm-up is deliberately gated, and the gates matter more than the compile:
   most marginal.
 - **Claimed once per VM per boot**, via an exclusive file in the cache
   directory. Every API process exposes `/compile` and they share that
-  directory, so an ungated warm-up starts one MetaEditor per terminal — twenty
+  directory, so an ungated warm-up starts one MetaEditor per terminal, twenty
   at once on a busy host. The claim records the boot it was made in, so the
   next boot warms up again however soon it comes (with `reboot_interval: 30`,
   an age-based expiry would skip every other boot).
 - **Yields to real work.** It takes the compile lock non-blocking and gives up
   if a compile is running; a caller queuing behind a warm-up would defeat it.
 
-Failures are logged and ignored — the worst case is that the next real compile
+Failures are logged and ignored. The worst case is that the next real compile
 pays the cold load, exactly as before.
 
 If the mirror cannot be built (unwritable path, no space) the server logs a
 warning and falls back to the configured paths. A slow compile beats a broken
 one.
 
-Leave it unset if your terminals are already on local disk — then there is
+Leave it unset if your terminals are already on local disk; then there is
 nothing to win.
 
 ## Concurrency
 
 Compiles are serialized behind one lock and the request is synchronous. A queue
-would add failure modes — lost jobs, status polling, restart recovery — to buy
+would add failure modes (lost jobs, status polling, restart recovery) to buy
 nothing, because the work itself cannot overlap. Concurrent callers wait; a
 caller that waits longer than the compile deadline plus 30s gets a 504 rather
 than a hung connection.
@@ -318,7 +328,7 @@ the mirror happens under the same lock, so no process's MetaEditor reads a
 header while another process rewrites it.
 
 **Tell callers to compile one at a time.** Since the lock serializes them
-anyway, concurrency buys no throughput — but it does stack waits on top of a
+anyway, concurrency buys no throughput, but it does stack waits on top of a
 fixed deadline, so the callers at the back of the queue start returning 504
 while the same requests sent sequentially would all have succeeded. Measured on
 a loaded host: five concurrent compiles of an EA including `<Trade\Trade.mqh>`
@@ -327,16 +337,17 @@ took 92s in total, with individual waits of 24/47/72/90/92s and one 504.
 Sustained parallel compiles are also enough to saturate a VM's CPU. If
 something supervises that VM on a health probe with a short timeout, the probe
 starts failing under compile load and the supervisor restarts a VM that was
-merely busy — converting a slow batch into an outage. Give the probe enough
+merely busy, converting a slow batch into an outage. Give the probe enough
 timeout to survive a CPU-saturated host.
 
 If you put a reverse proxy in front of this, give `/compile` a read
 timeout longer than the handler's worst case: the lock wait (deadline + 30s)
 plus the compile itself, 150s at the 60s ceiling. nginx defaults to 60s,
-which a wait will cross — and then the caller gets the proxy's HTML error
+which a wait will cross, and then the caller gets the proxy's HTML error
 page instead of the JSON documented here. The nginx config this project
-generates gives `/<broker>/<account>[/<instance>]/compile` 180s and leaves
-every other route at nginx's default.
+generates gives `/<broker>/<account>[/<instance>]/compile` 180s; `webrequest`,
+`mcp`, `files`, `compile/files` and `terminal/restart` get 300s, and every
+other route keeps nginx's default.
 
 Each request compiles inside its own temp directory, which is removed on every
 exit path including timeouts and crashes. Two callers compiling different
@@ -346,15 +357,15 @@ sources under the same `filename` cannot see each other's output.
 
 The endpoint accepts source text and nothing else. Specifically:
 
-- **No caller-supplied paths.** `filename` is stripped to a bare stem —
-  directories, drive letters and `..` are discarded — then re-suffixed. It
+- **No caller-supplied paths.** `filename` is stripped to a bare stem:
+  directories, drive letters and `..` are discarded, then it is re-suffixed. It
   cannot escape the temp directory.
 - **No caller-controlled compiler arguments.** `/compile:`, `/log:` and `/inc:`
   are all computed server-side. Sending `log` or `include` in the body does
   nothing.
 - **No file reads on your behalf.** The handler only touches the request's own
   temp directory. MetaEditor itself resolves `#include`, `#resource` and
-  `#property icon`, so those are checked before it runs — see
+  `#property icon`, so those are checked before it runs; see
   [What the source can reach](#what-the-source-can-reach).
 - **No trading surface.** The handler never touches the MT5 SDK. It cannot
   place an order, modify a position, or restart a terminal.
@@ -373,9 +384,9 @@ anything:
 | Directive | Absolute path | `..` walk | `\\server\share` |
 | --- | --- | --- | --- |
 | `#include "…"` | **read** | **read** | not found (joined to the temp directory) |
-| `#include <…>` | **read** | **read** | — |
+| `#include <…>` | **read** | **read** | n/a |
 | `#resource` | refused (`error 313`) | refused (`error 313`) | refused |
-| `#property icon` | not found (joined to the temp directory) | **read** | — |
+| `#property icon` | not found (joined to the temp directory) | **read** | n/a |
 
 Forward slashes, indentation and a comment before the `#` made no difference.
 The icon reads fail on anything that is not a valid `.ico` (`error 342: invalid
@@ -399,7 +410,7 @@ check runs on the source with comments removed, and matches the directive
 more loosely than MetaEditor does (any case, spaces after `#`), so a directive
 MetaEditor would ignore can be refused but one it honours cannot slip past.
 
-The check reads lines the way the preprocessor does. Every `\r\n` and lone `\r` in the source becomes `\n` before the check, and the file MetaEditor compiles is written from that same text. For the check only, `\u0085`, ` ` and ` ` also break lines, backslash-newline continuations are joined, and form feed and vertical tab count as spaces. A `#` left alone on its line once comments are removed is refused, because a comment spanning a line break between `#` and the directive name still joins them for the preprocessor.
+The check reads lines the way the preprocessor does. Every `\r\n` and lone `\r` in the source becomes `\n` before the check, and the file MetaEditor compiles is written from that same text. For the check only, `\u0085`, `\u2028` and `\u2029` also break lines, backslash-newline continuations are joined, and form feed and vertical tab count as spaces. A `#` left alone on its line once comments are removed is refused, because a comment spanning a line break between `#` and the directive name still joins them for the preprocessor.
 
 [`tests/live/test_compile_reach.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/tests/live/test_compile_reach.py) runs these cases against a deployed endpoint (`make test-live`). Against
 build 5836 without this check, MetaEditor ran on all sixteen and read the
@@ -421,7 +432,8 @@ the ability to compile, giving it `api_token` gives it your account too. Set
 rejected everywhere else.
 
 Both tokens work on `/compile`. Only `api_token` works anywhere else,
-including `/compile/files`.
+including `/compile/files`. With `api_token` empty and `compile_api_token` set,
+`/compile` still requires the compile token while every other route is open.
 
 > Compiling arbitrary source is not a sandbox. MetaEditor parses attacker-
 > controlled text, and MQL5 has `#import` for DLLs. Treat `/compile` as trusted

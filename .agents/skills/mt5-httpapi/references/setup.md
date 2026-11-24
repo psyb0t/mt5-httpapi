@@ -1,11 +1,12 @@
-# mt5-httpapi setup — boot the whole fucking contraption
+# mt5-httpapi setup: boot the whole fucking contraption
 
 ## Requirements
 
 - Linux host with KVM enabled (`/dev/kvm`)
 - Docker + Docker Compose
-- ~20 GB disk (Windows ISO + VM storage + MT5 installs)
-- 5 GB RAM (runs mostly on swap — tiny11 + debloat idles at ~1.4 GB)
+- `python3` with `pip`, `aria2c` (installed for you only on Debian or Ubuntu) and `openssl`
+- ~20 GB disk (Windows ISO + VM storage + MT5 installs); `DISK_SIZE` lets the VM disk grow to 32 GB
+- 5 GB RAM (runs mostly on swap; tiny11 + debloat idles at ~1.4 GB)
 
 ## Quick install
 
@@ -22,7 +23,7 @@ Dump your broker's installer in `mt5installers/` as `mt5setup-<broker>.exe`, the
 make up
 ```
 
-The first run downloads tiny11, installs and debloats Windows, reboots, installs Python and every MT5 terminal, reboots again, and finally starts the pile. Give the bastard about ten minutes. Later boots are usually around a minute.
+The first run downloads tiny11, installs and debloats Windows, reboots, installs Python and every MT5 terminal, reboots again, and finally starts the pile. Give the bastard 10 to 15 minutes. Later boots are usually around a minute.
 
 ## Configuration
 
@@ -34,7 +35,7 @@ One file controls the whole mess: bearer token, broker credentials, terminals, a
 # Bearer token for API auth. Empty string = no auth.
 api_token: "your-token-here"   # or: $(openssl rand -hex 32)
 
-# Broker credentials — accounts.<broker>.<account_name>
+# Broker credentials: accounts.<broker>.<account_name>
 accounts:
   roboforex:
     main:
@@ -42,7 +43,7 @@ accounts:
       server: "RoboForex-Pro"
       password: "your_password"
 
-# Terminal instances — one API process per entry.
+# Terminal instances: one API process per entry.
 # port is container-internal (only nginx and the mt5 container talk to it).
 # utc_offset normalizes broker wall-clock timestamps to real UTC on the wire.
 terminals:
@@ -52,7 +53,7 @@ terminals:
     utc_offset: "3h"
 
 # Optional: wickworks TA sidecar (used by POST /symbols/<symbol>/rates/ta)
-# Default URL is the dockurr gateway IP — leave as-is unless you change
+# Default URL is the dockurr gateway IP; leave as-is unless you change
 # the docker-compose networking.
 wickworks:
   url: "http://20.20.20.1:8000/"
@@ -61,26 +62,29 @@ wickworks:
 
 Other top-level settings:
 
-- `reboot_interval` — scheduled VM reboot interval in minutes; `0` disables it
+- `reboot_interval`: scheduled VM reboot interval in minutes; `0` disables it
   (default `30`).
-- `backtest_timeout` — default Strategy Tester deadline (`"6h"`, `"30m"`,
+- `backtest_timeout`: default Strategy Tester deadline (`"6h"`, `"30m"`,
   `"3h30m"`, or a bare hour count); the `POST /backtest` `timeout` field can
   override it per job.
-- `requirements` — extra Python packages installed inside the VM on boot.
-- `tailscale.auth_key` / `tailscale.login_server` — optional tailnet exposure;
-  an empty auth key disables the sidecar.
+- `requirements`: extra Python packages installed inside the VM on boot.
+- `tailscale.auth_key` / `tailscale.login_server`: optional tailnet exposure.
+  The sidecar runs only when its block in `docker-compose.yml` is uncommented;
+  an empty auth key skips the Serve setup but does not stop an uncommented
+  sidecar from starting unauthenticated.
 
 `broker` matches both the `mt5setup-<broker>.exe` installer name and the key in `accounts`. Each terminal installs to `<broker>/base/` and gets copied to `<broker>/<account>/` at startup so multiple accounts of the same broker don't conflict.
 
 Optional per-terminal fields:
 
-- `instance` — clone name for running multiple terminals of the same `broker`/`account`. Route to a specific clone via `/<broker>/<account>/<instance>/...`. Missing/empty = `default`, which also keeps the legacy `/<broker>/<account>/...` alias.
-- `symbol_suffix` — Strategy Tester symbol remap. If set, mt5-httpapi appends it when `[Tester].Symbol` doesn't already end with it (e.g. `EURUSD` -> `EURUSDp`). Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
-- `mode` — `live` (default) keeps MT5 running for SDK calls; `backtest` leaves
+- `instance`: clone name for running multiple terminals of the same `broker`/`account`. Route to a specific clone via `/<broker>/<account>/<instance>/...`. Missing/empty = `default`, which also keeps the legacy `/<broker>/<account>/...` alias.
+- `symbol_suffix`: Strategy Tester symbol remap. If set, mt5-httpapi appends it when `[Tester].Symbol` doesn't already end with it (e.g. `EURUSD` -> `EURUSDp`). Examples: `"p"`, `".p"`, `"-mini"`. Use `""` for no suffix.
+- `mode`: `live` (default) keeps MT5 running for SDK calls; `backtest` leaves
   the portable data directory free for Strategy Tester jobs. A live terminal
   cannot run a backtest against the same data directory.
-- `vm` — VM name from `vms.yaml`; omitted terminals route to the default `mt5`
-  container.
+- `vm`: VM name from `vms.yaml`. Without `vms.yaml` every terminal runs on
+  the single `mt5` VM; once `vms.yaml` exists, give every terminal a `vm`, or
+  it is never launched.
 
 ### Multi-VM topology
 
@@ -96,21 +100,21 @@ python3 scripts/config_helper.py generate_compose
 See [`docs/multi-vm-setup.md`](../../../../docs/multi-vm-setup.md) for field
 definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 
-> **`api_token` must be set to a strong random value before this server is reachable by anything other than localhost.** An empty `api_token` disables auth entirely — any process that can reach the listening socket can read account state, place orders, modify positions, and close trades. Generate one with `openssl rand -hex 32` (or equivalent) and keep it out of git. Do not skip this when planning to bind to a non-loopback interface, expose via a tunnel (see below), or run on a shared host.
+> **`api_token` must be set to a strong random value before this server is reachable by anything other than localhost.** An empty `api_token` disables auth entirely: any process that can reach the listening socket can read account state, place orders, modify positions, and close trades. Generate one with `openssl rand -hex 32` (or equivalent) and keep it out of git. Do not skip this when planning to bind to a non-loopback interface, expose via a tunnel (see below), or run on a shared host.
 
 ## Ports
 
 | Port | Service |
 | ---- | ------- |
-| 8006 | noVNC (VM desktop) — override with `NOVNC_PORT` |
-| 8888 | HTTP API entry (nginx, all terminals) — override with `API_HOST_PORT`, bound to `127.0.0.1` |
+| 8006 | noVNC (VM desktop), override with `NOVNC_PORT`; published on every host interface with no password |
+| 8888 | HTTP API entry (nginx, all terminals), override with `API_HOST_PORT`, bound to `127.0.0.1` |
 
 `MCP_LOG_LEVEL` controls the unified MCP service's log level. `NOVNC_PORT` and
 `API_HOST_PORT` are set on `make up` (`API_HOST_PORT=9999 make up`), and `run.sh`
 keeps them in `.env` so later compose calls publish the same ports; per-terminal
 ports are not published on the host.
 
-Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress.
+Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress. Anyone on the network can reach it, so bind it to `127.0.0.1` or firewall it; see the Ports section of `docs/operations.md`.
 
 ### Backtest assets (optional)
 
@@ -125,7 +129,7 @@ assets/
 
 `run.sh` creates these directories on first start and `docker-compose.yml`
 mounts the tree into the VM as `/shared/assets:ro`. Reference them by
-filename (basename only — path traversal is rejected) using the `expert_name`
+filename (basename only; path traversal is rejected) using the `expert_name`
 and `set_name` multipart fields. Inline uploads via `expert` / `set` always
 take precedence.
 
@@ -136,28 +140,28 @@ make up          # start
 make down        # stop
 make logs        # tail logs
 make status      # check status
-make clean       # nuke VM disk (keeps ISO)
+make clean       # nuke the single-VM disk and state (keeps ISO; multi-VM storage paths stay)
 make distclean   # nuke everything including ISO
 ```
 
 ## Logs
 
-Inside the VM shared folder (`data/shared/logs/`):
+Inside the VM shared directory (`data/shared/logs/`):
 
-- `install.log` — MT5 installation progress
-- `start.log` — boot-time setup output
-- `pip.log` — Python package install
-- `api-<broker>-<account>.log` — per-terminal API logs
-- `full.log` — combined log of everything
+- `install.log`: MT5 installation progress
+- `start.log`: boot-time setup output
+- `pip.log`: Python package install
+- `api-<broker>-<account>.log`: per-terminal API logs
+- `full.log`: combined log of everything
 
-## Public access via Cloudflare Tunnel — lock this shit down
+## Public access via Cloudflare Tunnel: lock this shit down
 
-> **Prerequisites — non-negotiable before exposing publicly:**
+> **Prerequisites, non-negotiable before exposing publicly:**
 >
 > 1. **Set a strong `api_token`** in `config/config.yaml` (`openssl rand -hex 32` or equivalent). An empty `api_token` plus a public tunnel means anyone on the internet can read your account state, place trades, modify positions, and close positions on your real broker account. This combination is catastrophic.
-> 2. **Restrict access at Cloudflare** as well — use Cloudflare Access (Zero Trust) to require email/SSO/service-token auth on the public hostname so the tunnel is not a wide-open path even if the token leaks.
+> 2. **Restrict access at Cloudflare** as well: use Cloudflare Access (Zero Trust) to require email/SSO/service-token auth on the public hostname so the tunnel is not a wide-open path even if the token leaks.
 > 3. **Use a demo broker account first** until you have verified the auth chain end-to-end from a separate network.
-> 4. **Rotate the token** after testing and treat it as a high-value secret — losing it is equivalent to losing the brokerage account password.
+> 4. **Rotate the token** after testing and treat it as a high-value secret; losing it is equivalent to losing the brokerage account password.
 
 To expose the API publicly without opening firewall ports:
 
@@ -170,7 +174,7 @@ sudo install /tmp/cloudflared /usr/local/bin/cloudflared
 cloudflared tunnel login
 cloudflared tunnel create mt5-httpapi
 
-# Register one subdomain — nginx routes per-terminal paths internally
+# Register one subdomain; nginx routes per-terminal paths internally
 cloudflared tunnel route dns mt5-httpapi mt5-api.yourdomain.com
 
 # Put creds in .data/cloudflared/
@@ -190,6 +194,6 @@ ingress:
   - service: http_status:404
 ```
 
-cloudflared points at the always-on nginx sidecar (`http://nginx:80`) — a single backend covers every terminal. Hit `https://mt5-api.yourdomain.com/<broker>/<account>/...` from the public side. Then uncomment the `cloudflared` service in `docker-compose.yml` and run `make up`.
+cloudflared points at the always-on nginx sidecar (`http://nginx:80`): a single backend covers every terminal. Hit `https://mt5-api.yourdomain.com/<broker>/<account>/...` from the public side. Then uncomment the `cloudflared` service in `docker-compose.yml` and run `make up`.
 
 Note: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper subdomains like `*.mt5.yourdomain.com`. Use subdomains directly under your root domain.

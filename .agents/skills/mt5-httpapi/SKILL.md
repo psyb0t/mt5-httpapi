@@ -1,7 +1,7 @@
 ---
 name: mt5-httpapi
 description: HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Use ONLY when the user has explicitly installed and configured mt5-httpapi AND provided MT5_API_URL. Read endpoints (account, symbols, rates, ticks, server-side technical-analysis enrichment via the wickworks sidecar, history, backtest report fetching) are safe to invoke. Trade-mutating endpoints on /orders and /positions require explicit per-action confirmation showing symbol, side, volume, and SL/TP; terminal shutdown/restart also require explicit confirmation naming the target terminal and operation. Creating, changing or deleting a chart deployment (/deployments) or closing a chart starts or stops a live EA and needs the same confirmation. Never invoke mutations on inferred intent. Do not use this skill for generic market-data, charting, or trading questions where the user hasn't named mt5-httpapi.
-compatibility: Requires curl and a user-deployed mt5-httpapi instance. MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from MT5_API_TOKEN env var OR by asking the user — never by reading repository config files autonomously.
+compatibility: Requires curl and a user-deployed mt5-httpapi instance. MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from MT5_API_TOKEN env var OR by asking the user, never by reading repository config files autonomously.
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
@@ -21,26 +21,26 @@ user-invocable: true
 
 This skill drives an mt5-httpapi server the user already runs. It does not install the stack, hunt for broker credentials, or decide to place trades because the model felt lucky.
 
-## Security and safety — real money, no cowboy shit
+## Security and safety: real money, no cowboy shit
 
 This API moves real money on a real brokerage account. Mutating endpoints are irreversible, so precision beats enthusiasm every fucking time.
 
-**Real-money mutations.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo — a filled market order or a closed position can only be offset by a separate trade at a new price. Call one only for the exact action the user requested, after confirming ticket, symbol, side, volume, price, SL, TP, and account. Never enumerate and then bulk-close/cancel on inferred intent. `order_send` is a single call with no client-side auto-retry; after an error or timeout, report it and get fresh confirmation before resubmitting. Send a `client_order_id` with every `POST /orders` (`create_order` takes it too); resubmitting with the same id then cannot place the order twice, and a `"duplicate": true` answer shows the order that already exists.
+**Real-money mutations.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo: a filled market order or a closed position can only be offset by a separate trade at a new price. Call one only for the exact action the user requested, after confirming ticket, symbol, side, volume, price, SL, TP, and account. Never enumerate and then bulk-close/cancel on inferred intent. `order_send` is a single call with no client-side auto-retry; after an error or timeout, report it and get fresh confirmation before resubmitting. Send a `client_order_id` with every `POST /orders` (`create_order` takes it too); resubmitting with the same id then cannot place the order twice, and a `"duplicate": true` answer shows the order that already exists.
 
 **Live EA deployments.** `POST /deployments`, `PATCH /deployments/<id>`, `DELETE /deployments/<id>` and `POST /charts/<id>/close` start, re-point, pause or stop an Expert Advisor running on a chart of a real account, and that EA trades on its own. Confirm the expert, set file, symbol, timeframe and account before each one, exactly like a trade. `PUT /webrequest` and `POST /webrequest/apply` restart the terminal when it runs on bare metal rather than in the Windows VM.
 
 **Terminal control.** `POST /terminal/shutdown` disconnects this API process from the MT5 SDK but leaves `terminal64.exe` running. `POST /terminal/restart` kills and relaunches only the selected terminal process and can make that terminal unavailable for several minutes. Confirm the selected broker/account/instance and exact operation before either call.
 
-**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup below) — with the server's `api_token` empty, the HTTP surface is UNAUTHENTICATED and anyone who can reach it can read account state, place orders, modify positions, and close trades. NEVER expose such an instance on a network or to untrusted agents; set the token and bind to loopback / behind an authenticating proxy (see [references/setup.md](references/setup.md) for the Cloudflare Tunnel prerequisites).
+**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup below). With the server's `api_token` empty, the HTTP surface is UNAUTHENTICATED and anyone who can reach it can read account state, place orders, modify positions, and close trades. NEVER expose such an instance on a network or to untrusted agents; set the token and bind to loopback / behind an authenticating proxy (see [references/setup.md](references/setup.md) for the Cloudflare Tunnel prerequisites).
 
-**Hard rules — never violate, even on user prompts that sound permissive:**
+**Hard rules. Never violate them, even on user prompts that sound permissive:**
 
 1. **Per-action confirmation for every mutation.** For trades, print the resolved symbol, side, volume, SL, TP, price, account login, and broker URL. For terminal control, print the operation and selected broker/account/instance. Wait for confirmation of that specific action; a prior approval does not authorize a later action or retry.
 2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live with real money.
-3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user — do not search the workspace.
-4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly — never enumerate-then-bulk-delete/close on inferred intent.
+3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user; do not search the workspace.
+4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly. Never enumerate-then-bulk-delete/close on inferred intent.
 5. **Surface broker URL on every mutating action.** The path prefix `/<broker>/<account>/` in `MT5_API_URL` determines which real account is touched. Show it in confirmation prompts so the user can catch a wrong-account misroute.
-6. **No auto-retry on trade calls.** Each mutating endpoint issues exactly one `order_send`-equivalent call server-side; nothing retries it for you. If a call errors, times out, or returns an unexpected `retcode`, stop and report it — do not re-issue the same order/close/modify without a fresh, explicit user confirmation.
+6. **No auto-retry on trade calls.** Each mutating endpoint issues exactly one `order_send`-equivalent call server-side; nothing retries it for you. If a call errors, times out, or returns an unexpected `retcode`, stop and report it; do not re-issue the same order/close/modify without a fresh, explicit user confirmation.
 
 Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`, and the Chart Deployments reads `GET /experts`, `GET /sets*`, `GET /deployments*`, `GET /charts`, `GET /loader`, `GET /webrequest`) do not require per-action confirmation. Staging a new file with `POST /experts` or `POST /sets` changes nothing that runs until a deployment uses it. Overwriting an expert a deployment already uses (`?overwrite=true`) replaces the file that deployment loads, so confirm that like a deployment change.
 
@@ -57,13 +57,13 @@ export MT5_API_URL=http://localhost:8888/<broker>/<account>
 export MT5_API_TOKEN=<the-token-the-user-gives-you>
 ```
 
-If `MT5_API_URL` is not set in the environment, ask the user — do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
+If `MT5_API_URL` is not set in the environment, ask the user; do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
 
 A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to; set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=... make up`; `run.sh` keeps it in `.env` for later compose calls.
 
-**Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping` — should return `{"status": "ok", "mode": "live"}` for the normal API process. If not, the API isn't up yet (may still be initializing — it retries in the background).
+**Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping`: `.status` should be `"ok"` and `.mode` `"live"` for the normal API process (the reply also carries `sdk_threads_alive` and `sdk_oldest_alive_s`). If not, the API isn't up yet (it may still be initializing; it retries in the background).
 
-Auth is optional server-side — if no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it. From the agent's side, never assume the server is auth-disabled; always pass the token the user provided if there is one.
+Auth is optional server-side. If no token is configured on the server, all requests go through without a token. If a token is configured, all endpoints require `Authorization: Bearer <token>` and return `401` without it. From the agent's side, never assume the server is auth-disabled; always pass the token the user provided if there is one.
 
 ## MCP interface
 
@@ -73,7 +73,7 @@ On terminals with [Chart Deployments](#chart-deployments) enabled, MCP also has 
 
 Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The Claude Code plugin registers the unified server (`<api_url>/mcp/`) itself; its `api_url` setting is the server root (`http://localhost:8888`) and feeds only that MCP server, while `MT5_API_URL` stays the terminal path the `curl` calls use. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account; see Security & safety above.
 
-A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts, each process mode (`live` or `backtest`), and whether Chart Deployments are enabled for each (`chartctl`); the mode does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once, and the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
+A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts, each process mode (`live` or `backtest`), and whether Chart Deployments (`chartctl`) and the file API (`files`) are enabled for each; the mode does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once, and the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
 
 ## How the fucker works
 
@@ -86,22 +86,22 @@ HTTP status and content type because framework-level failures can differ:
 {"error": "description of what went wrong"}
 ```
 
-## Pre-trade checks — do not skip this shit
+## Pre-trade checks: do not skip this shit
 
 Before placing any trade:
 
 1. `GET /account` → `trade_allowed` must be `true`
 2. `GET /symbols/SYMBOL` → `trade_mode` must be `4` (full trading)
-3. `GET /symbols/SYMBOL` → check `trade_contract_size` — 1 lot of EURUSD = 100,000 EUR, not 1 EUR
+3. `GET /symbols/SYMBOL` → check `trade_contract_size`: 1 lot of EURUSD = 100,000 EUR, not 1 EUR
 4. `GET /terminal` → `connected` must be `true`
 
-## API Reference
+## API reference
 
 ### Health
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping
-# {"status": "ok", "mode": "live"}
+# {"status": "ok", "mode": "live", "sdk_threads_alive": 0, "sdk_oldest_alive_s": null}
 
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/error
 # {"code": 1, "message": "Success"}
@@ -116,7 +116,7 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/shu
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/terminal/restart
 ```
 
-Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`, `broker_utc_offset_hours` (signed offset applied to all timestamps in/out — see Broker time below).
+Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`, `broker_utc_offset_hours` (signed offset applied to all timestamps in/out; see Broker time below).
 
 ### Broker time vs real UTC
 
@@ -130,7 +130,7 @@ terminals:
     utc_offset: "3h"
 ```
 
-(`port` is container-internal — only nginx and the mt5 container talk to it.)
+(`port` is container-internal: only nginx and the mt5 container talk to it.)
 
 Forms accepted: `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
 
@@ -175,26 +175,26 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" "$MT5_API_URL/symbols/EURUSD/tick
 
 Timeframes: `M1` `M2` `M3` `M4` `M5` `M6` `M10` `M12` `M15` `M20` `M30` `H1` `H2` `H3` `H4` `H6` `H8` `H12` `D1` `W1` `MN1`
 
-Rates/ticks query model — two modes, mutually exclusive:
+Rates/ticks query model, two modes, mutually exclusive:
 - **Anchor + signed `count`:** `count=N` = N forward from `from`, `count=-N` = `\|N\|` ending at `from`, `count=0` = empty. Omit `from` to anchor at now: the latest `\|N\|` bars or ticks up to now, whatever the sign of `count`. A `count` that is not an integer is a 400.
 - **Range (`from` + `to`):** all bars/ticks in the window, no count cap beyond `terminal_info().maxbars`. `to` requires `from` and rejects `count` (returns 400).
 
 `from` and `to` accept three formats (all real UTC): unix seconds (`1700000000`), full datetime `YYYY_MM_DD_HH_MM_SS` (`2024_01_15_14_30_00`), or date-only `YYYY_MM_DD` (midnight UTC).
 
-Capped at `terminal_info().maxbars` rows per request (default 100k — see `GET /terminal`). Symbols auto-select into MarketWatch on first access. Responses are gzipped if the client requests it (`curl --compressed`).
+Capped at `terminal_info().maxbars` rows per request (default 100k, see `GET /terminal`). Symbols auto-select into MarketWatch on first access. Responses are gzipped if the client requests it (`curl --compressed`).
 
-Tick `flags` param: `ALL` (default), `INFO` (bid/ask only — ~10× smaller), `TRADE` (trades only).
+Tick `flags` param: `ALL` (default), `INFO` (bid/ask only, ~10× smaller), `TRADE` (trades only).
 
 Key symbol fields: `bid`, `ask`, `digits`, `point`, `trade_contract_size`, `trade_tick_value`, `trade_tick_size`, `volume_min`, `volume_max`, `volume_step`, `spread`, `swap_long`, `swap_short`, `trade_stops_level`, `trade_mode`.
 
-### Technical Analysis
+### Technical analysis
 
-`POST /symbols/<symbol>/rates/ta` — same query params as `/rates` (timeframe, count, from, to), JSON body carries the [wickworks](https://github.com/psyb0t/docker-wickworks) indicator spec. Response is `{symbol, timeframe, bars, ta}` — OHLC bars *and* analyzed indicator series in one round-trip. No client-side TA library needed.
+`POST /symbols/<symbol>/rates/ta` takes the same query params as `/rates` (timeframe, count, from, to), JSON body carries the [wickworks](https://github.com/psyb0t/docker-wickworks) indicator spec. Response is `{symbol, timeframe, bars, ta}`: OHLC bars *and* analyzed indicator series in one round-trip. No client-side TA library needed.
 
 Full catalog with all indicator types, params, output shapes, and SMC primitives is documented at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks#available-indicators).
 
 ```bash
-# RSI + MACD + Bollinger Bands on the last 200 H1 bars; tail TA results to last 50.
+# RSI + MACD + Bollinger Bands on the last 200 H1 bars.
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -202,8 +202,7 @@ curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
       "rsi": true,
       "macd": true,
       "bbands": {"length": 20, "std": 2}
-    },
-    "recentBars": 50
+    }
   }' \
   "$MT5_API_URL/symbols/EURUSD/rates/ta?timeframe=H1&count=200"
 ```
@@ -223,7 +222,7 @@ Response shape (keys under `ta` mirror the keys in your `indicators` object):
 }
 ```
 
-**Indicator catalog** (request as `"name": true` for defaults, or `"name": {"length": 21, ...}` for tuning — params are flat on the object; add `"type": "<name>"` only when the output key differs from the indicator name, e.g. running two RSIs as `rsi14` + `rsi21`):
+**Indicator catalog** (request as `"name": true` for defaults, or `"name": {"length": 21, ...}` for tuning; params are flat on the object; add `"type": "<name>"` only when the output key differs from the indicator name, e.g. running two RSIs as `rsi14` + `rsi21`):
 
 - **Moving averages**: `ema`, `sma`, `hma`, `wma`, `dema`, `tema`, `t3`, `kama`, `alma`, `linreg`, `jma`, `zlma`, `rma`, `fwma`, `swma`, `sinwma`, `trima`, `vwma`, `vwap` (session-anchored: `anchor` D/W/M + `sessionOffset`)
 - **Momentum oscillators**: `rsi`, `mfi`, `willr`, `cci`, `roc`, `mom`, `uo`, `stoch`, `stochrsi`, `macd`, `tsi`, `trix`, `fisher`
@@ -232,25 +231,25 @@ Response shape (keys under `ta` mirror the keys in your `indicators` object):
 - **Volume / money flow**: `obv`, `ad`, `cmf`, `adosc`, `kvo`
 - **Bands & channels**: `bbands`, `kc`, `donchian`
 - **Trailing trend signals**: `supertrend`, `psar`, `chandelierExit`, `ichimoku`
-- **Compression**: `squeeze` (Bollinger inside Keltner — state machine `on`/`off`/`no` flags)
+- **Compression**: `squeeze` (Bollinger inside Keltner; state machine `on`/`off`/`no` flags)
 - **SMC primitives**: `orderBlocks`, `fvg` (alias `fvgs`), `bosChoch`, `swingLevels`, `srLevels`, `recentRange`, `liquidity`, `previousHighLow`, `sessions`, `retracements`
-- **Analysis summaries** (last-bar snapshots, shared cached pass — free if you ask for any): `price`, `levels`, `momentum`, `volume`, `position`, `slope`
+- **Analysis summaries** (last-bar snapshots, shared cached pass, free if you ask for any): `price`, `levels`, `momentum`, `volume`, `position`, `slope`
 
-Wickworks is **primitives-only** as of v0.3.0 — no built-in divergence detection, no MA-cross events, no golden/death-cross tagging. Build those in the consumer over the raw series.
+Wickworks is **primitives-only**: no built-in divergence detection, no MA-cross events, no golden/death-cross tagging. Build those in the consumer over the raw series.
 
-Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 bars). If you under-feed it, the server returns HTTP 502 wrapping a wickworks 400 with a per-indicator deficit list — so you see exactly which indicators need more bars, not just a generic "insufficient bars" error.
+Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 bars). If you under-feed it, the server returns HTTP 502 wrapping a wickworks 400 with a per-indicator deficit list, so you see exactly which indicators need more bars, not just a generic "insufficient bars" error.
 
 **Pre-flight tips:**
 - Match `count` to your slowest indicator's lookback × 2 (e.g. `sma(200)` → fetch at least 400 bars for warmup + signal).
-- `recentBars` is **inert** in wickworks v0.3.0 — accepted by the request schema but currently unused (reserved for future signal-tagged outputs). To get only the last N bars, set `count` accordingly on the rates query, or slice the response client-side.
+- `recentBars` in the body is ignored: the API never reads it. To get only the last N bars, set `count` accordingly on the rates query, or slice the response client-side.
 - Combine with `/symbols/:symbol/rates` (raw OHLC) when you need TA for charting separate from trade-decision logic.
 
 ### Orders
 
-> **Mutating endpoints — confirmation required.** Every `POST /orders`, `PUT /orders/<id>`, and `DELETE /orders/<id>` opens, modifies, or cancels a real order on the user's brokerage account. Before invoking any of them you MUST: (1) print the full resolved request (account login from `GET /account`, broker URL prefix, symbol, side, volume, price, SL, TP); (2) ask the user to confirm that specific action; (3) wait for an explicit yes. A prior confirmation does not carry over to a new action.
+> **Mutating endpoints: confirmation required.** Every `POST /orders`, `PUT /orders/<id>`, and `DELETE /orders/<id>` opens, modifies, or cancels a real order on the user's brokerage account. Before invoking any of them you MUST: (1) print the full resolved request (account login from `GET /account`, broker URL prefix, symbol, side, volume, price, SL, TP); (2) ask the user to confirm that specific action; (3) wait for an explicit yes. A prior confirmation does not carry over to a new action.
 
 ```bash
-# Place market order — only after explicit per-action confirmation from the user.
+# Place market order, only after explicit per-action confirmation from the user.
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H 'Content-Type: application/json' \
   -d '{"symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.08, "tp": 1.10}'
@@ -271,7 +270,7 @@ curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders/420
 
 Order types: `BUY`, `SELL`, `BUY_LIMIT`, `SELL_LIMIT`, `BUY_STOP`, `SELL_STOP`, `BUY_STOP_LIMIT`, `SELL_STOP_LIMIT`
 
-Fill policies: `FOK`, `IOC` (default), `RETURN`
+Fill policies: `FOK`, `IOC`, `RETURN`. Leave `type_filling` out and the API sends one the symbol accepts (`IOC`, else `FOK`, else `RETURN`); an unknown value sends none at all.
 
 Expiration: `GTC` (default), `DAY`, `SPECIFIED`, `SPECIFIED_DAY`
 
@@ -296,7 +295,7 @@ Trade result:
 
 ### Positions
 
-> **Mutating endpoints — confirmation required.** `PUT /positions/<id>` changes the SL/TP of a live position, and `DELETE /positions/<id>` closes it (full or partial). Both move real money. Per-action confirmation rule above applies — print symbol, ticket, current price, the change being made, and wait for explicit user yes.
+> **Mutating endpoints: confirmation required.** `PUT /positions/<id>` changes the SL/TP of a live position, and `DELETE /positions/<id>` closes it (full or partial). Both move real money. Per-action confirmation rule above applies: print symbol, ticket, current price, the change being made, and wait for explicit user yes.
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions
@@ -319,6 +318,10 @@ curl -X DELETE -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions/
 
 Key position fields: `ticket`, `type` (0=buy, 1=sell), `volume`, `price_open`, `price_current`, `sl`, `tp`, `profit`, `swap`.
 
+A close that answers 500 can still have closed part of the volume (retcode 10010, `DONE_PARTIAL`, counts as a failure there), so read `GET /positions/<id>` again before asking to retry.
+
+The optional signal copier places orders on its own. Its positions and orders carry the source's `magic` and a `comment` of the form `<source>:<message id>:<leg>` (its `client_order_id`), which is how to tell them from manual trades. Treat them like any other position: closing one needs the same confirmation.
+
 ### History
 
 ```bash
@@ -340,8 +343,10 @@ Endpoint reference:
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
-| `POST` / `GET` / `DELETE` | `/experts` `/experts/<name>` | Stage, list, remove EA `.ex5` |
-| `POST` / `GET` | `/sets` `/sets/<name>` | Stage, list, inspect `.set` (returns parsed inputs) |
+| `POST` / `GET` | `/experts` | Stage, list EA `.ex5` |
+| `DELETE` | `/experts/<name>` | Remove a staged EA `.ex5` |
+| `POST` / `GET` | `/sets` | Stage, list `.set` files |
+| `GET` / `DELETE` | `/sets/<name>` | Inspect a `.set` (returns parsed inputs), remove it |
 | `POST` / `GET` | `/deployments` | Create or list deployments |
 | `GET` / `PATCH` / `DELETE` | `/deployments/<id>` | Inspect, pause/resume, change set, delete |
 | `POST` | `/deployments/reconcile` | Force immediate reconcile |
@@ -349,6 +354,8 @@ Endpoint reference:
 | `GET` | `/loader` | Loader EA status and version |
 | `POST` | `/charts/<id>/screenshot` | Capture chart as PNG |
 | `POST` | `/charts/<id>/close` | Close a chart by id |
+
+Deleting an expert or set answers 409 `IN_USE` while any deployment, paused ones included, names it (delete the deployment first), 404 `ARTIFACT_NOT_FOUND` when it is not staged, and 403 `HOST_ASSET` for a host-managed file under `assets/`.
 
 ```bash
 # Stage artifacts. Re-uploading identical bytes is skipped; different bytes
@@ -417,12 +424,24 @@ curl -X PUT -H "Authorization: Bearer $MT5_API_TOKEN" --data-binary @MyLib.zip \
 
 Operator guide: [`docs/files.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/files.md).
 
+### Compile
+
+`POST /compile` turns MQL5 source into an `.ex5`. The body is JSON: `source` (required, the whole `.mq5` text), `filename` (optional, only the stem is kept) and `ea_version` (optional, logged only). Every answer the handler gives has `ok` and `log`: 200 adds `ex5_base64` (decode it to get the `.ex5`), `warnings` and `include_hash`; 422 means the source did not compile and `log` has MetaEditor's errors; 429 means too many compiles are waiting (retry after `Retry-After`); 504 is a timeout. Send compiles one at a time; they run one by one anyway. There is no dedicated MCP tool: call it through `request("POST", "/compile", body={...})`. It changes nothing on the account. Full reference: [`docs/compiling.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/compiling.md).
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$MT5_API_URL/compile" \
+  -d '{"source": "void OnTick() {}", "filename": "MyEA.mq5"}' \
+  | jq -r 'if .ok then .ex5_base64 else .log end'
+```
+
 ### Backtest
 
 Run MT5 Strategy Tester via the API. Two-stage workflow: build the INI from a
 JSON spec, then submit it together with the `.ex5` (and optional `.set`) for
 async execution. Endpoints exist on every terminal but only run on a
-`mode: backtest` terminal in `config.yaml` — MT5 is single-instance per
+`mode: backtest` terminal in `config.yaml`. MT5 is single-instance per
 portable data dir, so a tester subprocess collides with a `mode: live`
 terminal that already owns the directory and exits silently. The broker/account
 in the URL determines which credentials are injected into the run's `[Common]`
@@ -449,7 +468,7 @@ curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
     "expert_parameters": "ea studio nzdjpy m15 1615044595.set"
   }' > tester.ini
 
-# 2. Submit. Use uploads OR host-managed asset names — here, both are host-managed.
+# 2. Submit. Use uploads OR host-managed asset names; here, both are host-managed.
 JOB=$(curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
   $MT5_API_URL/backtest \
   -F "ini=@tester.ini" \
@@ -523,7 +542,7 @@ with `part: "tail"`.
 `cancelled` (a final status). It kills only that terminal's tester processes,
 and only when that job is the one running there; it is safe to repeat.
 
-### Real backtest runbook — finish the fucking job
+### Real backtest runbook: finish the fucking job
 
 When the user asks for a real backtest, do not declare victory after building an
 INI or getting `202 Accepted`. That only means the job entered the building. The
@@ -540,13 +559,13 @@ Before submitting a backtest that references host-managed files:
 
 1. Verify the requested filenames exist on disk exactly as named under
    `assets/experts/` and `assets/sets/`.
-2. Verify `GET $MT5_API_URL/ping` returns backtest mode on the target terminal.
-   For a real tester run, expect `{"status":"ok","mode":"backtest"}`.
+2. Verify `GET $MT5_API_URL/ping` returns backtest mode on the target terminal:
+   `.status` is `"ok"` and `.mode` is `"backtest"` (other fields come with it).
 3. If the user specifies a concrete date window, prefer explicit UTC
    `from_date`/`to_date` and do not also send `last_years` or `last_days`.
 4. Auth handling: use `MT5_API_TOKEN` from the user-set environment variable.
    If it is missing and the server requires auth, ask the user to provide
-   it — do not search the repository or read `config/config.yaml` to harvest
+   it. Do not search the repository or read `config/config.yaml` to harvest
    credentials. Backtests are read-side from the user's perspective (the
    server orchestrates Strategy Tester locally and never opens live trades),
    so no per-action confirmation is required to submit, but still surface
@@ -620,7 +639,7 @@ curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
   "$MT5_API_URL/backtest/$JOB/log" -o run.log
 ```
 
-## Position Sizing
+## Position sizing
 
 ```
 risk_amount     = balance * risk_pct
@@ -634,10 +653,10 @@ Round down to nearest `volume_step`, clamp to `[volume_min, volume_max]`. Sanity
 
 ## Tips
 
-- Always check `retcode` — 10009 = good, anything else = bad
+- Always check `retcode`: 10009 = good, anything else = bad
 - Use `GET /error` to debug failed trades
-- `deviation` on orders = max slippage in points (default 20, raise for volatile markets)
-- `type_filling` matters — try `FOK`, `IOC`, `RETURN` if orders get rejected
+- `deviation` = max slippage in points. `POST /orders` has no default (send one for market orders); `DELETE /positions/<id>` defaults to 20
+- Leave `type_filling` out unless the user wants a specific policy; the API already picks one the symbol accepts
 - Candle `time` is the open time, not close time
 - `trade_stops_level` = minimum SL/TP distance from current price in points
-- Markets have hours — check `trade_mode` before placing orders
+- Markets have hours; check `trade_mode` before placing orders

@@ -1,10 +1,10 @@
 ---
 title: "MCP and agents"
 description: "Per-terminal and unified MCP endpoints, their tools, and setup for Claude Code, Codex and OpenClaw through the bundled plugins and skill."
-nav_order: 8
+sidebar_position: 15
 ---
 
-# MCP and agent integrations — let the robots trade carefully
+# MCP and agent integrations: let the robots trade carefully
 
 The REST API also speaks MCP, so Claude Code, Codex, OpenClaw, or any other compatible robot can use typed tools instead of hallucinating curl commands.
 
@@ -14,34 +14,31 @@ The REST API also speaks MCP, so Claude Code, Codex, OpenClaw, or any other comp
 - [One endpoint for every terminal](#one-endpoint-for-every-terminal)
 - [Agent integrations](#agent-integrations)
 
-## MCP Interface
+## MCP interface
 
 There are two streamable-HTTP [Model Context Protocol](https://modelcontextprotocol.io) endpoints. The URL decides whether your robot gets one terminal or the entire fucking fleet:
 
 | Point the client at | You get |
 |---|---|
-| `http://host:8888/<broker>/<account>/mcp/` | that **one** terminal — tools take no account parameter |
+| `http://host:8888/<broker>/<account>/mcp/` | that **one** terminal; tools take no account parameter |
 | `http://host:8888/<broker>/<account>/<instance>/mcp/` | the same, for a terminal whose `instance` is not `default` |
-| `http://host:8888/mcp/` | **every** terminal — the same tools, plus `broker` / `account` parameters, plus `list_terminals` |
+| `http://host:8888/mcp/` | **every** terminal: the same tools, plus `broker` / `account` parameters, plus `list_terminals` |
 
 Both are always available; neither disables the other. See [One endpoint for every terminal](#one-endpoint-for-every-terminal) for the unified form.
 
 Every terminal serves `/mcp` beside its REST API. The tools are dedicated and typed, so the agent gets real names, parameters, and descriptions instead of guessing raw paths like an idiot. They still hit the same handlers, auth, and MT5 lock as ordinary HTTP calls.
 
-- **Market data** — `list_symbols`, `get_symbol`, `get_tick`,
-  `get_rates(symbol, timeframe, count?, from_?, to?)`,
-  `get_ticks(symbol, count?, from_?, to?, flags?)`, and
-  `get_rates_ta(symbol, timeframe, indicators, count?, from_?, to?)`
-- **Account / positions** — `get_account`, `list_positions`, `get_position`, `modify_position`, `close_position`
-- **Orders**: `list_orders`, `get_order`, `create_order(symbol, type, volume, price?, sl?, tp?, deviation?, comment?, magic?, client_order_id?, stoplimit?, expiration?)`, `modify_order(ticket, price?, sl?, tp?, stoplimit?, expiration?)`, `cancel_order`
-- **History / terminal / backtest** — `get_history_orders`, `get_history_deals`, `get_terminal`, `terminal_control`, `get_backtest`, `ping`
+- **Market data**: `list_symbols(group?)`, `get_symbol(symbol)`, `get_tick(symbol)`, `get_rates(symbol, timeframe, count?, from_?, to?)`, `get_ticks(symbol, count?, from_?, to?, flags?)`, and `get_rates_ta(symbol, timeframe, indicators, count?, from_?, to?)`
+- **Account / positions**: `get_account`, `list_positions`, `get_position(ticket)`, `modify_position(ticket, sl?, tp?)`, `close_position(ticket, volume?, deviation?)`
+- **Orders**: `list_orders`, `get_order(ticket)`, `create_order(symbol, type, volume, price?, sl?, tp?, deviation?, comment?, magic?, client_order_id?, stoplimit?, expiration?)`, `modify_order(ticket, price?, sl?, tp?, stoplimit?, expiration?)`, `cancel_order(ticket)`
+- **History / terminal / backtest**: `get_history_orders(from_, to)`, `get_history_deals(from_, to)` (both required, unix seconds), `get_terminal`, `terminal_control(action)` (`init`, `shutdown` or `restart`), `get_backtest(job_id, part?)` (`part` is `status`, the default, `report`, `log` or `tail`), `ping`
 - **Chart Deployments**, only on terminals with [chartctl](chart-deployments.md) enabled:
   - artifacts: `upload_expert(filename, content_base64, overwrite?)`, `list_experts`, `delete_expert`, `upload_set(filename, content? | content_base64?)`, `list_sets`, `get_set`, `delete_set`
   - deployments: `create_deployment(expert, symbol, timeframe, set_file?, enabled?)`, `list_deployments`, `get_deployment`, `update_deployment(deployment_id, enabled?, set_file?)`, `delete_deployment`, `reconcile_deployments`
   - charts: `list_charts`, `get_loader`, `screenshot_chart(chart_id, width?, height?)`, `close_chart`
   - WebRequest allowlist: `get_webrequest`, `set_webrequest(urls? | add?, remove?, runas?)`, `apply_webrequest(runas?)`, `verify_webrequest` (`runas` is ignored and kept for older callers)
 - **Files**, only on terminals with the [file API](files.md) enabled: `list_files(path?, tree?)`, `get_file(path, tree?)`, `put_file(path, content? | content_base64?, extract?, tree?)`, `delete_file(path, recursive?, tree?)`. `tree` is `terminal` (the install directory) or `compile` (the MQL5 tree `/compile` builds against).
-- **Escape hatch** — `request(method, path, query?, body?)` + `endpoints` (route catalog) for JSON-compatible routes without a dedicated tool. Multipart uploads such as `POST /backtest` still use REST directly.
+- **Escape hatch**: `request(method, path, query?, body?)` + `endpoints` (route catalog) for JSON-compatible routes without a dedicated tool, such as `POST /compile`. Multipart uploads such as `POST /backtest` still use REST directly.
 
 `request` can't send a multipart upload, which is why chart files get their own tools. `upload_expert` and `upload_set` take the file as base64 and send the same multipart form the REST API wants, so an agent can stage an `.ex5` without curl. `upload_set` also takes plain text for a hand-written set file. `screenshot_chart` returns the PNG as MCP image content, so the agent actually sees the chart.
 
@@ -51,34 +48,33 @@ On a per-terminal endpoint the Chart Deployments tools only show up when chartct
 
 Same bearer auth as REST: an empty `api_token` disables auth on `/mcp` too; a configured token requires `Authorization: Bearer <token>` on every MCP call.
 
-The reachable URL is the terminal's normal base plus `/mcp/` — nginx strips `/<broker>/<account>/` and proxies the rest straight through, so:
+The reachable URL is the terminal's normal base plus `/mcp/`. nginx strips `/<broker>/<account>/` and proxies the rest straight through, so:
 
 ```
 $MT5_API_URL/mcp/
 # e.g. http://localhost:8888/roboforex/main/mcp/
 ```
 
+```bash
+# Raw JSON-RPC: call the ping tool on one terminal
+curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  "$MT5_API_URL/mcp/" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}'
+```
+
+Order/position mutations reached through `request` are the same live, irreversible trading actions as calling those REST routes directly. Confirm parameters before invoking them.
+
 ### One endpoint for every terminal
 
-A per-terminal `/mcp` is married to that one terminal: an MCP session has a fixed
-tool catalog, so there is no per-call slot to say which account to act on. To
-drive several terminals from one session, point the client at the server root
-instead:
+A per-terminal `/mcp` is married to that one terminal: an MCP session has a fixed tool catalog, so there is no per-call slot to say which account to act on. To drive several terminals from one session, point the client at the server root instead:
 
 ```
 http://localhost:8888/mcp/
 ```
 
-That endpoint exposes the same tools, each taking `broker` and `account` (plus
-an optional `instance`, defaulting to `default`), except `endpoints`, which takes
-none. Call `list_terminals` first.
-It returns every configured terminal, its process mode (`live` or `backtest`;
-an entry whose `mode` in `config.yaml` is missing or anything but `backtest`
-shows as `live`, which is how the API runs it), and whether Chart Deployments (`chartctl`) and the file API (`files`) are enabled for it.
-This mode is not the brokerage account's live/demo classification;
-check `GET /account` before trading. A broker/account pair that is not configured
-is refused, with the valid list in the error, rather than being routed somewhere
-plausible.
+That endpoint exposes the same tools, each taking `broker` and `account` (plus an optional `instance`, defaulting to `default`), except `endpoints`, which takes none. Call `list_terminals` first. It returns every configured terminal, its process mode (`live` or `backtest`; an entry whose `mode` in `config.yaml` is missing or anything but `backtest` shows as `live`, which is how the API runs it), and whether Chart Deployments (`chartctl`) and the file API (`files`) are enabled for it. This mode is not the brokerage account's live/demo classification; check `GET /account` before trading. A broker/account pair that is not configured is refused, with the valid list in the error, rather than being routed somewhere plausible.
 
 ```bash
 curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
@@ -88,35 +84,21 @@ curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_terminals","arguments":{}}}'
 ```
 
-Both forms work at once — the per-terminal endpoints are unchanged, and the URL
-alone decides which surface a client gets. Terminals are resolved once from
-`config/config.yaml`, never re-probed, so a terminal that is down fails only the
-calls naming it; every successful JSON response carries the `terminal` that answered.
+Both forms work at once: the per-terminal endpoints are unchanged, and the URL alone decides which surface a client gets. Terminals are resolved once from `config/config.yaml`, never re-probed, so a terminal that is down fails only the calls naming it; every successful JSON response carries the `terminal` that answered. In a multi-VM setup the unified endpoint reaches only the first VM's terminals; see [Known limits](multi-vm-setup.md#known-limits).
 
-The unified endpoint is its own compose service, `mcpunifier`, listening on port
-6600 inside the compose network; nginx proxies `/mcp/` to it. It requires the
-same bearer token as the terminals, except on its `/health` probe. Its
-environment:
+The unified endpoint is its own compose service, `mcpunifier`, listening on port 6600 inside the compose network; nginx proxies `/mcp/` to it. It requires the same bearer token as the terminals, except on its `/health` probe. Its environment:
 
 | Variable | Default | What it sets |
 |---|---|---|
 | `MT5_HOST` | `mt5` | Host the terminal API ports are reached on |
+| `API_TOKEN` | `api_token` from `config.yaml` | Bearer token it requires and sends to the terminals; set, it wins over the file |
 | `REQUEST_TIMEOUT` | `120` | Seconds to wait for a terminal (longer calls have their own limits) |
+| `LISTEN_HOST` | `0.0.0.0` | Address it listens on inside its container |
+| `LISTEN_PORT` | `6600` | Port it listens on; nginx expects 6600, so change both or neither |
 | `LOG_LEVEL` | `info` | Log level of its JSON logs; the compose file fills it from `MCP_LOG_LEVEL` in `.env` |
 | `LOG_FILE` | `/var/log/mcpunifier/app.log` | Log file inside the container |
 
-```bash
-# Raw JSON-RPC — call the request tool directly
-curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  "$MT5_API_URL/mcp/" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}'
-```
-
-Order/position mutations reached through `request` are the same live, irreversible trading actions as calling those REST routes directly — confirm parameters before invoking them.
-
-For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to this endpoint.
+For MCP clients that only speak local stdio servers, the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin is a thin stdio↔HTTP bridge to either endpoint; see [OpenClaw](#openclaw).
 
 ## Agent integrations
 
@@ -144,6 +126,8 @@ codex plugin add mt5-httpapi@psyb0t
 
 Installed via the marketplace, the skill invokes as `$mt5-httpapi:mt5-httpapi`. Codex also picks the skill up automatically with no install in any repo containing `.agents/skills/`, where it invokes as plain `$mt5-httpapi`.
 
+The Codex plugin carries the skill only; unlike the Claude Code plugin it registers no MCP server. To give Codex the typed tools, add `http://localhost:8888/mcp/` (or a terminal's `/mcp/` URL) as a streamable-HTTP MCP server in Codex's own MCP settings, with the `Authorization: Bearer` header when auth is on.
+
 ### OpenClaw
 
 The skill is published to ClawHub on every release:
@@ -152,10 +136,10 @@ The skill is published to ClawHub on every release:
 openclaw skills install @psyb0t/mt5-httpapi
 ```
 
-For MCP clients that speak local stdio, the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) plugin bridges to the terminal's `/mcp` endpoint:
+For MCP clients that speak local stdio, the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) plugin bridges to `$MT5_API_URL/mcp/`, which is the unified endpoint when `MT5_API_URL` is the server root and one terminal's endpoint when it is a terminal path:
 
 ```bash
 openclaw plugins install clawhub:@psyb0t/mt5-httpapi
 ```
 
-Then set `MT5_API_URL` (and `MT5_API_TOKEN` if your terminal has auth enabled).
+Then set `MT5_API_URL` (and `MT5_API_TOKEN` if the server has auth enabled).
