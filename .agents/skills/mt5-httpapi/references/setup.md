@@ -116,7 +116,7 @@ definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 
 `MCP_LOG_LEVEL` controls the unified MCP service's log level. `NOVNC_PORT` and
 `API_HOST_PORT` are set on `make up` (`API_HOST_PORT=9999 make up`), and `run.sh`
-keeps them in `.env` so later compose calls publish the same ports; per-terminal
+keeps them in `.env`, also across a later plain `make up`, so compose publishes the same ports; per-terminal
 ports are not published on the host.
 
 Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress. Anyone on the network can reach it, so bind it to `127.0.0.1` or firewall it; see the Ports section of `docs/operations.md`.

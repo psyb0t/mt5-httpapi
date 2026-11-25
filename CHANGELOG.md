@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.35.1]: 2026-11-25
+
+### Fixed
+
+- **A fresh install no longer stalls for 5 minutes in `install.bat`.** `install.bat` and six other batch files had LF line endings; cmd.exe mis-parsed their labels, and on a first boot `install.bat` jumped into the installer wait loop with an empty broker name and waited out its timeout before carrying on. Every `.bat` and `.cmd` now has CRLF line endings, `.gitattributes` stores them unconverted (`-text`), and `make lint` and the unit tests refuse an LF-only line.
+- **A plain `make up` keeps the `NOVNC_PORT` and `API_HOST_PORT` an earlier run set.** `.env` was rebuilt without them, so a second stack started with `NOVNC_PORT=8007 API_HOST_PORT=8889 make up` came back on the default ports on its next plain `make up`, and `make status` checked the first stack. `run.sh` now reads both from the old `.env` before rebuilding it; pass the default to go back. See [Operations](https://psyb0t.github.io/mt5-httpapi/operations/#ports).
+
 ## [v4.35.0]: 2026-11-25
 
 ### Added

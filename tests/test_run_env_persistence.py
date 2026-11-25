@@ -170,14 +170,37 @@ def test_no_port_override_is_written_when_none_was_given(tmp_path):
     assert not any(line.startswith(("NOVNC_PORT", "API_HOST_PORT")) for line in _env_lines(tmp_path))
 
 
-def test_a_port_override_does_not_outlive_the_run_that_gave_it(tmp_path):
-    """.env is rebuilt every run, so the next `make up` without the override
-    goes back to the default port."""
-    assert _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "9006"}).returncode == 0
-    assert "NOVNC_PORT='9006'" in _env_lines(tmp_path)
+def test_a_port_override_is_carried_over_by_a_later_run_without_it(tmp_path):
+    """A second stack started with `NOVNC_PORT=8007 API_HOST_PORT=8889 make up`
+    lost both ports on the next plain `make up`, because .env was rebuilt
+    without them; `make status` then checked the first stack's 8888. The old
+    .env values are now read before the rebuild and written again."""
+    res = _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "9006", "API_HOST_PORT": "9999"})
+    assert res.returncode == 0, res.stderr
 
-    assert _run_env_block(tmp_path).returncode == 0
-    assert not any(line.startswith("NOVNC_PORT") for line in _env_lines(tmp_path))
+    res = _run_env_block(tmp_path)
+    assert res.returncode == 0, res.stderr
+    lines = _env_lines(tmp_path)
+    assert "NOVNC_PORT='9006'" in lines
+    assert "API_HOST_PORT='9999'" in lines
+
+
+def test_a_port_given_on_the_run_replaces_the_carried_over_one(tmp_path):
+    """Passing the default again is how a stack goes back to it."""
+    assert _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "9006"}).returncode == 0
+    res = _run_env_block(tmp_path, env_extra={"NOVNC_PORT": "8006"})
+    assert res.returncode == 0, res.stderr
+    lines = _env_lines(tmp_path)
+    assert "NOVNC_PORT='8006'" in lines
+    assert "NOVNC_PORT='9006'" not in lines
+
+
+def test_a_non_numeric_old_port_is_not_carried_over(tmp_path):
+    """Only a plain number from the old .env is reused, never other text."""
+    (tmp_path / ".env").write_text("NOVNC_PORT='90x6'\nAPI_HOST_PORT=`id`\n", encoding="utf-8")
+    res = _run_env_block(tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert not any(line.startswith(("NOVNC_PORT", "API_HOST_PORT")) for line in _env_lines(tmp_path))
 
 
 @pytest.mark.parametrize("value", ["90'06", "9006\nINJECTED=1"])

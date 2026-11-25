@@ -160,6 +160,18 @@ for VM_NAME in ${VM_NAMES}; do
 done
 
 # Generate fresh .env each run.
+#
+# Host port overrides from the previous run are read first, before .env is
+# truncated, so a later run without them keeps them (see the port loop below).
+for PORT_VAR in NOVNC_PORT API_HOST_PORT; do
+    if [ -z "${!PORT_VAR:-}" ] && [ -f "${DIR}/.env" ]; then
+        PREVIOUS_PORT="$(sed -n "s/^${PORT_VAR}='\{0,1\}\([0-9]*\)'\{0,1\}$/\1/p" "${DIR}/.env" | tail -n 1)"
+        if [ -n "${PREVIOUS_PORT}" ]; then
+            printf -v "${PORT_VAR}" '%s' "${PREVIOUS_PORT}"
+        fi
+    fi
+done
+
 : >"${DIR}/.env"
 
 # Compose interpolates ${MT5_PROJECT_DIR:?} in docker-compose.yml on EVERY
@@ -175,9 +187,10 @@ echo "MT5_PROJECT_DIR='${MT5_PROJECT_DIR}'" >>"${DIR}/.env"
 # interpolates ${NOVNC_PORT:-8006} and ${API_HOST_PORT:-8888} on every command,
 # so a value that lives only in this shell is gone for `make down`, a manual
 # `docker compose` and the vm-watchdog's recreate, and the stack comes back on
-# the default ports. Written only when set: a later run without them goes back
-# to the defaults, as .env is rebuilt from scratch every time. Single-quoted
-# like MT5_PROJECT_DIR.
+# the default ports. A value set on an earlier run is carried over from the
+# old .env when this run does not set it, so a plain `make up` keeps a second
+# stack on its own ports; pass the default (`NOVNC_PORT=8006`) to go back.
+# Single-quoted like MT5_PROJECT_DIR.
 for PORT_VAR in NOVNC_PORT API_HOST_PORT; do
     PORT_VALUE="${!PORT_VAR:-}"
     if [ -z "${PORT_VALUE}" ]; then

@@ -166,6 +166,33 @@ check_windows_ascii() {
     return 1
 }
 
+check_batch_crlf() {
+    section "CRLF line endings (.bat and .cmd)"
+    local bad=0 f lines
+
+    while IFS= read -r f; do
+        case "$f" in
+        *.bat | *.cmd) ;;
+        *) continue ;;
+        esac
+        # cmd.exe mis-parses labels and goto/call targets in a file with LF-only
+        # lines; every line, including the last, must end in CRLF.
+        if lines=$(LC_ALL=C grep -n -v $'\r$' "$f" | cut -d: -f1 | head -n 5 | paste -sd, -) && [[ -n $lines ]]; then
+            bad=1
+            log ERROR "LF-only line endings in ${f#"$REPO"/} (lines ${lines}); convert the file to CRLF"
+        elif [[ -s $f ]] && [[ $(tail -c 1 "$f" | od -An -tx1 | tr -d ' ') != "0a" ]]; then
+            bad=1
+            log ERROR "${f#"$REPO"/} does not end with CRLF"
+        fi
+    done < <(find_windows_scripts)
+
+    if [[ $bad -eq 0 ]]; then
+        log OK "all .bat and .cmd files use CRLF line endings"
+        return 0
+    fi
+    return 1
+}
+
 check_ps_parse() {
     section "PowerShell parse check"
     local bad=0 f
@@ -331,6 +358,7 @@ main() {
 
     selftest_non_ascii_detector || failures=$((failures + 1))
     check_windows_ascii || failures=$((failures + 1))
+    check_batch_crlf || failures=$((failures + 1))
     check_ps_parse || failures=$((failures + 1))
     check_psscriptanalyzer || failures=$((failures + 1))
     check_shellcheck || failures=$((failures + 1))

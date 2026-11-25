@@ -129,7 +129,7 @@ won't see until the VM boots. `make format` fixes whatever shfmt flags.
 | 8006  | noVNC (VM desktop)      | `NOVNC_PORT=9006 make up`         |
 | 8888  | HTTP API (nginx, all terminals) | `API_HOST_PORT=9999 make up` |
 
-`run.sh` writes an override you pass to `.env`, so a later `docker compose` command, including the vm-watchdog's recreate, publishes the same port. `.env` is rebuilt on every `make up`, so an override you leave out of a run goes back to the default; pass it each time you run `make up`.
+`run.sh` writes an override you pass to `.env`, so a later `docker compose` command, including the vm-watchdog's recreate, publishes the same port. A later `make up` without the override keeps the port already in `.env`, so a second stack on other ports stays on them; pass the default (`NOVNC_PORT=8006 make up`) to go back.
 
 In single-VM mode, only these two ports leave the docker network. A [multi-VM deployment](multi-vm-setup.md) publishes one distinct noVNC port per VM while keeping the single nginx API port. Per-terminal ports from `config.yaml` stay container-internal: nginx routes each terminal path to the owning VM over docker DNS, then that container's iptables DNAT forwards it into Windows. The API binds to loopback (`127.0.0.1:8888`) by default; change the bind in `docker-compose.yml` for LAN exposure, or use a private access option below.
 

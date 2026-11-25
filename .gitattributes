@@ -1,4 +1,8 @@
-# Some VM batch scripts keep CRLF line endings; a CR before the newline is
-# not trailing whitespace for `git diff --check`.
-*.bat whitespace=cr-at-eol
-*.cmd whitespace=cr-at-eol
+# Batch scripts run under cmd.exe in the Windows VM and must have CRLF line
+# endings: with LF, cmd mis-parses labels and `goto`/`call` targets, and a
+# fresh install jumped into the wrong loop. `-text` stores the bytes as they
+# are, so no checkout, archive or editor setting converts them, and `make lint`
+# refuses a .bat or .cmd with any LF-only line. A CR before the newline is not
+# trailing whitespace for `git diff --check`.
+*.bat -text diff whitespace=cr-at-eol
+*.cmd -text diff whitespace=cr-at-eol

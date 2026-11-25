@@ -135,7 +135,7 @@ Every generated VM mounts the fixed host path `/data/mt5-shared` as `/shared`, a
 |---|---|
 | `data/vm-group-<name>.txt` | Terminal filter for each VM (broker + account + instance lines), mounted into that VM as `/shared/config/vm-group.txt` |
 | `.data/nginx/nginx.conf` | nginx routes with a per-terminal upstream on the owning VM's container |
-| `.env` | Rewritten on every run: `MT5_PROJECT_DIR`, `API_TOKEN`, the `NOVNC_PORT` and `API_HOST_PORT` overrides given on that run, Tailscale and signal copier settings |
+| `.env` | Rewritten on every run: `MT5_PROJECT_DIR`, `API_TOKEN`, the `NOVNC_PORT` and `API_HOST_PORT` overrides given on that run or kept from the previous `.env`, Tailscale and signal copier settings |
 | `docker-compose.yml` | Rendered from `docker-compose.yml.j2` only when it does not exist yet |
 
 ## Adding a third VM
