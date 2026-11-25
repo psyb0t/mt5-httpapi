@@ -6,6 +6,17 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.35.0]: 2026-11-25
+
+### Added
+
+- **Scheduled VM reboots are set in a new `reboot:` block in `config.yaml`, and can run once a day at a fixed local time.** `enabled: false` turns them off (the `MT5AutoReboot` task is deleted on the next boot), `interval` keeps the reboot every N minutes (default `30`, `0` also off), and `at: "HH:MM"` with an optional IANA `timezone` (default UTC) reboots once a day at that wall-clock time instead, taking over from `interval`. On every boot `start.bat` converts the next occurrence to the VM's UTC clock and registers a daily task at that time, so midnight in `Europe/Bucharest` is 22:00 UTC in winter and 21:00 UTC in summer and DST changes are followed. `max_postpone` replaces `reboot_max_postpone`. `start.log` says which schedule was set (`MT5AutoReboot task ensured (daily at 22:00 UTC).`), and an invalid `at`, `timezone` or `interval` falls back to the interval, UTC or `30` with a `WARN: reboot config:` line instead of stopping the boot. See [Installation and configuration](https://psyb0t.github.io/mt5-httpapi/installation-and-configuration/#configconfigyaml) and [Operations](https://psyb0t.github.io/mt5-httpapi/operations/#scheduled-reboots).
+- **The VM installs `tzdata==2026.6`**, the IANA time zone data Windows Python lacks, for `reboot.timezone`. It is a new package in the boot's pip set, so the first boot on this version installs it and reboots once (`pip-changed`), as for any dependency change.
+
+### Deprecated
+
+- **The top-level `reboot_interval` and `reboot_max_postpone` are deprecated and will be removed in v5.** Without a `reboot:` block they keep working as before and every boot logs a deprecation warning to `start.log` and `full.log`; move them to `reboot.interval` and `reboot.max_postpone`. When both the block and the old keys are present, the block wins and the old keys are ignored with a warning. The `config_helper.py reboot_interval` subcommand, which only `start.bat` used, is replaced by `reboot_schedule`. An old `reboot_interval` that `schtasks` cannot take (not a whole number from 0 to 1439) now falls back to 30 minutes with a warning instead of making `schtasks` fail to write the task.
+
 ## [v4.34.4]: 2026-11-24
 
 ### Changed

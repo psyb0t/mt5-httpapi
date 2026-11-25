@@ -486,7 +486,11 @@ task still get crash recovery from the watchdog.
 
 ### Scheduled reboots
 
-The `MT5AutoReboot` task in the VM runs `scripts/reboot.bat scheduled` every `reboot_interval` minutes. Before rebooting, [`scripts/reboot_guard.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/reboot_guard.py) asks every API on the VM through `GET /busy` whether it is doing something a reboot would break:
+The `MT5AutoReboot` task in the VM runs `scripts/reboot.bat scheduled` on the schedule the `reboot:` block in `config.yaml` sets (see [Installation and configuration](installation-and-configuration.md#configconfigyaml)): every `interval` minutes (default 30), or once a day at `at` in `timezone` when `at` is set. `start.bat` writes the task on every boot from `config_helper.py reboot_schedule`, which prints `off`, `interval <minutes>` or `daily <HH:MM>` (the VM's UTC time of the next occurrence), and logs what it did to `start.log`: `MT5AutoReboot task ensured (every 30 min).`, `MT5AutoReboot task ensured (daily at 22:00 UTC).` or `Auto-reboot off in config.yaml, MT5AutoReboot task deleted.`, after any `WARN: reboot config:` lines about deprecated keys or invalid values.
+
+A daily reboot follows DST because the UTC time is computed again on every boot for the next occurrence only, and the daily reboot is a boot. It can land an hour off only when no boot runs `start.bat` as far as the reboot step between a DST change and the next occurrence, for example when `start.bat` stopped earlier in that boot; the next boot that gets there corrects it.
+
+Before rebooting, [`scripts/reboot_guard.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/reboot_guard.py) asks every API on the VM through `GET /busy` whether it is doing something a reboot would break:
 
 - a backtest of that terminal is queued or running;
 - a request that changes something is in flight: placing, modifying or closing an order or position (a new stop loss included), a deployment change, a file write, a compile, a terminal restart.
@@ -500,7 +504,7 @@ Reads (`GET`, `HEAD`, `OPTIONS`) never hold a reboot. While any API is busy the 
 
 When every API is idle the guard creates `reboot.draining` in the shared folder and checks once more. While that flag is fresh (under 2 minutes old) the APIs answer any new write with 503 `REBOOT_PENDING` and `Retry-After: 120`, so nothing starts in the seconds before the reboot. `start.bat` deletes the flag on the next boot.
 
-`reboot_max_postpone` (minutes, default 360) caps the wait, so a job that never ends cannot keep a wedged VM from its reboot. The guard then reboots anyway and logs `reason=max_postpone` with what was still busy. `0` turns the guard off. An API that does not answer counts as idle, and a guard that fails logs `reason=guard_error` and lets the reboot go ahead: the guard decides when, never whether. Reboots made during boot (`pip-changed`, `install-requested`, `desktop-heap`) happen before any API is up and skip the guard.
+`reboot.max_postpone` (minutes, default 360; the deprecated top-level `reboot_max_postpone` when there is no `reboot:` block) caps the wait, so a job that never ends cannot keep a wedged VM from its reboot. The guard then reboots anyway and logs `reason=max_postpone` with what was still busy. `0` turns the guard off. An API that does not answer counts as idle, and a guard that fails logs `reason=guard_error` and lets the reboot go ahead: the guard decides when, never whether. Reboots made during boot (`pip-changed`, `install-requested`, `desktop-heap`) happen before any API is up and skip the guard; they also happen with `reboot.enabled: false`, which only turns off the scheduled task.
 
 ### Startup after a reboot
 

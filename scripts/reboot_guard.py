@@ -14,7 +14,8 @@ and checks once more, so nothing starts in the seconds before the reboot.
 Still idle: exit 0 and reboot.bat reboots. Busy again: the flag goes and the
 wait goes on.
 
-reboot_max_postpone in config.yaml (minutes, default 360) caps the wait, so a
+reboot.max_postpone in config.yaml (minutes, default 360; the deprecated
+top-level reboot_max_postpone without a reboot: block) caps the wait, so a
 job that never finishes cannot keep a wedged VM from its reboot. 0 turns the
 guard off. An API that does not answer counts as idle: it is doing nothing,
 and a reboot is what brings it back.
@@ -39,13 +40,19 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from config_helper import _in_group, _vm_group_filter
+    from config_helper import _in_group, _vm_group_filter, reboot_max_postpone
 except ImportError:
     def _vm_group_filter():
         return None
 
     def _in_group(terminal, allowed):
         return True
+
+    def reboot_max_postpone(cfg):
+        block = cfg.get('reboot')
+        if isinstance(block, dict):
+            return block.get('max_postpone', DEFAULT_MAX_POSTPONE_MINUTES)
+        return cfg.get('reboot_max_postpone', DEFAULT_MAX_POSTPONE_MINUTES)
 
 SHARED = r'C:\Users\Docker\Desktop\Shared'
 CONFIG = os.path.join(SHARED, 'config', 'config.yaml')
@@ -87,11 +94,11 @@ def load_config(path=CONFIG):
 
 
 def max_postpone_seconds(cfg):
-    raw = cfg.get('reboot_max_postpone', DEFAULT_MAX_POSTPONE_MINUTES)
+    raw = reboot_max_postpone(cfg)
     try:
         minutes = float(raw)
     except (TypeError, ValueError):
-        log(f'reboot_max_postpone={raw!r} is not a number, using {DEFAULT_MAX_POSTPONE_MINUTES}')
+        log(f'max_postpone={raw!r} is not a number, using {DEFAULT_MAX_POSTPONE_MINUTES}')
         minutes = DEFAULT_MAX_POSTPONE_MINUTES
     return max(0.0, minutes) * 60
 
@@ -197,7 +204,7 @@ def main():
         return 0
     max_postpone = max_postpone_seconds(cfg)
     if max_postpone == 0:
-        log('guard off (reboot_max_postpone=0), rebooting now')
+        log('guard off (max_postpone=0), rebooting now')
         return 0
     terminals = this_vm_terminals(cfg)
     outcome = wait_until_idle(terminals, cfg.get('api_token') or '', max_postpone)

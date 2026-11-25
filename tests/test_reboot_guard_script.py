@@ -171,3 +171,18 @@ def test_reboot_max_postpone_is_read_in_minutes(guard, raw, seconds):
     cfg = {} if raw is None else {"reboot_max_postpone": raw}
 
     assert guard.max_postpone_seconds(cfg) == seconds
+
+
+@pytest.mark.parametrize(
+    ("cfg", "seconds"),
+    [
+        ({"reboot": {"max_postpone": 90}}, 90 * 60),
+        ({"reboot": {"max_postpone": 0}}, 0),
+        # The block wins over the deprecated key, even without its own value.
+        ({"reboot": {"max_postpone": 30}, "reboot_max_postpone": 90}, 30 * 60),
+        ({"reboot": {}, "reboot_max_postpone": 90}, 360 * 60),
+        ({"reboot": {"max_postpone": "soon"}}, 360 * 60),
+    ],
+)
+def test_reboot_max_postpone_is_read_from_the_reboot_block(guard, cfg, seconds):
+    assert guard.max_postpone_seconds(cfg) == seconds

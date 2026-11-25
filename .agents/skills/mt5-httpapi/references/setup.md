@@ -62,8 +62,13 @@ wickworks:
 
 Other top-level settings:
 
-- `reboot_interval`: scheduled VM reboot interval in minutes; `0` disables it
-  (default `30`).
+- `reboot`: scheduled VM reboots. `enabled: false` turns them off;
+  `interval` is the minutes between them (default `30`, `0` also off);
+  `at: "HH:MM"` with an optional IANA `timezone` (default UTC) reboots once a
+  day at that wall-clock time instead; `max_postpone` (minutes, default `360`)
+  caps how long a reboot waits for a running backtest or write. The old
+  top-level `reboot_interval` and `reboot_max_postpone` still work without the
+  block but are deprecated (removed in v5).
 - `backtest_timeout`: default Strategy Tester deadline (`"6h"`, `"30m"`,
   `"3h30m"`, or a bare hour count); the `POST /backtest` `timeout` field can
   override it per job.

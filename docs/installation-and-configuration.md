@@ -56,9 +56,13 @@ This gitignored file controls the whole contraption. Copy [`config/config.yaml.e
 # Bearer token for API auth. Empty = no auth.
 api_token: "paste-the-output-of-openssl-rand-hex-32-here"
 
-# VM auto-reboot every N minutes (flushes DWM/VirtIO-GPU state). 0 = disable.
-reboot_interval: 30
-reboot_max_postpone: 360
+# Scheduled VM reboots (flush DWM/VirtIO-GPU state).
+reboot:
+  enabled: true
+  interval: 30            # minutes; used only when `at` is not set
+  # at: "00:00"           # one reboot a day at this wall-clock time
+  # timezone: Europe/Bucharest   # IANA zone for `at`, default UTC
+  max_postpone: 360
 disable_terminal_mcp: false
 
 # Default Strategy Tester timeout. POST /backtest can override per job.
@@ -122,8 +126,14 @@ terminals:
 Per-field notes:
 
 - **`api_token`**: if set, every endpoint requires `Authorization: Bearer <token>`. Empty = open. Generate with `openssl rand -hex 32`.
-- **`reboot_interval`**: minutes between scheduled VM reboots (default `30` when the key is missing). `0` disables.
-- **`reboot_max_postpone`**: the longest a scheduled reboot waits, in minutes (default `360`), while any API on the VM is running a backtest or a request that changes something. Reads never hold it. `0` reboots on schedule without waiting. See [operations](operations.md#scheduled-reboots).
+- **`reboot`**: when the VM reboots itself. See [operations](operations.md#scheduled-reboots) for what a scheduled reboot does.
+  - **`enabled`**: `false` turns scheduled reboots off and `start.bat` deletes the `MT5AutoReboot` task on the next boot. Default `true`. `reboot: false` is shorthand for `{enabled: false}`.
+  - **`interval`**: minutes between reboots, from `1` to `1439` (the most `schtasks /sc minute` takes). Default `30`; `0` also turns reboots off. Used only when `at` is not set.
+  - **`at`**: one reboot a day at this wall-clock time, `"HH:MM"` from `00:00` to `23:59`. When set it takes over from `interval`, and if `interval` is set too `start.bat` logs a warning saying so. Quote it: YAML 1.1 reads an unquoted `12:30` as the number 750, which is still understood as 12:30, while `00:00` stays text.
+  - **`timezone`**: the IANA zone `at` is meant in, such as `Europe/Bucharest`. Default `UTC`, the VM's own clock. On every boot `start.bat` converts the next occurrence of `at` in this zone to the VM's UTC time and registers a daily task at that time (`schtasks /sc daily /st HH:MM`), so midnight in `Europe/Bucharest` is `22:00` UTC in winter and `21:00` UTC in summer. The daily reboot is itself a boot, so every registration covers exactly one occurrence and DST changes are followed without an off day.
+  - **`max_postpone`**: the longest a scheduled reboot waits, in minutes (default `360`), while any API on the VM is running a backtest or a request that changes something. Reads never hold it. `0` reboots on schedule without waiting.
+
+  An invalid value never stops the boot: an `interval` outside `0` to `1439` falls back to `30`, an `at` that is not a valid time falls back to `interval`, and a `timezone` that cannot be loaded falls back to UTC, each with a `WARN: reboot config:` line in `start.log` and `full.log`. Without a `reboot:` block, the deprecated top-level **`reboot_interval`** and **`reboot_max_postpone`** still work as before (same meaning as `interval` and `max_postpone`) and every boot logs a deprecation warning; they will be removed in v5. When the block and the old keys are both present, the block wins and the old keys are ignored with a warning.
 - **`disable_terminal_mcp`**: `true` turns off MetaTrader's own MCP servers (terminal build 6090+, the transport behind its built-in AI assistant; not this API's `/mcp`). Every such terminal tries to listen on `127.0.0.1:22346`, so with several terminals in a VM all but the first log `MCP bind error on 127.0.0.1:22346 (10048)` on every launch, and backtest terminals have aborted with exit code 10053 after the same subsystem failed to sign in to MQL5.community. With `true`, `Enable=0` goes into `[MCP.MetaTrader]` and `[MCP.MetaEditor]` of each terminal's `Config/assistant.ini` before every launch: at boot, on a restart the API makes, and before each backtest. MT5 rewrites the file on exit, which is why it happens every time. A terminal entry's own `disable_terminal_mcp: false` keeps that terminal's servers on. Default `false` leaves the terminals as MetaQuotes ships them.
 - **`desktop_heap_kb`**: opt-in size of each VM's interactive desktop heap, in KB. Unset (or `0`) leaves Windows' own value, 20480. A number from 20481 to 131072 raises it at boot (`65536` is what the runs below used); `restore` puts back the value Windows had. Needed when a VM runs more than ~20 terminals: see [operations.md](operations.md#many-terminals-per-vm-the-desktop-heap).
 - **`backtest_timeout`**: default Strategy Tester timeout for `POST /backtest`. Accepts the same duration grammar as `utc_offset`: `"6h"`, `"30m"`, `"3h30m"`, `"90m"`, or a bare number interpreted as hours. Per-request form field `timeout` overrides it.

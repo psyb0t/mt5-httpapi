@@ -539,7 +539,7 @@ share (WinError 5) is retried and then kept in memory instead of ending the run.
 
 `GET /busy` lists every queued or running backtest of this terminal, and a
 cancelled one whose worker is still stopping the tester processes, so a
-scheduled VM reboot waits for them (up to `reboot_max_postpone`, default 360
+scheduled VM reboot waits for them (up to `reboot.max_postpone`, default 360
 minutes, see
 [`scripts/reboot_guard.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/reboot_guard.py)).
 While the reboot is about to happen, every `POST` here (`/backtest`,

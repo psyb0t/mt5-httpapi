@@ -20,14 +20,26 @@ compile_api_token: ""
 # docs/compiling.md. Empty = compile straight from the terminal directory.
 compile_local_cache: ""
 
-# Automatically reboot the VM every N minutes to flush DWM/VirtIO-GPU state
-# before sustained-load crashes wedge the MT5 SDK pipe. 0 = disabled.
-reboot_interval: 30
-
-# Longest a scheduled reboot waits, in minutes, while an API runs a backtest
-# or a request that changes something (orders, stop losses, deployments, file
-# writes). Reads never hold it. 0 reboots on schedule without waiting.
-reboot_max_postpone: 360
+# Scheduled VM reboots, which flush DWM/VirtIO-GPU state before sustained-load
+# crashes wedge the MT5 SDK pipe. Replaces the deprecated top-level
+# reboot_interval and reboot_max_postpone (removed in v5); when this block is
+# present those two keys are ignored.
+reboot:
+  # false: no scheduled reboots at all.
+  enabled: true
+  # Minutes between reboots (1 to 1439, 0 = off). Used only when `at` is not set.
+  interval: 30
+  # Optional: one reboot a day at this wall-clock time (HH:MM, 00:00 to 23:59).
+  # Takes over from `interval` when set. Quote it: YAML reads an unquoted
+  # 12:30 as a number (still understood, but quoting avoids the surprise).
+  # at: "00:00"
+  # Optional IANA time zone for `at`, default UTC (the VM's own clock).
+  # Recomputed on every boot, so DST changes are followed.
+  # timezone: Europe/Bucharest
+  # Longest a scheduled reboot waits, in minutes, while an API runs a backtest
+  # or a request that changes something (orders, stop losses, deployments,
+  # file writes). Reads never hold it. 0 reboots on schedule without waiting.
+  max_postpone: 360
 
 # MetaTrader's own MCP servers (terminal build 6090+, the built-in AI
 # assistant), not this API's /mcp. Each terminal tries 127.0.0.1:22346, so with

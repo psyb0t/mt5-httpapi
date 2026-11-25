@@ -1,8 +1,8 @@
 """What this API process is doing that a scheduled VM reboot would break.
 
-The VM reboots itself every reboot_interval minutes. Before it does,
-scripts/reboot_guard.py asks every API on the VM through GET /busy and holds
-the reboot while any of them is busy:
+The VM reboots itself on the schedule of the config.yaml reboot: block.
+Before it does, scripts/reboot_guard.py asks every API on the VM through
+GET /busy and holds the reboot while any of them is busy:
 
 - a backtest of this terminal is queued or running, or a cancelled one is
   still stopping its tester processes;

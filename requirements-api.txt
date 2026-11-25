@@ -31,3 +31,7 @@ psutil==7.2.2
 # v2 removed mcp.server.fastmcp, which both MCP surfaces import.
 mcp==1.28.0
 a2wsgi==1.10.10
+# IANA time zone data for zoneinfo: Windows Python ships none, and
+# scripts/config_helper.py needs it to turn reboot.at in reboot.timezone into
+# the guest's UTC time.
+tzdata==2026.6

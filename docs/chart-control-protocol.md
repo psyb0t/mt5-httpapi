@@ -178,7 +178,7 @@ Every pass (timer-driven, ~1s), the owning loader:
 ## Self-healing
 
 Two layers converge a terminal back to desired state after any restart
-(including the optional `reboot_interval` VM reboots):
+(including the scheduled VM reboots of the `reboot:` block):
 
 1. **MT5 native chart restoration** brings back charts + attached experts
    from the last saved profile. Often that covers everything, with no work
@@ -229,8 +229,8 @@ attach, fully API/config-driven:
    section into each terminal's generated `mt5start.ini`, with
    `Symbol=EURUSD` plus the terminal's `symbol_suffix` (e.g. `EURUSD.r`) and
    `Period=H1`, so the terminal attaches the loader itself at every launch.
-3. The `[StartUp]` line re-fires on every launch (including the periodic
-   `reboot_interval` reboots); the GlobalVariable mutex makes this
+3. The `[StartUp]` line re-fires on every launch (including the scheduled
+   VM reboots); the GlobalVariable mutex makes this
    idempotent. A duplicate loader closes its own chart and vanishes, so
    charts never accumulate.
 

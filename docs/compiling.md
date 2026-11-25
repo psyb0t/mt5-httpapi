@@ -290,7 +290,7 @@ That warm-up is deliberately gated, and the gates matter more than the compile:
   directory. Every API process exposes `/compile` and they share that
   directory, so an ungated warm-up starts one MetaEditor per terminal, twenty
   at once on a busy host. The claim records the boot it was made in, so the
-  next boot warms up again however soon it comes (with `reboot_interval: 30`,
+  next boot warms up again however soon it comes (with `reboot.interval: 30`,
   an age-based expiry would skip every other boot).
 - **Yields to real work.** It takes the compile lock non-blocking and gives up
   if a compile is running; a caller queuing behind a warm-up would defeat it.

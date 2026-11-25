@@ -44,7 +44,7 @@ echo [%date% %time%] [reboot] reboot requested (reason=!REASON!) >> "%FULL_LOG%"
 :: A scheduled reboot waits until no API is running a backtest or a request
 :: that changes something (orders, stop losses, deployments, file writes).
 :: reboot_guard.py logs every wait with its reason and always returns, at the
-:: latest after reboot_max_postpone minutes. The boot-time reboots
+:: latest after reboot.max_postpone minutes. The boot-time reboots
 :: (pip-changed, install-requested) run before any API exists, so they skip it.
 if /i "!REASON!"=="scheduled" (
     if exist "%SCRIPTS%\reboot_guard.py" (

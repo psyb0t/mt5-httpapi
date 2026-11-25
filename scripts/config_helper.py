@@ -4,8 +4,11 @@ Query helper for config/config.yaml.
 Called from run.sh (Linux) and bat scripts (Windows).
 Resolves config path relative to this script: ../config/config.yaml
 """
+import datetime
 import os
+import re
 import sys
+from typing import NamedTuple
 
 try:
     import yaml
@@ -251,6 +254,228 @@ def _in_group(terminal, allowed):
     return (terminal["broker"], terminal["account"], instance) in allowed
 
 
+#: Defaults of the reboot: block. 30 minutes was the reboot_interval default;
+#: 360 minutes is the default backtest timeout, so the guard outwaits a normal
+#: backtest before it reboots anyway.
+DEFAULT_REBOOT_INTERVAL_MINUTES = 30
+DEFAULT_REBOOT_MAX_POSTPONE_MINUTES = 360
+#: The Windows guest's clock is UTC (install.bat runs tzutil /s "UTC"), so a
+#: daily reboot's local time is converted to UTC before schtasks sees it.
+DEFAULT_REBOOT_TIMEZONE = "UTC"
+#: schtasks /sc minute accepts /mo 1 to 1439.
+MAX_REBOOT_INTERVAL_MINUTES = 1439
+MINUTES_PER_HOUR = 60
+MINUTES_PER_DAY = 1440
+_REBOOT_AT = re.compile(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])$")
+#: The top-level keys the reboot: block replaces. Removed in v5.
+LEGACY_REBOOT_KEYS = ("reboot_interval", "reboot_max_postpone")
+REBOOT_OFF = "off"
+REBOOT_INTERVAL = "interval"
+REBOOT_DAILY = "daily"
+#: start.bat echoes the warnings into its logs from a for /f loop; anything
+#: outside this set (quotes, %, !, &, <, >) could be read by cmd.exe.
+_BATCH_UNSAFE = re.compile(r"[^A-Za-z0-9 .,:;_/+=()'-]")
+
+
+class RebootSettings(NamedTuple):
+    """What config.yaml asks of the scheduled reboot.
+
+    kind is REBOOT_OFF, REBOOT_INTERVAL or REBOOT_DAILY. interval is the
+    minutes between reboots for REBOOT_INTERVAL; daily_utc is the guest's UTC
+    "HH:MM" for REBOOT_DAILY. max_postpone is the raw value reboot_guard.py
+    parses. warnings are what start.bat logs.
+    """
+
+    kind: str
+    interval: int
+    daily_utc: str
+    max_postpone: object
+    warnings: list
+
+    @property
+    def schedule(self):
+        """The one line `config_helper.py reboot_schedule` prints."""
+        if self.kind == REBOOT_DAILY:
+            return f"{REBOOT_DAILY} {self.daily_utc}"
+        if self.kind == REBOOT_INTERVAL:
+            return f"{REBOOT_INTERVAL} {self.interval}"
+        return REBOOT_OFF
+
+
+def _reboot_block(cfg, warnings):
+    """The reboot: block as a mapping, or None when there is none to use.
+
+    `reboot: true` and `reboot: false` are shorthand for `{enabled: ...}`, as
+    for the feature blocks. Any other non-mapping is ignored with a warning,
+    so a typo there falls back to the old keys or the defaults instead of
+    stopping the boot (PY4).
+    """
+    raw = cfg.get("reboot")
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return {"enabled": raw}
+    if isinstance(raw, dict):
+        return raw
+    warnings.append(f"reboot must be a mapping, got {raw!r}; ignoring it")
+    return None
+
+
+def _reboot_interval(raw, key, warnings):
+    """Minutes between reboots, 0 for off. A value schtasks cannot take falls
+    back to the default with a warning."""
+    if raw is None:
+        return DEFAULT_REBOOT_INTERVAL_MINUTES
+    if isinstance(raw, str) and raw.strip().isdigit():
+        raw = int(raw.strip())
+    if (isinstance(raw, bool) or not isinstance(raw, int)
+            or not 0 <= raw <= MAX_REBOOT_INTERVAL_MINUTES):
+        warnings.append(
+            f"{key}={raw!r} is not a whole number of minutes from 0 to "
+            f"{MAX_REBOOT_INTERVAL_MINUTES}; using {DEFAULT_REBOOT_INTERVAL_MINUTES}"
+        )
+        return DEFAULT_REBOOT_INTERVAL_MINUTES
+    return raw
+
+
+def _reboot_at(raw, warnings):
+    """(hour, minute) of reboot.at, or None when it is unset or invalid.
+
+    YAML 1.1 reads an unquoted `12:30` as the base-60 integer 750, while
+    `00:00` and `08:30` stay strings because of the leading zero. An integer
+    is therefore taken as minutes after midnight, which is what that base-60
+    reading means.
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        if 0 <= raw < MINUTES_PER_DAY:
+            return divmod(raw, MINUTES_PER_HOUR)
+    elif isinstance(raw, str):
+        match = _REBOOT_AT.match(raw.strip())
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    warnings.append(
+        f"reboot.at={raw!r} is not a time from 00:00 to 23:59; using the interval instead"
+    )
+    return None
+
+
+def _reboot_zone(raw, warnings):
+    """The tzinfo of reboot.timezone, UTC when unset or when it cannot be
+    loaded. Windows Python has no time zone database of its own; the tzdata
+    package from requirements-api.txt provides it, and a host without either
+    must not crash here."""
+    name = DEFAULT_REBOOT_TIMEZONE if raw is None or raw == "" else raw
+    if not isinstance(name, str):
+        warnings.append(f"reboot.timezone={raw!r} is not a time zone name; using UTC")
+        return datetime.timezone.utc
+    name = name.strip()
+    if name.upper() == DEFAULT_REBOOT_TIMEZONE:
+        return datetime.timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        warnings.append(f"reboot.timezone={name!r} needs Python 3.9 or later; using UTC")
+        return datetime.timezone.utc
+    try:
+        return ZoneInfo(name)
+    # ZoneInfoNotFoundError is a KeyError; a malformed key is a ValueError and
+    # a directory such as "Europe" can surface as an OSError.
+    except (KeyError, ValueError, OSError):
+        warnings.append(f"reboot.timezone={name!r} cannot be loaded; using UTC")
+        return datetime.timezone.utc
+
+
+def next_daily_utc(hour, minute, zone, now):
+    """The UTC moment of the next time after `now` the wall clock in `zone`
+    shows hour:minute.
+
+    start.bat registers the daily task at this UTC time on every boot, and the
+    daily reboot itself is a boot, so each registration covers exactly one
+    occurrence and the zone's offset on that day, DST included, is the one
+    used. A local time skipped by a DST jump resolves to the moment after the
+    jump (zoneinfo's fold=0 offset).
+    """
+    utc = datetime.timezone.utc
+    now = now.astimezone(utc)
+    day = now.astimezone(zone).date()
+
+    def at_wall_clock(date):
+        return datetime.datetime(
+            date.year, date.month, date.day, hour, minute, tzinfo=zone,
+        ).astimezone(utc)
+
+    today = at_wall_clock(day)
+    if today > now:
+        return today
+    return at_wall_clock(day + datetime.timedelta(days=1))
+
+
+def reboot_settings(cfg, now=None):
+    """The scheduled reboot config.yaml asks for, with the warnings to log.
+
+    Precedence: reboot.enabled false turns reboots off. Otherwise reboot.at
+    gives one reboot a day at that wall-clock time in reboot.timezone, and
+    reboot.interval (default 30, 0 = off) is used only without it. Without a
+    reboot: block the deprecated top-level reboot_interval and
+    reboot_max_postpone apply as before; with one, they are ignored.
+    """
+    warnings = []
+    block = _reboot_block(cfg, warnings)
+    legacy = [key for key in LEGACY_REBOOT_KEYS if key in cfg]
+
+    if block is None:
+        if legacy:
+            warnings.append(
+                f"{', '.join(legacy)} in config.yaml is deprecated and will be removed "
+                "in v5; move it into the reboot: block (interval, max_postpone)"
+            )
+        interval = _reboot_interval(cfg.get("reboot_interval"), "reboot_interval", warnings)
+        max_postpone = cfg.get("reboot_max_postpone", DEFAULT_REBOOT_MAX_POSTPONE_MINUTES)
+        kind = REBOOT_INTERVAL if interval else REBOOT_OFF
+        return RebootSettings(kind, interval, "", max_postpone, warnings)
+
+    if legacy:
+        warnings.append(
+            f"both the reboot: block and {', '.join(legacy)} are in config.yaml; "
+            "the reboot: block wins, remove the old keys"
+        )
+    max_postpone = block.get("max_postpone", DEFAULT_REBOOT_MAX_POSTPONE_MINUTES)
+
+    enabled = block.get("enabled", True)
+    if not isinstance(enabled, bool):
+        warnings.append(f"reboot.enabled={enabled!r} is not true or false; using true")
+        enabled = True
+    if not enabled:
+        return RebootSettings(REBOOT_OFF, 0, "", max_postpone, warnings)
+
+    at = _reboot_at(block.get("at"), warnings)
+    if at is not None:
+        if block.get("interval") is not None:
+            warnings.append("reboot.at is set, so it takes over from reboot.interval")
+        zone = _reboot_zone(block.get("timezone"), warnings)
+        if now is None:
+            now = datetime.datetime.now(datetime.timezone.utc)
+        moment = next_daily_utc(at[0], at[1], zone, now)
+        return RebootSettings(REBOOT_DAILY, 0, moment.strftime("%H:%M"), max_postpone, warnings)
+
+    interval = _reboot_interval(block.get("interval"), "reboot.interval", warnings)
+    kind = REBOOT_INTERVAL if interval else REBOOT_OFF
+    return RebootSettings(kind, interval, "", max_postpone, warnings)
+
+
+def reboot_max_postpone(cfg):
+    """The raw max_postpone reboot_guard.py parses, from the reboot: block or
+    the deprecated reboot_max_postpone."""
+    return reboot_settings(cfg).max_postpone
+
+
+def batch_safe(text):
+    """`text` with every character cmd.exe could act on replaced by '?'."""
+    return _BATCH_UNSAFE.sub("?", text)
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: config_helper.py <cmd> [args...]", file=sys.stderr)
@@ -327,9 +552,14 @@ def main():
         value = telegram.get(sys.argv[2])
         print("" if value is None else str(value).strip())
 
-    elif cmd == "reboot_interval":
-        val = cfg.get("reboot_interval")
-        print(30 if val is None else val)
+    elif cmd == "reboot_schedule":
+        # One line on stdout for start.bat: "off", "interval <minutes>" or
+        # "daily <HH:MM>" in the guest's UTC. Warnings go to stderr, which
+        # start.bat copies into start.log and full.log.
+        settings = reboot_settings(cfg)
+        for warning in settings.warnings:
+            print(f"WARN: reboot config: {batch_safe(warning)}", file=sys.stderr)
+        print(settings.schedule)
 
     elif cmd == "desktop_heap_kb":
         # Opt-in desktop heap size for start.bat (see scripts/desktop_heap.py):

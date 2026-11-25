@@ -121,7 +121,7 @@ set "PIP_CHANGED=0"
 call :log "%START_LOG%" "Installing pip packages..."
 call :log "%PIP_LOG%" "Installing pip packages..."
 rem Exact pins, kept identical to requirements-api.txt (tests/test_requirements_sync.py).
-"%PYDIR%\python.exe" -m pip install "pyyaml==6.0.3" "MetaTrader5==5.0.5640" "numpy==1.26.4" "flask==3.1.3" "waitress==3.0.2" "flask-compress==1.24" "psutil==7.2.2" "mcp==1.28.0" "a2wsgi==1.10.10" > "%PIP_TMP%" 2>&1
+"%PYDIR%\python.exe" -m pip install "pyyaml==6.0.3" "MetaTrader5==5.0.5640" "numpy==1.26.4" "flask==3.1.3" "waitress==3.0.2" "flask-compress==1.24" "psutil==7.2.2" "mcp==1.28.0" "a2wsgi==1.10.10" "tzdata==2026.6" > "%PIP_TMP%" 2>&1
 set "PIP_EC=!errorlevel!"
 type "%PIP_TMP%" >> "%PIP_LOG%"
 findstr /C:"Successfully installed" "%PIP_TMP%" >nul 2>&1 && set "PIP_CHANGED=1"
@@ -230,10 +230,19 @@ if !errorlevel! neq 0 (
 :: -- Periodic auto-reboot scheduled task -------------------------
 :: MT5 terminals share a desktop with DWM, and DWM/VirtIO-GPU crashes
 :: under sustained load wedge the SDK pipe (terminal64.exe stops
-:: responding to GDI/IPC). Cheapest mitigation: hard-reboot every N
-:: minutes to flush GPU/desktop state before it rots.
-:: Configured via config.yaml reboot_interval (minutes). 0 = disabled.
-:: Default: 30. /f on schtasks is idempotent -- overwrites existing task.
+:: responding to GDI/IPC). Cheapest mitigation: hard-reboot regularly to
+:: flush GPU/desktop state before it rots.
+:: Configured via the config.yaml reboot: block (enabled, interval, at,
+:: timezone). `config_helper.py reboot_schedule` prints exactly one line:
+::   off            -> no scheduled reboots, the task is deleted
+::   interval N     -> every N minutes (/sc minute /mo N)
+::   daily HH:MM    -> once a day at HH:MM guest time, which is UTC
+:: For `daily` the helper converts reboot.at from reboot.timezone to UTC for
+:: the NEXT occurrence. This runs on every boot and the daily reboot is a
+:: boot, so each registration covers one occurrence and DST is always right.
+:: Its warnings (deprecated keys, invalid values) come on stderr and go into
+:: start.log and full.log. Default when the helper fails: every 30 minutes.
+:: /f on schtasks is idempotent -- overwrites the existing task and trigger.
 ::
 :: The task calls reboot.bat, NOT `shutdown` directly. Calling shutdown here
 :: was the root cause of the permanent-deadlock outage: it killed start.bat
@@ -243,17 +252,50 @@ if !errorlevel! neq 0 (
 ::
 :: No inner quotes in /tr -- schtasks quote-escaping is fragile, and %SCRIPTS%
 :: has no spaces (C:\Users\Docker\Desktop\Shared\scripts).
-set "REBOOT_INTERVAL=30"
-"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_interval > "%SHARED%\mt5_ri.tmp" 2>nul
-for /f "usebackq delims=" %%V in ("%SHARED%\mt5_ri.tmp") do set "REBOOT_INTERVAL=%%V"
-del "%SHARED%\mt5_ri.tmp" 2>nul
-if "!REBOOT_INTERVAL!"=="0" (
-    schtasks /delete /tn "MT5AutoReboot" /f >nul 2>&1
-    call :log "%START_LOG%" "Auto-reboot disabled (reboot_interval=0)."
-) else (
-    schtasks /create /tn "MT5AutoReboot" /tr "cmd.exe /c %SCRIPTS%\reboot.bat scheduled" /sc minute /mo !REBOOT_INTERVAL! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
+:: The warnings are echoed straight from the for variable, never through
+:: `call :log`, which would parse them a second time.
+set "REBOOT_SCHEDULE=interval 30"
+set "RS_OUT=%SHARED%\mt5_rs.tmp"
+set "RS_ERR=%SHARED%\mt5_rs_err.tmp"
+"%PYDIR%\python.exe" "%SCRIPTS%\config_helper.py" reboot_schedule > "%RS_OUT%" 2> "%RS_ERR%"
+for /f "usebackq delims=" %%V in ("%RS_OUT%") do set "REBOOT_SCHEDULE=%%V"
+for /f "usebackq delims=" %%W in ("%RS_ERR%") do (
+    echo [%date% %time%] %%W
+    echo [%date% %time%] %%W >> "%START_LOG%"
+    echo [%date% %time%] [start] %%W >> "%FULL_LOG%"
+)
+del "%RS_OUT%" 2>nul
+del "%RS_ERR%" 2>nul
+set "REBOOT_KIND="
+set "REBOOT_ARG="
+for /f "tokens=1,2" %%A in ("!REBOOT_SCHEDULE!") do (
+    set "REBOOT_KIND=%%A"
+    set "REBOOT_ARG=%%B"
+)
+if "!REBOOT_KIND!"=="off" (
+    schtasks /query /tn "MT5AutoReboot" >nul 2>&1
     if !errorlevel! equ 0 (
-        call :log "%START_LOG%" "MT5AutoReboot task ensured (every !REBOOT_INTERVAL! min)."
+        schtasks /delete /tn "MT5AutoReboot" /f >nul 2>&1
+        call :log "%START_LOG%" "Auto-reboot off in config.yaml, MT5AutoReboot task deleted."
+    ) else (
+        call :log "%START_LOG%" "Auto-reboot off in config.yaml, no MT5AutoReboot task to delete."
+    )
+) else if "!REBOOT_KIND!"=="daily" (
+    schtasks /create /tn "MT5AutoReboot" /tr "cmd.exe /c %SCRIPTS%\reboot.bat scheduled" /sc daily /st !REBOOT_ARG! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
+    if !errorlevel! equ 0 (
+        call :log "%START_LOG%" "MT5AutoReboot task ensured (daily at !REBOOT_ARG! UTC)."
+    ) else (
+        call :log "%START_LOG%" "WARN: failed to create MT5AutoReboot task (errorlevel !errorlevel!)."
+    )
+) else (
+    if not "!REBOOT_KIND!"=="interval" (
+        call :log "%START_LOG%" "WARN: unexpected reboot_schedule output, rebooting every 30 min."
+        set "REBOOT_ARG=30"
+    )
+    if "!REBOOT_ARG!"=="" set "REBOOT_ARG=30"
+    schtasks /create /tn "MT5AutoReboot" /tr "cmd.exe /c %SCRIPTS%\reboot.bat scheduled" /sc minute /mo !REBOOT_ARG! /ru "SYSTEM" /rl HIGHEST /f >nul 2>&1
+    if !errorlevel! equ 0 (
+        call :log "%START_LOG%" "MT5AutoReboot task ensured (every !REBOOT_ARG! min)."
     ) else (
         call :log "%START_LOG%" "WARN: failed to create MT5AutoReboot task (errorlevel !errorlevel!)."
     )
