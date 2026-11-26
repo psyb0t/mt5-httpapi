@@ -25,6 +25,7 @@ import datetime
 import email.utils
 import sys
 import time
+import urllib.error
 import urllib.request
 
 # The same default as mt5api.config.WICKWORKS_URL: the dockurr/windows gateway
@@ -65,8 +66,13 @@ def host_time_delta(url: str, timeout: float = REQUEST_TIMEOUT_SECONDS) -> float
     try:
         request = urllib.request.Request(url, method="HEAD")
         before = time.time()
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
-            header = resp.headers.get("Date")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                header = resp.headers.get("Date")
+        except urllib.error.HTTPError as err:
+            # Any HTTP answer carries the server's Date, and wickworks answers
+            # a HEAD on its root with 405.
+            header = err.headers.get("Date")
         after = time.time()
     except Exception:  # noqa: BLE001 - an unreachable sidecar leaves the clock alone
         return None

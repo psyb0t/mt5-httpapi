@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.36.1]: 2026-11-26
+
+### Fixed
+
+- **`utc_offset: auto` and the guest clock sync now read the host clock.** Both asked the wickworks sidecar for its `Date` header with a `HEAD` request, which wickworks answers with 405 Method Not Allowed; the error was treated as no answer, so every measurement used the guest clock and the boot-time sync logged `WARN: clock sync: no Date header`. Any HTTP answer now counts, and `GET /terminal` reports `broker_utc_offset_clock: host`. See [docs/operations.md](docs/operations.md#the-guest-clock).
+
 ## [v4.36.0]: 2026-11-26
 
 ### Added

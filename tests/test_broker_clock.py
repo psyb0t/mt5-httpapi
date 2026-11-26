@@ -155,10 +155,11 @@ def test_apply_saves_and_reports_the_measurement(monkeypatch, tmp_path):
 class _DateHandler(BaseHTTPRequestHandler):
     skew = 0.0
     header = None
+    status = 200
 
     def do_HEAD(self):  # noqa: N802 - http.server naming
         # send_response would add the real Date header first.
-        self.send_response_only(200)
+        self.send_response_only(self.status)
         self.send_header("Date", self.header or email.utils.formatdate(
             time.time() + self.skew, usegmt=True))
         self.end_headers()
@@ -171,8 +172,9 @@ class _DateHandler(BaseHTTPRequestHandler):
 def date_server():
     servers = []
 
-    def start(skew=0.0, header=None):
-        handler = type("H", (_DateHandler,), {"skew": skew, "header": header})
+    def start(skew=0.0, header=None, status=200):
+        handler = type("H", (_DateHandler,), {"skew": skew, "header": header,
+                                              "status": status})
         server = HTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         servers.append(server)
@@ -187,6 +189,13 @@ def test_the_reference_clock_reads_the_host_date_header(date_server):
     delta, clock = bc.reference_utc_delta(date_server(skew=120.0), timeout=2)
     assert clock == bc.CLOCK_HOST
     assert 118 <= delta <= 122
+
+
+def test_a_405_answer_still_gives_the_host_clock(date_server):
+    """wickworks answers HEAD / with 405 Method Not Allowed; its Date still counts."""
+    delta, clock = bc.reference_utc_delta(date_server(skew=60.0, status=405), timeout=2)
+    assert clock == bc.CLOCK_HOST
+    assert 58 <= delta <= 62
 
 
 def test_an_unreachable_reference_falls_back_to_the_guest_clock():

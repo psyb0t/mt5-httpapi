@@ -32,6 +32,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -180,8 +181,13 @@ def reference_utc_delta(url: str = WICKWORKS_URL,
     try:
         request = urllib.request.Request(url, method="HEAD")
         before = time.time()
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
-            header = resp.headers.get("Date")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                header = resp.headers.get("Date")
+        except urllib.error.HTTPError as err:
+            # Any HTTP answer carries the server's Date, and wickworks answers
+            # a HEAD on its root with 405.
+            header = err.headers.get("Date")
         after = time.time()
     except Exception as err:  # noqa: BLE001 - any failure falls back to the guest clock
         log.debug("Reference clock unavailable (%s); using the guest clock.", err)

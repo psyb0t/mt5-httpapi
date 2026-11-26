@@ -20,11 +20,11 @@ def sc():
     return module
 
 
-def _server(skew=0.0, header=None):
+def _server(skew=0.0, header=None, status=200):
     class Handler(BaseHTTPRequestHandler):
         def do_HEAD(self):  # noqa: N802 - http.server naming
             # send_response would add the real Date header first.
-            self.send_response_only(200)
+            self.send_response_only(status)
             self.send_header("Date", header or email.utils.formatdate(
                 time.time() + skew, usegmt=True))
             self.end_headers()
@@ -53,6 +53,16 @@ def test_no_reference_never_sets_the_clock(sc):
 
 def test_the_delta_comes_from_the_host_date_header(sc):
     server, url = _server(skew=300.0)
+    try:
+        delta = sc.host_time_delta(url, timeout=2)
+    finally:
+        server.shutdown()
+    assert 298 <= delta <= 302
+
+
+def test_a_405_answer_still_gives_the_delta(sc):
+    """wickworks answers HEAD / with 405 Method Not Allowed; its Date still counts."""
+    server, url = _server(skew=300.0, status=405)
     try:
         delta = sc.host_time_delta(url, timeout=2)
     finally:
