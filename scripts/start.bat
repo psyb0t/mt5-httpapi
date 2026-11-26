@@ -89,6 +89,14 @@ if !errorlevel! neq 0 (
 )
 call :log "%START_LOG%" "install.bat done."
 
+:: -- Guest clock from the Docker host -----------------------------
+:: Windows' internet time sync cannot resolve time.windows.com from the VM,
+:: so nothing corrected a drifting guest clock. Turn that sync off and set
+:: the clock from the host instead (sync_clock.py, via the wickworks Date
+:: header), before any terminal or API starts. Repeated hourly below.
+w32tm /config /syncfromflags:NO /update >nul 2>&1
+"%PYDIR%\python.exe" "%SCRIPTS%\sync_clock.py" "%CONFIG%\config.yaml" "%START_LOG%" "%FULL_LOG%"
+
 :: -- Keep the MT5Start logon task able to fire --------------------
 :: Installs made before ensure_start_task.ps1 existed carry a logon trigger
 :: with a StartBoundary from the first install's guest clock; once that clock
@@ -397,7 +405,16 @@ call :release_lock
 call :log "%START_LOG%" "All !TERM_COUNT! API(s) running in background."
 
 :: -- Foreground: status + health monitor --------------------------
+:: CLOCK_TICKS counts 60 s passes; the guest clock is re-synced from the
+:: host every CLOCK_SYNC_EVERY passes (one hour).
+set CLOCK_TICKS=0
+set CLOCK_SYNC_EVERY=60
 :status_loop
+set /a CLOCK_TICKS+=1
+if !CLOCK_TICKS! geq !CLOCK_SYNC_EVERY! (
+    set CLOCK_TICKS=0
+    "%PYDIR%\python.exe" "%SCRIPTS%\sync_clock.py" "%CONFIG%\config.yaml" "%START_LOG%" "%FULL_LOG%"
+)
 cls
 echo.
 echo  =====================================================

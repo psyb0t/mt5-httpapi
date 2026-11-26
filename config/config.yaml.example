@@ -155,7 +155,10 @@ accounts:
 #   Missing/empty = "default". Routes become /<broker>/<account>/<instance>/...
 #   and that default instance also keeps a legacy /<broker>/<account>/ alias.
 # utc_offset: broker wall-clock offset from real UTC.
-#   Accepts hours ("3"), duration strings ("3h30m", "-2h"), or "0".
+#   "auto" (recommended for live terminals) measures it from live ticks and
+#   follows daylight saving changes. A fixed value accepts hours ("3"),
+#   duration strings ("3h30m", "-2h"), or "0", and is an hour off for half
+#   the year at brokers that change their clock.
 #   MT5 disguises broker local time as UTC; this corrects it on the wire.
 # mode: "live" (default) keeps terminal64.exe running for live SDK use.
 #   "backtest" prepares the portable dir but does NOT launch terminal64.exe,

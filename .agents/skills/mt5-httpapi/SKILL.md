@@ -132,7 +132,7 @@ terminals:
 
 (`port` is container-internal: only nginx and the mt5 container talk to it.)
 
-Forms accepted: `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
+Forms accepted: `auto` (the API measures the offset from live ticks and follows daylight saving changes; `GET /terminal` shows `broker_utc_offset_mode` and `broker_utc_offset_status`), or a fixed `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
 
 When set, every outgoing time field (tick `time`, rate `time`, position/order/deal `time*` and `time_*_msc`) is real UTC unix, and every incoming `from`/`to` query param is interpreted as real UTC unix. If unset or `0`, raw broker timestamps pass through (legacy behavior). Check `GET /terminal` → `broker_utc_offset_hours` to confirm.
 

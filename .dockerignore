@@ -42,3 +42,4 @@ examples/
 
 # Documentation site build: Node packages and output, never part of an image.
 website/
+.plan/

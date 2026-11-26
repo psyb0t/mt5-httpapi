@@ -50,6 +50,7 @@ COPY scripts/config_helper.py \
     scripts/api_runner.bat \
     scripts/desktop_heap.py \
     scripts/reboot_guard.py \
+    scripts/sync_clock.py \
     scripts/healthcheck.sh \
     scripts/status.sh \
     scripts/rotate-logs.sh \

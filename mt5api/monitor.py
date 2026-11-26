@@ -244,6 +244,9 @@ def start_monitor():
     t = threading.Thread(target=_monitor_loop, daemon=True, name="mt5-monitor")
     t.start()
     log.info("Health monitor started (check every %ds).", CHECK_INTERVAL)
+    from mt5api import broker_clock
+
+    broker_clock.start()
     if wa.available():
         g = threading.Thread(target=_generation_loop, daemon=True, name="terminal-generation")
         g.start()

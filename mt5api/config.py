@@ -51,10 +51,10 @@ def _parse_args():
         default=None,
         dest="utc_offset",
         help="Broker's UTC offset as a duration string ('3h', '3h30m', "
-             "'-2h', '0', '90m'). MT5 returns timestamps in broker wall-clock "
-             "time disguised as unix UTC; this offset normalizes them to real "
-             "UTC on the wire. Negative values are allowed for west-of-UTC "
-             "brokers.",
+             "'-2h', '0', '90m'), or 'auto' to measure it from live ticks. "
+             "MT5 returns timestamps in broker wall-clock time disguised as "
+             "unix UTC; this offset normalizes them to real UTC on the wire. "
+             "Negative values are allowed for west-of-UTC brokers.",
     )
     parser.add_argument(
         "--mode",
@@ -347,7 +347,13 @@ COMPILE_INCLUDE_DIGESTS = _compile_setting(
 UTC_OFFSET_RAW = (
     _args.utc_offset if _args.utc_offset is not None else os.environ.get("UTC_OFFSET", "")
 )
-UTC_OFFSET_SECONDS = parse_duration_to_seconds(UTC_OFFSET_RAW)
+# `utc_offset: auto` makes mt5api.broker_clock measure the offset from live
+# ticks; UTC_OFFSET_SECONDS is then only the starting value (0) until a saved
+# or measured value replaces it. Read the live value through
+# broker_clock.offset_seconds(), never these constants.
+UTC_OFFSET_AUTO_VALUE = "auto"
+UTC_OFFSET_AUTO = str(UTC_OFFSET_RAW).strip().lower() == UTC_OFFSET_AUTO_VALUE
+UTC_OFFSET_SECONDS = 0 if UTC_OFFSET_AUTO else parse_duration_to_seconds(UTC_OFFSET_RAW)
 UTC_OFFSET_HOURS = UTC_OFFSET_SECONDS / 3600.0
 _BACKTEST_TIMEOUT_ENV = os.environ.get("BACKTEST_TIMEOUT")
 _BACKTEST_TIMEOUT_CONFIG = load_yaml_config().get("backtest_timeout")

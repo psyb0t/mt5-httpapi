@@ -168,6 +168,31 @@ def test_terminal_info_carries_the_broker_utc_offset(api_client, terminal):
     body = resp.get_json()
     assert "broker_utc_offset_hours" in body
     assert "broker_utc_offset_seconds" in body
+    assert body["broker_utc_offset_mode"] in ("static", "auto")
+    assert "broker_utc_offset_status" in body
+
+
+def test_terminal_info_reports_a_measured_auto_offset(api_client, terminal, monkeypatch):
+    from mt5api import broker_clock
+
+    monkeypatch.setattr(broker_clock, "UTC_OFFSET_AUTO", True)
+    monkeypatch.setattr(broker_clock, "_offset", 7200)
+    monkeypatch.setattr(broker_clock, "_status", broker_clock.STATUS_MEASURED)
+    monkeypatch.setattr(broker_clock, "_clock", broker_clock.CLOCK_HOST)
+    monkeypatch.setattr(broker_clock, "_measured_at", 1700000000.0)
+    terminal.set(
+        "terminal_info",
+        TerminalInfo(connected=True, community_account=False, trade_allowed=True),
+    )
+
+    body = api_client.get("/terminal").get_json()
+
+    assert body["broker_utc_offset_seconds"] == 7200
+    assert body["broker_utc_offset_hours"] == 2.0
+    assert body["broker_utc_offset_mode"] == "auto"
+    assert body["broker_utc_offset_status"] == "measured"
+    assert body["broker_utc_offset_clock"] == "host"
+    assert body["broker_utc_offset_measured_at"] == 1700000000.0
 
 
 def test_terminal_reports_503_when_mt5_is_down(api_client, patch_handler):

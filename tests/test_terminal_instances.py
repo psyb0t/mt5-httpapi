@@ -114,6 +114,21 @@ def test_config_helper_terminals_emits_instance(duplicate_terminals_config, monk
     ]
 
 
+def test_config_helper_passes_an_auto_utc_offset_through(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "terminals:\n  - broker: acme\n    account: demo\n    port: 6542\n    utc_offset: auto\n",
+        encoding="utf-8",
+    )
+    helper = _load_config_helper_module()
+    monkeypatch.setattr(helper, "CONFIG_PATH", str(config_path))
+    monkeypatch.setattr("sys.argv", ["config_helper.py", "terminals"])
+
+    helper.main()
+
+    assert capsys.readouterr().out.strip() == f"acme demo {helper.DEFAULT_INSTANCE} 6542 auto live"
+
+
 def test_config_helper_nginx_conf_includes_instance_routes(duplicate_terminals_config, tmp_path, monkeypatch):
     helper = _load_config_helper_module()
     outpath = tmp_path / "nginx.conf"

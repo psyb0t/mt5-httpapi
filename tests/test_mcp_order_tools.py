@@ -112,7 +112,7 @@ def server(request, monkeypatch):
 @pytest.fixture
 def orders(patch_handler, monkeypatch):
     recorder = patch_handler(orders_handler)
-    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", BROKER_OFFSET)
+    monkeypatch.setattr("mt5api.broker_clock._offset", BROKER_OFFSET)
     monkeypatch.setattr(orders_handler, "_recent_client_orders", {})
     done = OrderResult(
         mt5.TRADE_RETCODE_DONE, deal=1, order=TICKET, volume=0.1, price=1.3, comment=""

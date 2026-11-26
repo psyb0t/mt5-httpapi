@@ -1,6 +1,7 @@
 import MetaTrader5 as mt5
 from flask import jsonify
-from mt5api.config import MODE, UTC_OFFSET_HOURS, UTC_OFFSET_SECONDS
+from mt5api import broker_clock
+from mt5api.config import MODE
 from mt5api.mt5client import (
     ensure_initialized,
     m,
@@ -35,8 +36,7 @@ def get_terminal():
         return jsonify({"error": "MT5 not initialized"}), 503
     info = to_dict(m(mt5.terminal_info))
     if info is not None:
-        info["broker_utc_offset_hours"] = UTC_OFFSET_HOURS
-        info["broker_utc_offset_seconds"] = UTC_OFFSET_SECONDS
+        info.update(broker_clock.snapshot())
     return jsonify(info)
 
 

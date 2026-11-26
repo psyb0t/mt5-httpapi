@@ -90,7 +90,7 @@ terminals:
   - broker: mybroker        # 1. same broker key
     account: main           # 2. same account key
     port: 5001              # unique per terminal; stays inside Docker
-    utc_offset: "0"         # set this to the broker server's UTC offset
+    utc_offset: auto        # measure the broker server's UTC offset from live ticks
 ```
 
 The installer must therefore be named `mt5installers/mt5setup-mybroker.exe`

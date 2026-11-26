@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Measure each terminal's broker-clock offset from real UTC.
 
-config.yaml's per-terminal `utc_offset` is a STATIC number that mt5api
-subtracts from every broker timestamp (mt5client.broker_to_utc_seconds).
-Nothing in the stack is DST-aware, so a value that is right in August is
-one hour wrong after the autumn rollover. Re-run this then and update
-config.yaml with whatever it prints.
+config.yaml's per-terminal `utc_offset` is either a static number that
+mt5api subtracts from every broker timestamp (mt5client.broker_to_utc_seconds)
+or `auto`, which makes the API measure it itself (mt5api/broker_clock.py). A
+static value that is right in August is one hour wrong after the autumn
+rollover: re-run this then and update config.yaml, or switch to `auto`. For an
+`auto` terminal the `mode` column shows what the API last decided.
 
 Reads the latest tick and compares its broker timestamp to local UTC, so
 it only works while the market is open and the terminal can log in.
@@ -73,10 +74,14 @@ def measure(token, route):
     # The route already subtracts the CONFIGURED offset, so add it back to
     # recover the raw broker clock — otherwise this reports 0 once the config
     # is correct instead of confirming it.
-    configured = api(token, f"{route}/terminal").get("broker_utc_offset_seconds", 0)
+    terminal = api(token, f"{route}/terminal")
+    configured = terminal.get("broker_utc_offset_seconds", 0)
+    mode = terminal.get("broker_utc_offset_mode", "static")
+    if mode == "auto":
+        mode = f"auto/{terminal.get('broker_utc_offset_status', '?')}"
     raw = (broker_time + configured) - (before + after) / 2
     offset = round(raw / QUANTUM) * QUANTUM
-    return symbol, offset, raw, configured
+    return symbol, offset, raw, configured, mode
 
 
 def main():
@@ -92,10 +97,10 @@ def main():
                 routes.append(route)
 
     failures = 0
-    print(f"{'terminal':<32}{'symbol':<14}{'measured':>10}{'configured':>12}")
+    print(f"{'terminal':<32}{'symbol':<14}{'measured':>10}{'configured':>12}  mode")
     for route in routes:
         try:
-            symbol, offset, raw, configured = measure(token, route)
+            symbol, offset, raw, configured, mode = measure(token, route)
         except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
             failures += 1
             print(f"{route:<32}FAILED: {exc}")
@@ -103,7 +108,7 @@ def main():
         flag = "" if offset == configured else "   <-- MISMATCH"
         print(
             f"{route:<32}{symbol:<14}{offset / 3600:>+9.2f}h"
-            f"{configured / 3600:>+11.2f}h{flag}  (raw {raw:.1f}s)"
+            f"{configured / 3600:>+11.2f}h  {mode}{flag}  (raw {raw:.1f}s)"
         )
     return 1 if failures else 0
 

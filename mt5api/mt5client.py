@@ -24,9 +24,9 @@ from mt5api.config import (
     TERMINAL_DIR,
     TERMINAL_PATH,
     TIME_MAP,
-    UTC_OFFSET_SECONDS,
     load_yaml_config,
 )
+from mt5api import broker_clock
 from mt5api.logger import log
 
 # Field names whose values are unix-seconds in BROKER time and need to be
@@ -52,12 +52,12 @@ TIME_FIELDS_MS = frozenset({
 
 def broker_to_utc_seconds(broker_unix):
     """Convert a broker-time unix-seconds value into real UTC unix-seconds."""
-    return int(broker_unix) - UTC_OFFSET_SECONDS
+    return int(broker_unix) - broker_clock.offset_seconds()
 
 
 def broker_to_utc_ms(broker_unix_ms):
     """Convert a broker-time unix-milliseconds value into real UTC unix-ms."""
-    return int(broker_unix_ms) - UTC_OFFSET_SECONDS * 1000
+    return int(broker_unix_ms) - broker_clock.offset_seconds() * 1000
 
 
 def utc_seconds_to_broker_dt(utc_unix):
@@ -71,14 +71,14 @@ def utc_seconds_to_broker_dt(utc_unix):
     Using a tz-aware UTC datetime here is intentional — it just makes the
     clock face deterministic across systems with different LOCAL timezones.
     """
-    return datetime.fromtimestamp(int(utc_unix) + UTC_OFFSET_SECONDS, tz=timezone.utc)
+    return datetime.fromtimestamp(int(utc_unix) + broker_clock.offset_seconds(), tz=timezone.utc)
 
 
 def utc_seconds_to_broker_seconds(utc_unix):
     """Convert a real-UTC unix-seconds input into the broker-time unix seconds
     that order_send expects for `expiration`: the same shift
     utc_seconds_to_broker_dt applies to a datetime's clock face."""
-    return int(utc_unix) + UTC_OFFSET_SECONDS
+    return int(utc_unix) + broker_clock.offset_seconds()
 
 
 INIT_TIMEOUT = 60
@@ -668,16 +668,17 @@ def to_dict(named_tuple):
     if named_tuple is None:
         return None
     d = named_tuple._asdict()
-    if UTC_OFFSET_SECONDS == 0:
+    offset = broker_clock.offset_seconds()
+    if offset == 0:
         return d
     for k in TIME_FIELDS_SECONDS:
         v = d.get(k)
         if v:
-            d[k] = int(v) - UTC_OFFSET_SECONDS
+            d[k] = int(v) - offset
     for k in TIME_FIELDS_MS:
         v = d.get(k)
         if v:
-            d[k] = int(v) - UTC_OFFSET_SECONDS * 1000
+            d[k] = int(v) - offset * 1000
     return d
 
 

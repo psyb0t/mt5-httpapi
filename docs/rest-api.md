@@ -153,7 +153,12 @@ Some errors come from Flask or nginx instead and are HTML or plain text, not JSO
   "trade_allowed": true,
   "tradeapi_disabled": false,
   "broker_utc_offset_hours": 3.0,
-  "broker_utc_offset_seconds": 10800
+  "broker_utc_offset_seconds": 10800,
+  "broker_utc_offset_mode": "auto",
+  "broker_utc_offset_status": "measured",
+  "broker_utc_offset_measured_at": 1764171000.5,
+  "broker_utc_offset_clock": "host",
+  "broker_utc_offset_error": null
 }
 ```
 
@@ -216,22 +221,32 @@ No account logged in: 404 `{"error": "No account logged in"}`.
 
 MT5 has a notorious timezone gotcha: every timestamp it returns (tick `time`, rate `time`, position `time`, deal `time_msc`, etc.) is the **broker server's wall-clock time**, encoded as a unix integer. Looks like UTC, isn't. RoboForex/FTMO run UTC+3, TeleTrade UTC+2, so a tick captured at real UTC `22:57` reports as unix `01:57` (3h ahead) on RoboForex, `00:57` (2h ahead) on TeleTrade.
 
-The MT5 Python SDK doesn't expose `TimeCurrent()` / `TimeGMT()`, so the API can't auto-detect this. Instead, set `utc_offset` per terminal in `config.yaml`:
+Set `utc_offset` per terminal in `config.yaml`. `auto` is the recommended value for live terminals:
 
 ```yaml
 terminals:
   - broker: roboforex
     account: main
     port: 6542
-    utc_offset: "3h"
+    utc_offset: auto
 ```
 
-It takes `"3h"`, `"3h30m"`, `"90m"`, `"-2h"` (west of UTC) or a bare number, which counts as hours.
+Most brokers move their server clock twice a year, so a fixed number is an hour wrong for half the year. With `auto`, the terminal's API works the offset out itself:
+
+- It reads the latest tick of up to five busy, near-24h symbols the broker lists (EURUSD, GBPUSD, USDJPY, BTCUSD, XAUUSD, with any suffix) and compares each tick's broker time with the Docker host's clock, read from the `Date` header of the wickworks sidecar. The guest clock is used only when the sidecar does not answer, and `broker_utc_offset_clock` says which one was used.
+- It rounds to 30 minutes and accepts a reading only when the symbols agree, the freshest tick is within 5 minutes of a whole step (a stale tick from a closed market is not), and the value is within plus or minus 14 hours.
+- A change from a known value needs two readings in a row when it is exactly one hour (a daylight saving step) and three readings in a row for any other jump, so one odd reading never shifts every timestamp.
+- It measures every 5 minutes, and every minute until the first good reading, so a broker's clock change is picked up within minutes of the weekly open.
+- The accepted value is saved next to the terminal (`broker_utc_offset.json`) and used from the next start, so a restart while the market is closed keeps the right value. With nothing saved yet the offset is `0` until the first measurement.
+
+`auto` needs a live-mode terminal; a `mode: backtest` terminal has no SDK session to measure with and keeps `0`.
+
+A fixed value still works and always wins: `"3h"`, `"3h30m"`, `"90m"`, `"-2h"` (west of UTC) or a bare number, which counts as hours. `scripts/measure-broker-offsets.py` prints the value to set (see [installation and configuration](installation-and-configuration.md)).
 
 When set, the API:
 - Subtracts the offset from every outgoing timestamp (tick time, rate time, position/order/deal times, `_msc` fields), so responses are real UTC unix.
 - Adds the offset to incoming `from`/`to` query params and to an order's `expiration` (`POST /orders`, `PUT /orders/:ticket`), so callers always pass real UTC unix and get back real UTC unix.
 
-Inspect via `GET /terminal`: fields `broker_utc_offset_hours` (a float, `3.5` for 3h30m) and `broker_utc_offset_seconds` show what's in effect.
+Inspect via `GET /terminal`: `broker_utc_offset_hours` (a float, `3.5` for 3h30m) and `broker_utc_offset_seconds` show what is in effect. `broker_utc_offset_mode` is `static` or `auto`. For `auto`, `broker_utc_offset_status` is `measured`, `saved` (loaded from the last run, not measured yet) or `fallback` (nothing measured or saved, so `0`); `broker_utc_offset_measured_at` is the unix time of the last accepted measurement, `broker_utc_offset_clock` is `host` or `vm`, and `broker_utc_offset_error` holds the reason the last reading was not used, or `null`.
 
 If `utc_offset` is omitted (or `0`), the API passes raw broker timestamps through unchanged (pre-1.8 behavior).

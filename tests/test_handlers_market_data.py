@@ -55,7 +55,7 @@ def test_ticks_without_from_are_the_latest_ones_up_to_now(
     """copy_ticks_from reads forward from its start date, so asking it for
     |count| ticks from a fixed early date returned the OLDEST ticks the
     terminal holds."""
-    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", offset)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset)
     market.set("copy_ticks_range", _ticks(10, NOW_UTC, offset))
 
     resp = api_client.get(f"/symbols/{SYMBOL}/ticks?count={count}")

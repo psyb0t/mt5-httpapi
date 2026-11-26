@@ -31,4 +31,4 @@ Prefix: API.
 
 ## Time and units
 
-- **API16:** Broker timestamps are converted with the terminal's configured `utc_offset`; see [docs/rest-api.md](../../docs/rest-api.md) before changing any time field. `tests/test_broker_time.py` covers it.
+- **API16:** Broker timestamps are converted with the terminal's current offset, read through `broker_clock.offset_seconds()` (static, or measured when `utc_offset: auto`), never a module constant; see [docs/rest-api.md](../../docs/rest-api.md) before changing any time field. `tests/test_broker_time.py` covers it.

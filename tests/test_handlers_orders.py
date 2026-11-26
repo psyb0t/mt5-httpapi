@@ -411,7 +411,7 @@ TIME_TYPES = {
 
 @pytest.fixture
 def broker_three_hours_ahead(monkeypatch):
-    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", BROKER_OFFSET)
+    monkeypatch.setattr("mt5api.broker_clock._offset", BROKER_OFFSET)
 
 
 def _pending(**extra):
@@ -456,7 +456,7 @@ def test_an_expiring_order_sends_its_expiry_in_broker_time(
 
 
 def test_an_expiry_is_not_shifted_for_a_broker_on_utc(api_client, orders, monkeypatch):
-    monkeypatch.setattr(mt5client, "UTC_OFFSET_SECONDS", 0)
+    monkeypatch.setattr("mt5api.broker_clock._offset", 0)
     orders.set("order_send", _result())
 
     api_client.post("/orders", json=_pending(type_time="SPECIFIED", expiration=EXPIRY_UTC))

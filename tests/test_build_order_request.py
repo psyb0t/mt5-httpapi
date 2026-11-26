@@ -148,7 +148,7 @@ def test_a_stoplimit_that_is_not_a_price_is_refused(stoplimit):
     ("specified", mt5.ORDER_TIME_SPECIFIED),
 ])
 def test_expiration_is_shifted_into_broker_time(monkeypatch, type_time, mt5_type):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", BROKER_OFFSET)
+    monkeypatch.setattr("mt5api.broker_clock._offset", BROKER_OFFSET)
     req, err = build_order_request({"type_time": type_time, "expiration": EXPIRY_UTC})
     assert err is None
     assert req["type_time"] == mt5_type
@@ -157,7 +157,7 @@ def test_expiration_is_shifted_into_broker_time(monkeypatch, type_time, mt5_type
 
 @pytest.mark.parametrize("offset", [0, -18_000])
 def test_expiration_follows_the_configured_offset(monkeypatch, offset):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", offset)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset)
     req, err = build_order_request({"type_time": "SPECIFIED", "expiration": EXPIRY_UTC})
     assert err is None
     assert req["expiration"] == EXPIRY_UTC + offset
@@ -165,7 +165,7 @@ def test_expiration_follows_the_configured_offset(monkeypatch, offset):
 
 @pytest.mark.parametrize("expiration", [EXPIRY_UTC, str(EXPIRY_UTC), float(EXPIRY_UTC)])
 def test_expiration_accepts_whole_seconds_however_they_are_written(monkeypatch, expiration):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", 0)
+    monkeypatch.setattr("mt5api.broker_clock._offset", 0)
     req, err = build_order_request({"type_time": "SPECIFIED", "expiration": expiration})
     assert err is None
     assert req["expiration"] == EXPIRY_UTC

@@ -1,6 +1,6 @@
-"""Tests for broker-time ↔ real-UTC conversion. UTC_OFFSET_SECONDS is a
-module-level constant set at import; we monkeypatch it per-test to
-exercise different broker offsets without re-importing.
+"""Tests for broker-time ↔ real-UTC conversion. The offset lives in
+mt5api.broker_clock._offset; each test monkeypatches it to exercise a
+different broker offset without re-importing.
 """
 
 from datetime import datetime, timezone
@@ -21,7 +21,7 @@ import mt5api.mt5client as mc
     (-18000, 1699982000, 1700000000),
 ])
 def test_broker_to_utc_seconds(monkeypatch, offset_secs, broker_unix, expected_utc):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", offset_secs)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset_secs)
     assert mc.broker_to_utc_seconds(broker_unix) == expected_utc
 
 
@@ -31,7 +31,7 @@ def test_broker_to_utc_seconds(monkeypatch, offset_secs, broker_unix, expected_u
     (-18000, 1699982000456, 1700000000456),
 ])
 def test_broker_to_utc_ms(monkeypatch, offset_secs, broker_ms, expected_utc_ms):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", offset_secs)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset_secs)
     assert mc.broker_to_utc_ms(broker_ms) == expected_utc_ms
 
 
@@ -43,7 +43,7 @@ def test_broker_to_utc_ms(monkeypatch, offset_secs, broker_ms, expected_utc_ms):
     (-18000, 1700000000, datetime(2023, 11, 14, 17, 13, 20, tzinfo=timezone.utc)),
 ])
 def test_utc_seconds_to_broker_dt(monkeypatch, offset_secs, utc_unix, expected_clock_face):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", offset_secs)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset_secs)
     got = mc.utc_seconds_to_broker_dt(utc_unix)
     assert got == expected_clock_face
 
@@ -51,7 +51,7 @@ def test_utc_seconds_to_broker_dt(monkeypatch, offset_secs, utc_unix, expected_c
 def test_roundtrip(monkeypatch):
     """A broker timestamp converted to real UTC and back to a broker
     datetime should land on the same wall-clock face."""
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", 10800)
+    monkeypatch.setattr("mt5api.broker_clock._offset", 10800)
     broker_unix = 1700010800
     real_utc = mc.broker_to_utc_seconds(broker_unix)
     broker_dt = mc.utc_seconds_to_broker_dt(real_utc)

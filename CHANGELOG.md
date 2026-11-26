@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.36.0]: 2026-11-26
+
+### Added
+
+- **`utc_offset: auto` measures each terminal's broker UTC offset from live ticks and follows daylight saving changes.** A fixed offset is an hour wrong for half the year at brokers that change their server clock, and every timestamp, `from`/`to` query and order `expiration` shifts with it. With `auto`, the API compares the latest ticks of up to five busy near-24h symbols with the Docker host's clock (the wickworks `Date` header), rounds to 30 minutes, and accepts a reading only when the symbols agree, the ticks are fresh and the value is within plus or minus 14 hours. A one-hour change needs two readings in a row and any other jump three. It measures every 5 minutes and saves the accepted value next to the terminal for the next start. A fixed value keeps working and always wins. `GET /terminal` adds `broker_utc_offset_mode`, `broker_utc_offset_status`, `broker_utc_offset_measured_at`, `broker_utc_offset_clock` and `broker_utc_offset_error`, and `scripts/measure-broker-offsets.py` shows the mode. See [docs/rest-api.md](docs/rest-api.md#broker-time-vs-real-utc).
+- **The Windows VM sets its clock from the Docker host on every boot and every hour.** Windows' internet time sync could not resolve `time.windows.com` from the VM, so a drifting guest clock was never corrected. `start.bat` now turns that sync off and runs `scripts/sync_clock.py` right after `install.bat` and hourly from its status loop; it sets the guest clock from the wickworks `Date` header when it is more than 2 seconds off and logs every correction. The first boot on this version needs `make up` to copy the new script. See [docs/operations.md](docs/operations.md#the-guest-clock).
+
 ## [v4.35.1]: 2026-11-25
 
 ### Fixed

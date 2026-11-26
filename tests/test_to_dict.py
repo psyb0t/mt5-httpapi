@@ -1,5 +1,5 @@
 """Tests for to_dict — converts MT5 namedtuple structs into JSON-ready
-dicts and normalizes broker-time fields to real UTC using UTC_OFFSET_SECONDS.
+dicts and normalizes broker-time fields to real UTC using broker_clock's offset.
 """
 
 from collections import namedtuple
@@ -56,5 +56,5 @@ def test_to_dict_none_returns_none():
      "non-time fields never shifted"),
 ])
 def test_to_dict(monkeypatch, offset, fields_in, fields_out, desc):
-    monkeypatch.setattr(mc, "UTC_OFFSET_SECONDS", offset)
+    monkeypatch.setattr("mt5api.broker_clock._offset", offset)
     assert mc.to_dict(_make_nt(**fields_in)) == fields_out

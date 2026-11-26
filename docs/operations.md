@@ -20,6 +20,7 @@ The commands, ports, tunnels, locks, queues, and logs you need after the thing b
 - [Many terminals per VM: the desktop heap](#many-terminals-per-vm-the-desktop-heap)
 - [VM recreate and the wickworks sidecar](#vm-recreate-and-the-wickworks-sidecar)
 - [Auto-recovery](#auto-recovery)
+- [The guest clock](#the-guest-clock)
 - [Logs](#logs)
 
 ## Make targets
@@ -554,6 +555,16 @@ misconfiguration rather than a topology, and acting on it twice meant two jobs
 writing one counter and, before the fan-out, a hung bound that fired at half
 the configured grace. `config_helper.py` is where a duplicated port should be
 reported; a healthcheck's job is liveness.
+
+## The guest clock
+
+Windows' own internet time sync cannot resolve `time.windows.com` from the VM (Time-Service event 134 on every boot), so nothing used to correct the guest clock when it drifted, and every timestamp the API and the Windows event log wrote drifted with it. The guest now takes its time from the Docker host, which is expected to be NTP-synced:
+
+- Right after `install.bat`, before any terminal or API starts, `start.bat` turns Windows' internet sync off (`w32tm /config /syncfromflags:NO /update`) and runs [`scripts/sync_clock.py`](https://github.com/psyb0t/mt5-httpapi/blob/master/scripts/sync_clock.py). It reads the host's UTC time from the `Date` header of the wickworks sidecar (`wickworks.url`, default `http://20.20.20.1:8000/`) and sets the guest clock when it is more than 2 seconds off.
+- `start.bat`'s status loop runs it again every hour.
+- A correction is logged to `start.log` and `full.log` as `clock sync: guest clock was <n>s off; <before> -> <after>`. When the sidecar does not answer, the clock is left alone and `WARN: clock sync: no Date header from <url>` is logged. A clock problem never stops a boot.
+
+`utc_offset: auto` uses the same host clock for its measurements (see [Broker time vs real UTC](rest-api.md#broker-time-vs-real-utc)).
 
 ## Logs
 
