@@ -1,9 +1,13 @@
 name: pipeline
 
 # mt5-httpapi ships as a docker-compose / Windows-VM stack, not a single
-# pushable image, so there's no docker-image build in CI. Beyond running the
-# test suite, this pipeline validates the agent skill and OpenClaw plugin under
-# .agents/ on every push and publishes both to ClawHub on tag pushes.
+# pushable image, so there's no docker-image build in CI. Every branch push and
+# every non-draft pull request runs the test suite and the linters, and
+# validates the agent skill and OpenClaw plugin under .agents/. A push to
+# master then refreshes the badges. A v* tag does not rerun the checks: it
+# waits for that commit's master run to succeed, cuts the GitHub release from
+# the annotated tag message, publishes the skill and the plugin to ClawHub, and
+# refreshes the badges.
 on:
   push:
     branches:
@@ -20,6 +24,8 @@ on:
       - ready_for_review
       - converted_to_draft
 
+permissions: {}
+
 concurrency:
   # Keep the caller's group distinct from groups inside reusable workflows.
   # Identical groups deadlock when this workflow waits for a called workflow.
@@ -30,9 +36,12 @@ jobs:
   # `make test` is the full automated suite: offline unit/contract tests plus
   # the container-backed nginx and MCP-unifier tests. It is NOT the
   # python-package-workflow caller: that pipeline expects a dist/, and this
-  # repo builds no package.
+  # repo builds no package. It is not the code-workflow caller either: the
+  # suite pulls its base images from Docker Hub, and the shared workflow has no
+  # login step, so anonymous pulls from GitHub's shared runner IPs failed the
+  # v4.25.0 and v4.26.0 tag pipelines with 429.
   test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -56,7 +65,7 @@ jobs:
   # never wired into CI, so master reached a shfmt-dirty state without anything
   # noticing.
   lint:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -72,22 +81,53 @@ jobs:
       - name: Lint
         run: make lint
 
+  # A tag waits for the master run of its commit, which already tested it.
+  wait:
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      actions: read
+    uses: psyb0t/reusable-github-workflows/.github/workflows/wait-for-default-branch.yml@master
+
+  release:
+    needs: [wait]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    uses: psyb0t/reusable-github-workflows/.github/workflows/release-workflow.yml@master
+
   badges:
-    if: github.ref_name == github.event.repository.default_branch || startsWith(github.ref, 'refs/tags/')
+    needs: [test, lint, wait]
+    if: "always() && ((github.ref_name == github.event.repository.default_branch && needs.test.result == 'success' && needs.lint.result == 'success') || (startsWith(github.ref, 'refs/tags/') && needs.wait.result == 'success'))"
     permissions:
       contents: write
     uses: psyb0t/reusable-github-workflows/.github/workflows/create-badges.yml@master
 
-  # The mt5-httpapi skill (.agents/skills/mt5-httpapi) and the OpenClaw plugin
-  # (.agents/plugins/mt5-httpapi) on ClawHub. The reusable workflow validates
-  # both on every call and publishes only on a tag, after that validation. The
-  # skill version mirrors the tag; the plugin's comes from its package.json,
-  # which the release bumps. Gated on the suite so a failing tag never reaches
-  # ClawHub. Pull requests from forks are skipped: they get no CLAWHUB_TOKEN,
-  # and the skill dry-run needs it.
-  clawhub:
+  # The reusable workflow validates the mt5-httpapi skill
+  # (.agents/skills/mt5-httpapi) and the OpenClaw plugin
+  # (.agents/plugins/mt5-httpapi) on every call. This call is the branch and
+  # pull request check, gated on the suite so a broken change never reaches
+  # the publish call below. Pull requests from forks are skipped: they get no
+  # CLAWHUB_TOKEN, and the skill dry-run needs it.
+  clawhub-validate:
     needs: [test, lint]
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    permissions:
+      contents: read
+    uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-publish.yml@master
+    with:
+      publish_skills: true
+      publish_plugins: true
+      skill_names: '["mt5-httpapi"]'
+      plugin_names: '["mt5-httpapi"]'
+    secrets:
+      clawhub_token: ${{ secrets.CLAWHUB_TOKEN }}
+
+  # The skill version mirrors the tag; the plugin's comes from its
+  # package.json, which the release bumps. Publishes only on a tag, after the
+  # release exists.
+  publish-to-clawhub:
+    needs: [release]
+    if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
     uses: psyb0t/reusable-github-workflows/.github/workflows/clawhub-publish.yml@master

@@ -1,5 +1,7 @@
 # mt5-httpapi setup: boot the whole fucking contraption
 
+This is an operator reference for deploying and managing the stack. The skill itself only talks to a server the user already runs, so use these steps only when the user asks to set up or manage the stack. They run on the user's host: `git`, `make`, `docker compose`, `openssl`, and for tunnels `cloudflared`. `make clean` and `make distclean` delete VM data (see [Management](#management)).
+
 ## Requirements
 
 - Linux host with KVM enabled (`/dev/kvm`)
@@ -23,13 +25,13 @@ Dump your broker's installer in `mt5installers/` as `mt5setup-<broker>.exe`, the
 make up
 ```
 
-The first run downloads tiny11, installs and debloats Windows, reboots, installs Python and every MT5 terminal, reboots again, and finally starts the pile. Give the bastard 10 to 15 minutes. Later boots are usually around a minute.
+The first run downloads tiny11, installs and debloats Windows, reboots, installs Python and every MT5 terminal, reboots again, and finally starts the stack. Allow 10 to 15 minutes. Later boots are usually around a minute.
 
 ## Configuration
 
 ### `config/config.yaml`
 
-One file controls the whole mess: bearer token, broker credentials, terminals, and optional Tailscale/wickworks sidecars. Copy the example and fill in your shit.
+One file controls the whole mess: bearer token, broker credentials, terminals, and optional Tailscale and wickworks sidecars. Copy the example and fill in your shit. It holds broker credentials and the API token, so keep it out of git and do not print it.
 
 ```yaml
 # Bearer token for API auth. Empty string = no auth.
@@ -102,7 +104,7 @@ cp vms.yaml.example vms.yaml
 python3 scripts/config_helper.py generate_compose
 ```
 
-See [`docs/multi-vm-setup.md`](../../../../docs/multi-vm-setup.md) for field
+See [`docs/multi-vm-setup.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/multi-vm-setup.md) for field
 definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 
 > **`api_token` must be set to a strong random value before this server is reachable by anything other than localhost.** An empty `api_token` disables auth entirely: any process that can reach the listening socket can read account state, place orders, modify positions, and close trades. Generate one with `openssl rand -hex 32` (or equivalent) and keep it out of git. Do not skip this when planning to bind to a non-loopback interface, expose via a tunnel (see below), or run on a shared host.
@@ -111,7 +113,7 @@ definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 
 | Port | Service |
 | ---- | ------- |
-| 8006 | noVNC (VM desktop), override with `NOVNC_PORT`; published on every host interface with no password |
+| 8006 | noVNC (VM desktop), override with `NOVNC_PORT`; published on every host interface with no password, so it shows the logged-in terminals to anyone on the network |
 | 8888 | HTTP API entry (nginx, all terminals), override with `API_HOST_PORT`, bound to `127.0.0.1` |
 
 `MCP_LOG_LEVEL` controls the unified MCP service's log level. `NOVNC_PORT` and
@@ -119,7 +121,7 @@ definitions, NUMA pinning, storage mounts, and per-VM terminal assignment.
 keeps them in `.env`, also across a later plain `make up`, so compose publishes the same ports; per-terminal
 ports are not published on the host.
 
-Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress. Anyone on the network can reach it, so bind it to `127.0.0.1` or firewall it; see the Ports section of `docs/operations.md`.
+Per-terminal ports from `config.yaml`'s `terminals:` list stay container-internal. nginx routes `/<broker>/<account>/...` to the right terminal via docker DNS, and the mt5 container's iptables DNAT forwards into the Windows VM. URL scheme: `http://localhost:8888/<broker>/<account>/...`. noVNC is mainly useful for watching the install progress. Anyone on the network can reach it. In a single-VM `docker-compose.yml`, change its mapping to `"127.0.0.1:${NOVNC_PORT:-8006}:8006"` or firewall the port; see the Ports section of [`docs/operations.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/operations.md#ports).
 
 ### Backtest assets (optional)
 
@@ -145,9 +147,11 @@ make up          # start
 make down        # stop
 make logs        # tail logs
 make status      # check status
-make clean       # nuke the single-VM disk and state (keeps ISO; multi-VM storage paths stay)
-make distclean   # nuke everything including ISO
+make clean       # delete the single-VM disk and state (keeps the ISO; multi-VM storage paths stay)
+make distclean   # make clean, plus the Windows ISO
 ```
+
+`make clean` runs `sudo rm -rf data/storage data/shared data/metatrader5 data/oem run.log`, which removes the Windows disk, the terminals' installs and the copy of `config.yaml` in `data/shared`, and `make distclean` also removes `data/win.iso`. Run them only when the user asked for that exact cleanup on this checkout, and only after `make down`; the next `make up` reinstalls everything.
 
 ## Logs
 
@@ -161,44 +165,13 @@ Inside the VM shared directory (`data/shared/logs/`):
 
 ## Public access via Cloudflare Tunnel: lock this shit down
 
-> **Prerequisites, non-negotiable before exposing publicly:**
->
-> 1. **Set a strong `api_token`** in `config/config.yaml` (`openssl rand -hex 32` or equivalent). An empty `api_token` plus a public tunnel means anyone on the internet can read your account state, place trades, modify positions, and close positions on your real broker account. This combination is catastrophic.
-> 2. **Restrict access at Cloudflare** as well: use Cloudflare Access (Zero Trust) to require email/SSO/service-token auth on the public hostname so the tunnel is not a wide-open path even if the token leaks.
-> 3. **Use a demo broker account first** until you have verified the auth chain end-to-end from a separate network.
-> 4. **Rotate the token** after testing and treat it as a high-value secret; losing it is equivalent to losing the brokerage account password.
+A tunnel makes the API reachable from the internet, so everything in it is an operator decision. Do it only when the user asks. The full step-by-step guide is in the [Cloudflare Tunnel section of `docs/operations.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/operations.md#cloudflare-tunnel-optional). It installs `cloudflared` on the host with `sudo`, creates a tunnel and a DNS record in the user's Cloudflare account, copies the tunnel credentials file into `.data/cloudflared/` (a secret that stays out of git) and enables the `cloudflared` service in `docker-compose.yml`.
 
-To expose the API publicly without opening firewall ports:
+Prerequisites before exposing the API:
 
-```bash
-# Install cloudflared
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
-sudo install /tmp/cloudflared /usr/local/bin/cloudflared
+1. Set a strong `api_token` in `config/config.yaml` (`openssl rand -hex 32` or equivalent). An empty `api_token` plus a public tunnel lets anyone on the internet read account state, place trades and close positions on the real broker account.
+2. Restrict access at Cloudflare as well: use Cloudflare Access (Zero Trust) to require email, SSO or service-token auth on the public hostname, so the tunnel is not a wide-open path even if the token leaks.
+3. Use a demo broker account first, until the auth chain has been verified end to end from a separate network.
+4. Rotate the token after testing and treat it as a high-value secret: losing it is equivalent to losing the brokerage account password.
 
-# Authenticate and create tunnel
-cloudflared tunnel login
-cloudflared tunnel create mt5-httpapi
-
-# Register one subdomain; nginx routes per-terminal paths internally
-cloudflared tunnel route dns mt5-httpapi mt5-api.yourdomain.com
-
-# Put creds in .data/cloudflared/
-mkdir -p .data/cloudflared
-cp ~/.cloudflared/<tunnel-id>.json .data/cloudflared/creds.json
-```
-
-Create `.data/cloudflared/config.yml`:
-
-```yaml
-tunnel: <tunnel-id>
-credentials-file: /etc/cloudflared/creds.json
-
-ingress:
-  - hostname: mt5-api.yourdomain.com
-    service: http://nginx:80
-  - service: http_status:404
-```
-
-cloudflared points at the always-on nginx sidecar (`http://nginx:80`): a single backend covers every terminal. Hit `https://mt5-api.yourdomain.com/<broker>/<account>/...` from the public side. Then uncomment the `cloudflared` service in `docker-compose.yml` and run `make up`.
-
-Note: Cloudflare's free Universal SSL covers `*.yourdomain.com` but not deeper subdomains like `*.mt5.yourdomain.com`. Use subdomains directly under your root domain.
+Clients then use `https://<your-hostname>/<broker>/<account>/...` as `MT5_API_URL`. Cloudflare terminates TLS at the edge, and cloudflared reaches the always-on nginx sidecar (`http://nginx:80`) over the Docker bridge on the host.

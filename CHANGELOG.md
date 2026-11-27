@@ -6,6 +6,14 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.36.2]: 2026-11-27
+
+### Changed
+
+- **The agent skill now says where its data goes and groups every mutation under one confirmation rule.** Every request goes only to the host in `MT5_API_URL`, which receives the bearer token, queries, trade and terminal instructions and uploaded files, so any host other than loopback should use `https://`. Trades, live EA deployments, terminal control and file writes and deletes each need a fresh confirmation, and a retry needs another one. The skill frontmatter declares its network, shell and filesystem use. See [docs/mcp-and-agents.md](docs/mcp-and-agents.md).
+- **The skill's setup reference is marked as an operator guide.** It names the host commands it runs (`git`, `make`, `docker compose`, `openssl`, `cloudflared`) and applies only when the user asks to deploy or manage the stack. `make clean` and `make distclean` now say what they delete, the noVNC port note says it shows the logged-in terminals, and the Cloudflare Tunnel steps live only in [docs/operations.md](docs/operations.md#cloudflare-tunnel-optional), which the reference links to.
+- **The pipeline no longer reruns the tests on a release tag.** A tag waits for the `master` run of its commit, then cuts the GitHub release from the annotated tag message and publishes the skill and the plugin to ClawHub. Branch pushes and pull requests validate the skill and the plugin in a separate `clawhub-validate` job.
+
 ## [v4.36.1]: 2026-11-26
 
 ### Fixed

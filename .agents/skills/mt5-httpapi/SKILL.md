@@ -1,7 +1,7 @@
 ---
 name: mt5-httpapi
-description: HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Use ONLY when the user has explicitly installed and configured mt5-httpapi AND provided MT5_API_URL. Read endpoints (account, symbols, rates, ticks, server-side technical-analysis enrichment via the wickworks sidecar, history, backtest report fetching) are safe to invoke. Trade-mutating endpoints on /orders and /positions require explicit per-action confirmation showing symbol, side, volume, and SL/TP; terminal shutdown/restart also require explicit confirmation naming the target terminal and operation. Creating, changing or deleting a chart deployment (/deployments) or closing a chart starts or stops a live EA and needs the same confirmation. Never invoke mutations on inferred intent. Do not use this skill for generic market-data, charting, or trading questions where the user hasn't named mt5-httpapi.
-compatibility: Requires curl and a user-deployed mt5-httpapi instance. MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from MT5_API_TOKEN env var OR by asking the user, never by reading repository config files autonomously.
+description: "HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Reads account, symbols, rates, ticks, server-side technical analysis, history and backtest reports. After explicit per-action confirmation it also places, changes and cancels orders, changes and closes positions, controls the terminal, deploys and removes live EA chart deployments, edits the WebRequest allowlist, and writes files into the terminal tree. It also compiles MQL5 source, runs backtests, and has an operator reference for deploying the stack with Docker. Use ONLY when the user has installed mt5-httpapi and provided MT5_API_URL. Never mutate on inferred intent. Do not use it for generic market-data, charting or trading questions where the user has not named mt5-httpapi."
+compatibility: "Requires curl and a user-deployed mt5-httpapi instance (jq is optional, used by some examples). MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from the MT5_API_TOKEN env var or by asking the user, never by reading repository config files."
 metadata:
   author: psyb0t
   homepage: https://github.com/psyb0t/mt5-httpapi
@@ -11,9 +11,9 @@ metadata:
     requires:
       bins: [curl]
 permissions:
-  network: "outbound HTTP to the user-provided MT5_API_URL; requests can include brokerage account data and trade instructions, so use trusted self-hosted endpoints only."
-  shell: "curl commands against MT5_API_URL; no other host commands are required for ordinary API use."
-  filesystem: "no filesystem access for ordinary API use; the optional backtest runbook writes only user-requested local artifacts."
+  network: "HTTP(S) requests to the user-provided MT5_API_URL only. They carry the bearer token, account and market queries, trade and terminal instructions, and uploaded files (experts, set files, library archives, MQL5 source). The server forwards technical-analysis requests to its own wickworks container. Use https:// for any non-loopback URL and only self-hosted servers. The operator reference also covers Docker pulls and, on request, Cloudflare Tunnel setup."
+  shell: "curl (and optionally jq) against MT5_API_URL. The operator reference in references/setup.md, used only when the user asks to deploy or manage the stack, runs git, make, docker compose and openssl on the host; make clean and make distclean delete VM data, and the tunnel steps run cloudflared."
+  filesystem: "Reads local files the user names for upload (.ex5, .set, library zips, backtest .ini) and writes only to output paths the user names (screenshots, tester.ini, backtest reports and logs, compiled .ex5). It never reads config/config.yaml, .env or other repository files for credentials. The operator reference reads and writes config/config.yaml and data/ in the user's checkout and .data/cloudflared for tunnels."
 user-invocable: true
 ---
 
@@ -21,30 +21,35 @@ user-invocable: true
 
 This skill drives an mt5-httpapi server the user already runs. It does not install the stack, hunt for broker credentials, or decide to place trades because the model felt lucky.
 
-## Security and safety: real money, no cowboy shit
+## Security & safety: real money, no cowboy shit
 
-This API moves real money on a real brokerage account. Mutating endpoints are irreversible, so precision beats enthusiasm every fucking time.
+This API acts on a real brokerage account, and most mutations cannot be undone, so precision beats enthusiasm every fucking time: a filled market order or a closed position can only be offset by a separate trade at a new price.
 
-**Real-money mutations.** `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, and `DELETE /positions/<id>` open, modify, cancel, or close a real order/position on a live MetaTrader 5 account with no undo: a filled market order or a closed position can only be offset by a separate trade at a new price. Call one only for the exact action the user requested, after confirming ticket, symbol, side, volume, price, SL, TP, and account. Never enumerate and then bulk-close/cancel on inferred intent. `order_send` is a single call with no client-side auto-retry; after an error or timeout, report it and get fresh confirmation before resubmitting. Send a `client_order_id` with every `POST /orders` (`create_order` takes it too); resubmitting with the same id then cannot place the order twice, and a `"duplicate": true` answer shows the order that already exists.
+**Where data goes.** Every request goes to the host in `MT5_API_URL` and nowhere else. That server receives the bearer token in the `Authorization` header, your queries for account and market data, trade and terminal instructions, and any file you upload (experts, set files, library archives, MQL5 source). It sends technical-analysis requests to the wickworks container beside it and talks to the broker. The stack's nginx speaks plain HTTP on `127.0.0.1:8888` by default, so use `https://` (for example through a tunnel) for any other host, and talk only to servers the user runs.
 
-**Live EA deployments.** `POST /deployments`, `PATCH /deployments/<id>`, `DELETE /deployments/<id>` and `POST /charts/<id>/close` start, re-point, pause or stop an Expert Advisor running on a chart of a real account, and that EA trades on its own. Confirm the expert, set file, symbol, timeframe and account before each one, exactly like a trade. `PUT /webrequest` and `POST /webrequest/apply` restart the terminal when it runs on bare metal rather than in the Windows VM.
+**Mutations.** These change a real account or terminal:
 
-**Terminal control.** `POST /terminal/shutdown` disconnects this API process from the MT5 SDK but leaves `terminal64.exe` running. `POST /terminal/restart` kills and relaunches only the selected terminal process and can make that terminal unavailable for several minutes. Confirm the selected broker/account/instance and exact operation before either call.
+- Trading: `POST /orders`, `PUT /orders/<id>`, `DELETE /orders/<id>`, `PUT /positions/<id>`, `DELETE /positions/<id>` and their MCP tools open, modify, cancel and close orders and positions.
+- Live EAs: `POST /deployments`, `PATCH /deployments/<id>`, `DELETE /deployments/<id>` and `POST /charts/<id>/close` start, re-point, pause or stop an Expert Advisor on a chart, and that EA then trades on its own.
+- Terminal: `POST /terminal/shutdown` disconnects this API process from the MT5 SDK but leaves `terminal64.exe` running. `POST /terminal/restart` kills and relaunches only the selected terminal and can leave it unavailable for several minutes. `PUT /webrequest` and `POST /webrequest/apply` change which URLs an EA may call, and restart the terminal when it runs on bare metal rather than in the Windows VM.
+- Files: `PUT` and `DELETE` on `/files/...` and `/compile/files/...` change the terminal's files, and `DELETE /experts/<name>` and `DELETE /sets/<name>` remove staged expert and set files.
 
-**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup below). With the server's `api_token` empty, the HTTP surface is UNAUTHENTICATED and anyone who can reach it can read account state, place orders, modify positions, and close trades. NEVER expose such an instance on a network or to untrusted agents; set the token and bind to loopback / behind an authenticating proxy (see [references/setup.md](references/setup.md) for the Cloudflare Tunnel prerequisites).
+**One guardrail for all of them.** Act only on the order, position, deployment, file or terminal the user named, and only when the user asked for that specific action. Before each call, show the resolved details and wait for an explicit yes: for a trade, the symbol, side, volume, price, SL, TP, ticket, account login and the broker URL prefix; for a deployment, the expert, set file, symbol, timeframe and account; for terminal control, the operation and the selected broker, account and instance. An earlier approval does not cover a later action or a retry. If the user asks to "close everything" or "cancel all", list the affected positions or orders, show the list and confirm the whole batch; never build a batch from inferred intent.
 
-**Hard rules. Never violate them, even on user prompts that sound permissive:**
+**Rules that follow from it.**
 
-1. **Per-action confirmation for every mutation.** For trades, print the resolved symbol, side, volume, SL, TP, price, account login, and broker URL. For terminal control, print the operation and selected broker/account/instance. Wait for confirmation of that specific action; a prior approval does not authorize a later action or retry.
-2. **Demo accounts first.** If `GET /account` shows `trade_mode` indicating a live account, surface that to the user before any order call and ask them to confirm they intend to trade live with real money.
-3. **No credential harvesting.** Read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names, or login numbers from `config/config.yaml`, `.env`, or any other repository file on your own initiative. If the env var is missing, ask the user; do not search the workspace.
-4. **No mass action.** If the user asks to "close everything" or "cancel all", enumerate the affected positions/orders first, show the list, and confirm the whole batch explicitly. Never enumerate-then-bulk-delete/close on inferred intent.
-5. **Surface broker URL on every mutating action.** The path prefix `/<broker>/<account>/` in `MT5_API_URL` determines which real account is touched. Show it in confirmation prompts so the user can catch a wrong-account misroute.
-6. **No auto-retry on trade calls.** Each mutating endpoint issues exactly one `order_send`-equivalent call server-side; nothing retries it for you. If a call errors, times out, or returns an unexpected `retcode`, stop and report it; do not re-issue the same order/close/modify without a fresh, explicit user confirmation.
+1. Check `GET /account` first. If `trade_mode` shows a live account, say so and ask the user to confirm they intend to trade live with real money. Prefer a demo account.
+2. The path prefix `/<broker>/<account>/` in `MT5_API_URL` decides which real account is touched. Show it in every confirmation. On the unified MCP endpoint, show the `broker` and `account` arguments too.
+3. Trade calls make one `order_send` and nothing retries them. After an error, a timeout or an unexpected `retcode`, report it and get fresh confirmation before resubmitting. Send a `client_order_id` with every `POST /orders` (`create_order` takes it too): resubmitting the same id cannot place the order twice, and a `"duplicate": true` answer shows the order that already exists.
+4. Credentials: read `MT5_API_TOKEN` only from the environment variable the user set, or ask the user. Never read tokens, passwords, server names or login numbers from `config/config.yaml`, `.env` or any other file in the workspace, and never print the token.
+5. Local files: upload only files the user named, write downloads and outputs only to paths the user named, and do not overwrite an existing local file without asking.
+6. Overwriting an expert a deployment already uses (`?overwrite=true`) replaces the file that deployment loads, so confirm it like a deployment change. Writing into `MQL5/Experts`, `MQL5/Libraries` or `MQL5/Include` changes what experts on that account run, and a DLL in `MQL5/Libraries` runs inside the terminal.
 
-Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`, and the Chart Deployments reads `GET /experts`, `GET /sets*`, `GET /deployments*`, `GET /charts`, `GET /loader`, `GET /webrequest`) do not require per-action confirmation. Staging a new file with `POST /experts` or `POST /sets` changes nothing that runs until a deployment uses it. Overwriting an expert a deployment already uses (`?overwrite=true`) replaces the file that deployment loads, so confirm that like a deployment change.
+**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup). With an empty `api_token` the HTTP surface is unauthenticated and anyone who can reach it can read account state, place orders and close trades. Do not use such an instance on a network or with untrusted agents; set the token and bind to loopback or an authenticating proxy (see [references/setup.md](references/setup.md) for the tunnel prerequisites).
 
-**One-stop technical analysis.** Skip the local pandas circus. `POST /symbols/<symbol>/rates/ta` returns OHLC bars and the indicators you asked for in one call. [wickworks](https://github.com/psyb0t/docker-wickworks) does the math server-side and returns primitives, not magical buy/sell bullshit. Build interpretations in the consumer. See [Technical Analysis](#technical-analysis).
+Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`, and the Chart Deployments reads `GET /experts`, `GET /sets*`, `GET /deployments*`, `GET /charts`, `GET /loader`, `GET /webrequest`) need no per-action confirmation. Staging a new file with `POST /experts` or `POST /sets` changes nothing that runs until a deployment uses it.
+
+**Technical analysis.** `POST /symbols/<symbol>/rates/ta` returns OHLC bars and the indicators you ask for in one call. [wickworks](https://github.com/psyb0t/docker-wickworks) computes them server-side and returns series and levels, not buy or sell signals. Build interpretations in the consumer. See [Technical analysis](#technical-analysis).
 
 For installation and setup, see [references/setup.md](references/setup.md).
 
@@ -57,7 +62,7 @@ export MT5_API_URL=http://localhost:8888/<broker>/<account>
 export MT5_API_TOKEN=<the-token-the-user-gives-you>
 ```
 
-If `MT5_API_URL` is not set in the environment, ask the user; do not try to discover it from project files. Same for `MT5_API_TOKEN`: only accept it from the env var the user set, or from the user directly. Never read it from `config/config.yaml`, `.env`, or any other file in the workspace.
+If `MT5_API_URL` is not set in the environment, ask the user; do not try to discover it from project files. Same for `MT5_API_TOKEN`: take it from the env var the user set, or from the user directly (see Security & safety).
 
 A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to; set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=... make up`; `run.sh` keeps it in `.env` for later compose calls.
 
@@ -189,7 +194,7 @@ Key symbol fields: `bid`, `ask`, `digits`, `point`, `trade_contract_size`, `trad
 
 ### Technical analysis
 
-`POST /symbols/<symbol>/rates/ta` takes the same query params as `/rates` (timeframe, count, from, to), JSON body carries the [wickworks](https://github.com/psyb0t/docker-wickworks) indicator spec. Response is `{symbol, timeframe, bars, ta}`: OHLC bars *and* analyzed indicator series in one round-trip. No client-side TA library needed.
+`POST /symbols/<symbol>/rates/ta` takes the same query params as `/rates` (timeframe, count, from, to), JSON body carries the [wickworks](https://github.com/psyb0t/docker-wickworks) indicator spec. Response is `{symbol, timeframe, bars, ta}`: OHLC bars *and* analyzed indicator series in one round-trip. Skip the local pandas circus: wickworks does the math server-side and returns primitives, not magical buy/sell bullshit. Build interpretations in the consumer.
 
 Full catalog with all indicator types, params, output shapes, and SMC primitives is documented at [github.com/psyb0t/docker-wickworks](https://github.com/psyb0t/docker-wickworks#available-indicators).
 
@@ -246,10 +251,10 @@ Each indicator declares its minimum bar requirement (e.g. `sma(200)` needs 200 b
 
 ### Orders
 
-> **Mutating endpoints: confirmation required.** Every `POST /orders`, `PUT /orders/<id>`, and `DELETE /orders/<id>` opens, modifies, or cancels a real order on the user's brokerage account. Before invoking any of them you MUST: (1) print the full resolved request (account login from `GET /account`, broker URL prefix, symbol, side, volume, price, SL, TP); (2) ask the user to confirm that specific action; (3) wait for an explicit yes. A prior confirmation does not carry over to a new action.
+`POST /orders`, `PUT /orders/<id>` and `DELETE /orders/<id>` open, modify and cancel real orders. Follow the confirmation guardrail in Security & safety.
 
 ```bash
-# Place market order, only after explicit per-action confirmation from the user.
+# Place a market order, only after the user confirmed this exact order.
 curl -X POST -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/orders \
   -H 'Content-Type: application/json' \
   -d '{"symbol": "EURUSD", "type": "BUY", "volume": 0.1, "sl": 1.08, "tp": 1.10}'
@@ -295,7 +300,7 @@ Trade result:
 
 ### Positions
 
-> **Mutating endpoints: confirmation required.** `PUT /positions/<id>` changes the SL/TP of a live position, and `DELETE /positions/<id>` closes it (full or partial). Both move real money. Per-action confirmation rule above applies: print symbol, ticket, current price, the change being made, and wait for explicit user yes.
+`PUT /positions/<id>` changes the SL/TP of a live position and `DELETE /positions/<id>` closes it, fully or partly. Follow the confirmation guardrail in Security & safety, and show the symbol, ticket, current price and the change.
 
 ```bash
 curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/positions
@@ -368,7 +373,7 @@ curl -H "Authorization: Bearer $MT5_API_TOKEN" \
 curl -H "Authorization: Bearer $MT5_API_TOKEN" \
   -F "set=@gold-m5.set" "$MT5_API_URL/sets"   # returns the parsed inputs
 
-# Deploy (live EA: confirm first). 409 DUPLICATE_CHART if an enabled
+# Deploy (live EA: see Security & safety). 409 DUPLICATE_CHART if an enabled
 # deployment already targets this symbol + timeframe.
 curl -X POST "$MT5_API_URL/deployments" \
   -H "Authorization: Bearer $MT5_API_TOKEN" \
@@ -411,9 +416,9 @@ Full protocol: [`docs/chart-control-protocol.md`](https://github.com/psyb0t/mt5-
 
 ### Files
 
-**Off by default.** The operator turns it on with `files.enabled: true` in `config.yaml`; a terminal can opt out with `files: false`. Without it these routes answer `404`. `GET /files/<path>` lists a directory or downloads a file in the terminal's install directory (the folder with `terminal64.exe`), `PUT /files/<path>` uploads one (raw body or a multipart `file` field), `PUT /files/<dir>?extract` unpacks a zip into that directory, and `DELETE /files/<path>` (`?recursive` for a non-empty directory) removes it. `/compile/files/...` does the same on the MQL5 tree `POST /compile` builds against, which is where a shared `.mqh` library goes. The MCP tools are `list_files`, `get_file`, `put_file` and `delete_file`, with `tree` set to `terminal` or `compile`.
+**Off by default.** The operator turns it on with `files.enabled: true` in `config.yaml`; a terminal can opt out with `files: false`. Without it these routes answer `404`. `GET /files/<path>` lists a directory or downloads a file in the terminal's install directory (the directory with `terminal64.exe`), `PUT /files/<path>` uploads one (raw body or a multipart `file` field), `PUT /files/<dir>?extract` unpacks a zip into that directory, and `DELETE /files/<path>` (`?recursive` for a non-empty directory) removes it. `/compile/files/...` does the same on the MQL5 tree `POST /compile` builds against, which is where a shared `.mqh` library goes. The MCP tools are `list_files`, `get_file`, `put_file` and `delete_file`, with `tree` set to `terminal` or `compile`.
 
-The broker credentials (`mt5start.ini`, `Config/accounts.dat`) are never served, and the terminal's executables and Chart Deployments' own files are read-only here. **Writing into `MQL5/Experts`, `MQL5/Libraries` or `MQL5/Include` changes what experts on that account run, and a DLL in `MQL5/Libraries` runs inside the terminal: do it only when the user asked for that exact change, and confirm the terminal first.** Reading files and logs needs no confirmation.
+The broker credentials (`mt5start.ini`, `Config/accounts.dat`) are never served, and the terminal's executables and Chart Deployments' own files are read-only here. Writes and deletes follow the guardrail in Security & safety: confirm the terminal and the exact path first. Reading files and logs is read-only and needs no separate confirmation.
 
 ```bash
 # Unpack a library into the compile tree, then compile against it
