@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/): patch = bug fixe
 
 ---
 
+## [v4.36.3]: 2026-11-27
+
+### Changed
+
+- **The agent skill now covers only calling a running mt5-httpapi server.** It describes the REST API, the MCP interface, the pre-trade checks and position sizing for a server the user already runs. The operator setup guide is out of the skill: `references/setup.md` is removed, and installing, configuring and managing the stack stay in [docs/installation-and-configuration.md](docs/installation-and-configuration.md) and [docs/operations.md](docs/operations.md).
+- **The plugin manifests move to 4.36.3.** The Codex manifest and the OpenClaw plugin carry the new version.
+
 ## [v4.36.2]: 2026-11-27
 
 ### Changed

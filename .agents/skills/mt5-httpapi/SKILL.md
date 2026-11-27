@@ -1,6 +1,6 @@
 ---
 name: mt5-httpapi
-description: "HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Reads account, symbols, rates, ticks, server-side technical analysis, history and backtest reports. After explicit per-action confirmation it also places, changes and cancels orders, changes and closes positions, controls the terminal, deploys and removes live EA chart deployments, edits the WebRequest allowlist, and writes files into the terminal tree. It also compiles MQL5 source, runs backtests, and has an operator reference for deploying the stack with Docker. Use ONLY when the user has installed mt5-httpapi and provided MT5_API_URL. Never mutate on inferred intent. Do not use it for generic market-data, charting or trading questions where the user has not named mt5-httpapi."
+description: "HTTP client for a user-deployed mt5-httpapi MetaTrader 5 bridge. Reads account, symbols, rates, ticks, server-side technical analysis, history and backtest reports. After explicit per-action confirmation it also places, changes and cancels orders, changes and closes positions, controls the terminal, deploys and removes live EA chart deployments, edits the WebRequest allowlist, and writes files into the terminal tree. It also compiles MQL5 source and runs backtests. Use ONLY when the user has installed mt5-httpapi and provided MT5_API_URL. Never mutate on inferred intent. Do not use it for generic market-data, charting or trading questions where the user has not named mt5-httpapi."
 compatibility: "Requires curl and a user-deployed mt5-httpapi instance (jq is optional, used by some examples). MT5_API_URL env var must be set by the user. MT5_API_TOKEN is required whenever the server has auth configured; the agent must obtain it from the MT5_API_TOKEN env var or by asking the user, never by reading repository config files."
 metadata:
   author: psyb0t
@@ -11,9 +11,9 @@ metadata:
     requires:
       bins: [curl]
 permissions:
-  network: "HTTP(S) requests to the user-provided MT5_API_URL only. They carry the bearer token, account and market queries, trade and terminal instructions, and uploaded files (experts, set files, library archives, MQL5 source). The server forwards technical-analysis requests to its own wickworks container. Use https:// for any non-loopback URL and only self-hosted servers. The operator reference also covers Docker pulls and, on request, Cloudflare Tunnel setup."
-  shell: "curl (and optionally jq) against MT5_API_URL. The operator reference in references/setup.md, used only when the user asks to deploy or manage the stack, runs git, make, docker compose and openssl on the host; make clean and make distclean delete VM data, and the tunnel steps run cloudflared."
-  filesystem: "Reads local files the user names for upload (.ex5, .set, library zips, backtest .ini) and writes only to output paths the user names (screenshots, tester.ini, backtest reports and logs, compiled .ex5). It never reads config/config.yaml, .env or other repository files for credentials. The operator reference reads and writes config/config.yaml and data/ in the user's checkout and .data/cloudflared for tunnels."
+  network: "HTTP(S) requests to the user-provided MT5_API_URL only. They carry the bearer token, account and market queries, trade and terminal instructions, and uploaded files (experts, set files, library archives, MQL5 source). The server forwards technical-analysis requests to its own wickworks container. Use https:// for any non-loopback URL and only self-hosted servers."
+  shell: "curl (and optionally jq) against MT5_API_URL."
+  filesystem: "Reads local files the user names for upload (.ex5, .set, library zips, backtest .ini) and writes only to output paths the user names (screenshots, tester.ini, backtest reports and logs, compiled .ex5). It never reads config/config.yaml, .env or other repository files for credentials."
 user-invocable: true
 ---
 
@@ -45,17 +45,15 @@ This API acts on a real brokerage account, and most mutations cannot be undone, 
 5. Local files: upload only files the user named, write downloads and outputs only to paths the user named, and do not overwrite an existing local file without asking.
 6. Overwriting an expert a deployment already uses (`?overwrite=true`) replaces the file that deployment loads, so confirm it like a deployment change. Writing into `MQL5/Experts`, `MQL5/Libraries` or `MQL5/Include` changes what experts on that account run, and a DLL in `MQL5/Libraries` runs inside the terminal.
 
-**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup). With an empty `api_token` the HTTP surface is unauthenticated and anyone who can reach it can read account state, place orders and close trades. Do not use such an instance on a network or with untrusted agents; set the token and bind to loopback or an authenticating proxy (see [references/setup.md](references/setup.md) for the tunnel prerequisites).
+**No auth when `MT5_API_TOKEN`/`api_token` is unset.** Auth is optional server-side (see Setup). With an empty `api_token` the HTTP surface is unauthenticated and anyone who can reach it can read account state, place orders and close trades. Do not use such an instance on a network or with untrusted agents; tell the user to set a token first.
 
 Read-only endpoints (`GET /account`, `GET /symbols/*`, `GET /symbols/*/rates`, `GET /symbols/*/ticks`, `POST /symbols/*/rates/ta`, `GET /positions`, `GET /orders`, `GET /history/*`, `GET /backtest/*`, `GET /terminal`, `GET /ping`, and the Chart Deployments reads `GET /experts`, `GET /sets*`, `GET /deployments*`, `GET /charts`, `GET /loader`, `GET /webrequest`) need no per-action confirmation. Staging a new file with `POST /experts` or `POST /sets` changes nothing that runs until a deployment uses it.
 
 **Technical analysis.** `POST /symbols/<symbol>/rates/ta` returns OHLC bars and the indicators you ask for in one call. [wickworks](https://github.com/psyb0t/docker-wickworks) computes them server-side and returns series and levels, not buy or sell signals. Build interpretations in the consumer. See [Technical analysis](#technical-analysis).
 
-For installation and setup, see [references/setup.md](references/setup.md).
-
 ## Setup
 
-The user must have a running mt5-httpapi instance and must provide:
+mt5-httpapi must already be installed and running; for that, see the docs at https://psyb0t.github.io/mt5-httpapi/. The user provides the connection values in the environment:
 
 ```bash
 export MT5_API_URL=http://localhost:8888/<broker>/<account>
@@ -64,7 +62,7 @@ export MT5_API_TOKEN=<the-token-the-user-gives-you>
 
 If `MT5_API_URL` is not set in the environment, ask the user; do not try to discover it from project files. Same for `MT5_API_TOKEN`: take it from the env var the user set, or from the user directly (see Security & safety).
 
-A single nginx sidecar (default `127.0.0.1:8888`) fronts every terminal. The path prefix `/<broker>/<account>/` (matching an entry in `config/config.yaml`'s `terminals` list) selects which terminal you talk to; set `MT5_API_URL` to the full base including that prefix. Override the host port with `API_HOST_PORT=... make up`; `run.sh` keeps it in `.env` for later compose calls.
+One entry point fronts every terminal. The path prefix `/<broker>/<account>/` selects which terminal you talk to; `MT5_API_URL` is the full base including that prefix.
 
 **Verify:** `curl -H "Authorization: Bearer $MT5_API_TOKEN" $MT5_API_URL/ping`: `.status` should be `"ok"` and `.mode` `"live"` for the normal API process (the reply also carries `sdk_threads_alive` and `sdk_oldest_alive_s`). If not, the API isn't up yet (it may still be initializing; it retries in the background).
 
@@ -76,7 +74,7 @@ Each terminal also speaks [Model Context Protocol](https://modelcontextprotocol.
 
 On terminals with [Chart Deployments](#chart-deployments) enabled, MCP also has the chartctl tools: `upload_expert`, `list_experts`, `delete_expert`, `upload_set`, `list_sets`, `get_set`, `delete_set`, `create_deployment`, `list_deployments`, `get_deployment`, `update_deployment`, `delete_deployment`, `reconcile_deployments`, `list_charts`, `get_loader`, `screenshot_chart`, `close_chart`, `get_webrequest`, `set_webrequest`, `apply_webrequest`, `verify_webrequest`. The upload tools take the file as base64 (`upload_set` also takes plain text) and send the multipart form for you. `screenshot_chart` returns the PNG as image content you can look at. On terminals with the [file API](#files) enabled, `list_files`, `get_file`, `put_file` and `delete_file` read and write files in the terminal's install directory or the compile tree.
 
-Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect either directly at `$MT5_API_URL/mcp/`, or via the [`@psyb0t/mt5-httpapi`](https://github.com/psyb0t/mt5-httpapi/tree/master/.agents/plugins/mt5-httpapi) OpenClaw plugin for stdio-only MCP clients. The Claude Code plugin registers the unified server (`<api_url>/mcp/`) itself; its `api_url` setting is the server root (`http://localhost:8888`) and feeds only that MCP server, while `MT5_API_URL` stays the terminal path the `curl` calls use. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account; see Security & safety above.
+Same bearer token as the REST API (`MT5_API_TOKEN`, empty = auth disabled). Connect directly at `$MT5_API_URL/mcp/`. The order/position tools (`create_order`, `cancel_order`, `close_position`, …) are irreversible on a live account; see Security & safety above.
 
 A per-terminal `/mcp` is bound to that one terminal, because an MCP session's tool catalog is fixed and has no per-call slot for naming an account. Pointing a client at the server ROOT instead (`http://<host>:8888/mcp/`, no broker/account prefix) gives the same tools with `broker` and `account` parameters, so one session reaches every terminal. Call `list_terminals` first to get the configured brokers/accounts, each process mode (`live` or `backtest`), and whether Chart Deployments (`chartctl`) and the file API (`files`) are enabled for each; the mode does not identify whether the brokerage account itself is live or demo, so check `GET /account` before trading. An unconfigured pair is refused with the valid list rather than routed to a plausible-looking wrong account. Both forms are available at once, and the URL alone decides which one a client gets. **When acting through the unified endpoint, confirm the `broker`/`account` alongside the trade parameters: one wrong argument places a real order on a different real account.**
 
@@ -125,21 +123,7 @@ Key fields on `/terminal`: `connected`, `trade_allowed`, `build`, `company`, `br
 
 ### Broker time vs real UTC
 
-MT5 returns timestamps in the **broker server's wall-clock time** disguised as unix integers (RoboForex/FTMO = UTC+3, TeleTrade = UTC+2, etc.). The API normalizes this when `utc_offset` is set per terminal in `config/config.yaml`:
-
-```yaml
-terminals:
-  - broker: roboforex
-    account: main
-    port: 6542
-    utc_offset: "3h"
-```
-
-(`port` is container-internal: only nginx and the mt5 container talk to it.)
-
-Forms accepted: `auto` (the API measures the offset from live ticks and follows daylight saving changes; `GET /terminal` shows `broker_utc_offset_mode` and `broker_utc_offset_status`), or a fixed `"3h"`, `"3h30m"`, `"-2h"`, `"90m"`, or a bare number (interpreted as hours).
-
-When set, every outgoing time field (tick `time`, rate `time`, position/order/deal `time*` and `time_*_msc`) is real UTC unix, and every incoming `from`/`to` query param is interpreted as real UTC unix. If unset or `0`, raw broker timestamps pass through (legacy behavior). Check `GET /terminal` → `broker_utc_offset_hours` to confirm.
+MT5 returns timestamps in the **broker server's wall-clock time** disguised as unix integers (RoboForex/FTMO = UTC+3, TeleTrade = UTC+2, etc.). When the operator has set a UTC offset for the terminal (fixed, or `auto`, where the API measures it from live ticks and follows daylight saving changes; `GET /terminal` shows `broker_utc_offset_mode` and `broker_utc_offset_status`), every outgoing time field (tick `time`, rate `time`, position/order/deal `time*` and `time_*_msc`) is real UTC unix, and every incoming `from`/`to` query param is interpreted as real UTC unix. If no offset is set or it is `0`, raw broker timestamps pass through (legacy behavior). Check `GET /terminal` → `broker_utc_offset_hours` to confirm.
 
 ### Account
 
@@ -342,7 +326,7 @@ Deal fields: `type` (0=buy, 1=sell), `entry` (0=opening, 1=closing), `profit` (0
 
 Deploy Expert Advisors to charts over HTTP. No RDP, no terminal restart. Stage `.ex5` + `.set` files, declare deployments, and a resident loader EA inside the terminal reconciles charts to match. The API holds desired state; the loader reports observed truth. A deployment only flips to `running` once the loader confirms the expert is live on a chart.
 
-**Off by default.** The operator turns it on with `chartctl.enabled: true` in `config.yaml`, live-mode terminals only, and any terminal can opt out with `chartctl: false`. On a terminal without it these routes answer `404` and the per-terminal MCP endpoint has no chartctl tools; on the unified MCP endpoint `list_terminals` shows `chartctl` per terminal. Once enabled, the loader attaches itself on boot through `[StartUp] Expert=`, so there is nothing to attach by hand. If `GET /loader` says `alive: false`, nothing will deploy; tell the user instead of retrying.
+**Off unless the operator enabled it** for the terminal (live-mode terminals only). On a terminal without it these routes answer `404` and the per-terminal MCP endpoint has no chartctl tools; on the unified MCP endpoint `list_terminals` shows `chartctl` per terminal. Once enabled, the loader attaches itself on boot through `[StartUp] Expert=`, so there is nothing to attach by hand. If `GET /loader` says `alive: false`, nothing will deploy; tell the user instead of retrying.
 
 Endpoint reference:
 
@@ -412,11 +396,11 @@ curl -X PUT "$MT5_API_URL/webrequest" \
   -d '{"add":["https://api.example.com"]}'
 ```
 
-Full protocol: [`docs/chart-control-protocol.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/chart-control-protocol.md). Operator guide: [`docs/chart-deployments.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/chart-deployments.md).
+Full protocol: [`docs/chart-control-protocol.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/chart-control-protocol.md).
 
 ### Files
 
-**Off by default.** The operator turns it on with `files.enabled: true` in `config.yaml`; a terminal can opt out with `files: false`. Without it these routes answer `404`. `GET /files/<path>` lists a directory or downloads a file in the terminal's install directory (the directory with `terminal64.exe`), `PUT /files/<path>` uploads one (raw body or a multipart `file` field), `PUT /files/<dir>?extract` unpacks a zip into that directory, and `DELETE /files/<path>` (`?recursive` for a non-empty directory) removes it. `/compile/files/...` does the same on the MQL5 tree `POST /compile` builds against, which is where a shared `.mqh` library goes. The MCP tools are `list_files`, `get_file`, `put_file` and `delete_file`, with `tree` set to `terminal` or `compile`.
+**Off unless the operator enabled it** for the terminal. Without it these routes answer `404`. `GET /files/<path>` lists a directory or downloads a file in the terminal's install directory (the directory with `terminal64.exe`), `PUT /files/<path>` uploads one (raw body or a multipart `file` field), `PUT /files/<dir>?extract` unpacks a zip into that directory, and `DELETE /files/<path>` (`?recursive` for a non-empty directory) removes it. `/compile/files/...` does the same on the MQL5 tree `POST /compile` builds against, which is where a shared `.mqh` library goes. The MCP tools are `list_files`, `get_file`, `put_file` and `delete_file`, with `tree` set to `terminal` or `compile`.
 
 The broker credentials (`mt5start.ini`, `Config/accounts.dat`) are never served, and the terminal's executables and Chart Deployments' own files are read-only here. Writes and deletes follow the guardrail in Security & safety: confirm the terminal and the exact path first. Reading files and logs is read-only and needs no separate confirmation.
 
@@ -426,8 +410,6 @@ curl -X PUT -H "Authorization: Bearer $MT5_API_TOKEN" --data-binary @MyLib.zip \
   "$MT5_API_URL/compile/files/Include/MyLib?extract"
 # source: #include <MyLib/Signals.mqh>
 ```
-
-Operator guide: [`docs/files.md`](https://github.com/psyb0t/mt5-httpapi/blob/master/docs/files.md).
 
 ### Compile
 
@@ -446,8 +428,8 @@ curl -sS -X POST -H "Authorization: Bearer $MT5_API_TOKEN" \
 Run MT5 Strategy Tester via the API. Two-stage workflow: build the INI from a
 JSON spec, then submit it together with the `.ex5` (and optional `.set`) for
 async execution. Endpoints exist on every terminal but only run on a
-`mode: backtest` terminal in `config.yaml`. MT5 is single-instance per
-portable data dir, so a tester subprocess collides with a `mode: live`
+terminal the operator set to backtest mode. MT5 is single-instance per
+portable data dir, so a tester subprocess collides with a live-mode
 terminal that already owns the directory and exits silently. The broker/account
 in the URL determines which credentials are injected into the run's `[Common]`
 section. Only one tester runs at a time per API process; extra submissions
@@ -455,8 +437,8 @@ queue. Responses below use snake_case field names. The old camelCase names
 still show up alongside them in responses, and request bodies still accept
 either one, but the camelCase names are deprecated and go away in v5.0.0.
 
-The expert and set file can be uploaded inline OR referenced by name from a
-host-managed pool mounted at `assets/experts/*.ex5` and `assets/sets/*.set`.
+The expert and set file can be uploaded inline OR referenced by name from the
+server's host-managed pool of experts (`.ex5`) and sets (`.set`).
 
 ```bash
 # 1. Build INI: NZDJPY M15, last 5 years, open prices only, 5 ms latency.
@@ -562,8 +544,8 @@ true:
 
 Before submitting a backtest that references host-managed files:
 
-1. Verify the requested filenames exist on disk exactly as named under
-   `assets/experts/` and `assets/sets/`.
+1. Use the filenames exactly as the user gave them; a name the server does
+   not have fails the submit, so report that response as is.
 2. Verify `GET $MT5_API_URL/ping` returns backtest mode on the target terminal:
    `.status` is `"ok"` and `.mode` is `"backtest"` (other fields come with it).
 3. If the user specifies a concrete date window, prefer explicit UTC
@@ -604,10 +586,6 @@ Completion guidance:
 Example agent-oriented flow:
 
 ```bash
-# 0. Verify host-managed assets exactly as named.
-test -f "assets/experts/EA.ex5"
-test -f "assets/sets/EA.set"
-
 # 1. Health check the target backtest terminal.
 curl -sS -H "Authorization: Bearer $MT5_API_TOKEN" \
   "$MT5_API_URL/ping"
